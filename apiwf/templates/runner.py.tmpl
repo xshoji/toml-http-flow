@@ -81,11 +81,40 @@ DEFAULT_VARS = {{DEFAULT_VARS}}
 
 
 # ─── main ────────────────────────────────────────────────────
+def _print_request_details(headers, body_bytes, body_form):
+    for k, v in headers.items():
+        print(f"    > {k}: {v}")
+    if body_form is not None:
+        print("    > (form)")
+        for k, v in body_form.items():
+            print(f"    >   {k} = {v}")
+    elif body_bytes is not None:
+        try:
+            text = body_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            print(f"    > <{len(body_bytes)} bytes>")
+            return
+        print("    >")
+        for line in text.splitlines() or [""]:
+            print(f"    > {line}")
+
+
+def _print_response_details(resp_headers, text):
+    for k, v in resp_headers.items():
+        print(f"    < {k}: {v}")
+    if text:
+        print("    <")
+        for line in text.splitlines():
+            print(f"    < {line}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generated API workflow runner")
     parser.add_argument("-v", "--var", action="append", default=[],
                         help="key=value (overrides DEFAULT_VARS)")
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="suppress per-step request/response detail output "
+                             "(detail is ON by default)")
     args = parser.parse_args()
 
     store = {"vars": dict(DEFAULT_VARS), "steps": {}}
@@ -115,19 +144,13 @@ def main():
             body_bytes = None
 
         print(f"==> [{name}] {method} {url}")
-        if args.verbose:
-            for k, v in headers.items():
-                print(f"    {k}: {v}")
-            if body_bytes is not None:
-                try:
-                    print(f"    body: {body_bytes.decode('utf-8')}")
-                except UnicodeDecodeError:
-                    print(f"    body: <{len(body_bytes)} bytes>")
+        if not args.quiet:
+            _print_request_details(headers, body_bytes, body_form)
 
-        status, _resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
+        status, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
         print(f"<== [{name}] status={status}")
-        if args.verbose:
-            print(f"    body: {text}")
+        if not args.quiet:
+            _print_response_details(resp_headers, text)
 
         captured = {}
         capture_map = req.get("capture") or {}
@@ -143,8 +166,8 @@ def main():
                     print(f"error: step {name!r}: {e}", file=sys.stderr)
                     return 1
                 captured[var_name] = value
-                if args.verbose:
-                    print(f"    capture {var_name} = {value!r}")
+                if not args.quiet:
+                    print(f"    * capture {var_name} = {value!r}")
         store["steps"][name] = captured
 
     return 0

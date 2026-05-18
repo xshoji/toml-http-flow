@@ -36,8 +36,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("-f", "--file", required=True, help="workflow TOML file")
     p_run.add_argument("-v", "--var", action="append", default=[],
                        help="key=value variable injection (repeatable)")
-    p_run.add_argument("--verbose", action="store_true",
-                       help="print request/response details")
+    p_run.add_argument("-q", "--quiet", action="store_true",
+                       help="suppress per-step request/response detail output "
+                            "(detail is ON by default)")
 
     p_gen = sub.add_parser("generate", help="emit a standalone runner script")
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
@@ -76,7 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         vars_ = _parse_vars(args.var)
         try:
-            workflow.run(cfg, vars_, verbose=args.verbose)
+            workflow.run(cfg, vars_, quiet=args.quiet)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1

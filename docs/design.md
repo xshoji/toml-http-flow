@@ -460,12 +460,33 @@ python -m apiwf generate -f workflow.toml    # 標準出力に出力
 
 ### 6.1 サブコマンド: `run`
 
-| 引数            | 必須 | 説明                                       |
-|-----------------|------|--------------------------------------------|
-| `-f`, `--file`  | ○    | 実行するワークフローTOMLファイルのパス     |
-| `-v`, `--var`   | -    | `key=value` 形式の変数注入（複数指定可）   |
-| `--verbose`     | -    | リクエスト/レスポンスの詳細を出力          |
-| `-h`, `--help`  | -    | ヘルプ表示                                 |
+| 引数            | 必須 | 説明                                                                                  |
+|-----------------|------|---------------------------------------------------------------------------------------|
+| `-f`, `--file`  | ○    | 実行するワークフローTOMLファイルのパス                                                |
+| `-v`, `--var`   | -    | `key=value` 形式の変数注入（複数指定可）                                              |
+| `-q`, `--quiet` | -    | 詳細出力を抑制し1ステップ1行のサマリのみ出す（**デフォルトは詳細表示ON**）            |
+| `-h`, `--help`  | -    | ヘルプ表示                                                                            |
+
+### 6.1.1 詳細出力フォーマット
+
+デフォルト（`--quiet` 未指定）では、各ステップごとに以下を出力する。
+リクエストは `>`、レスポンスは `<` をプレフィックスとし、curl の `-v` に近い書式で揃える。
+
+```
+==> [<step_name>] <METHOD> <URL>
+    > Header-Key: value
+    > ...
+    >
+    > <body 1行ずつ>
+<== [<step_name>] status=<code>
+    < Header-Key: value
+    < ...
+    <
+    < <body 1行ずつ>
+    * capture <var_name> = <value>
+```
+
+`--quiet` 指定時は `==>` / `<==` の2行のみ出力する。
 
 ### 6.2 サブコマンド: `generate`
 
@@ -551,7 +572,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generated API workflow runner")
     parser.add_argument("-v", "--var", action="append", default=[],
                         help="key=value (overrides DEFAULT_VARS)")
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="suppress per-step detail (detail is ON by default)")
     args = parser.parse_args()
 
     store = {"vars": dict(DEFAULT_VARS), "steps": {}}
@@ -601,7 +623,7 @@ python -m apiwf generate -f workflow.toml -o audit/workflow_2026-05-19.py
 # どこでも実行（本ツールは不要）
 python3 audit/workflow_2026-05-19.py
 python3 audit/workflow_2026-05-19.py -v env=staging -v token=abc
-python3 audit/workflow_2026-05-19.py --verbose
+python3 audit/workflow_2026-05-19.py --quiet     # 詳細出力を抑制（デフォルトは詳細ON）
 ```
 
 ### 8.6 セキュリティ・運用上の注意

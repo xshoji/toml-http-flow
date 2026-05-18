@@ -22,32 +22,53 @@ def _render_request(req: RequestConfig, store: dict[str, Any]) -> RequestConfig:
     )
 
 
+def _print_request_details(req: RequestConfig, out) -> None:
+    for k, v in req.headers.items():
+        print(f"    > {k}: {v}", file=out)
+    if req.body is not None:
+        print("    >", file=out)
+        for line in req.body.splitlines() or [""]:
+            print(f"    > {line}", file=out)
+    elif req.body_form is not None:
+        print("    > (form)", file=out)
+        for k, v in req.body_form.items():
+            print(f"    >   {k} = {v}", file=out)
+
+
+def _print_response_details(resp, out) -> None:
+    for k, v in resp.headers.items():
+        print(f"    < {k}: {v}", file=out)
+    if resp.body_text:
+        print("    <", file=out)
+        for line in resp.body_text.splitlines():
+            print(f"    < {line}", file=out)
+
+
 def run(
     config: WorkflowConfig,
     vars_: dict[str, str] | None = None,
     *,
-    verbose: bool = False,
+    quiet: bool = False,
     out=sys.stdout,
 ) -> dict[str, Any]:
-    """Run every request in ``config`` and return the final variable store."""
+    """Run every request in ``config`` and return the final variable store.
+
+    By default each step's request and response details are printed to ``out``.
+    Pass ``quiet=True`` to print only the one-line summary per step.
+    """
     store: dict[str, Any] = {"vars": dict(vars_ or {}), "steps": {}}
 
     for req in config.requests:
         rendered = _render_request(req, store)
 
         print(f"==> [{rendered.name}] {rendered.method} {rendered.url}", file=out)
-        if verbose:
-            for k, v in rendered.headers.items():
-                print(f"    {k}: {v}", file=out)
-            if rendered.body is not None:
-                print(f"    body: {rendered.body}", file=out)
-            elif rendered.body_form is not None:
-                print(f"    body_form: {rendered.body_form}", file=out)
+        if not quiet:
+            _print_request_details(rendered, out)
 
         resp = execute(rendered)
         print(f"<== [{rendered.name}] status={resp.status}", file=out)
-        if verbose:
-            print(f"    body: {resp.body_text}", file=out)
+        if not quiet:
+            _print_response_details(resp, out)
 
         captured: dict[str, Any] = {}
         if rendered.capture:
@@ -58,8 +79,8 @@ def run(
             for var_name, path in rendered.capture.items():
                 value = extract(resp.body_json, path)
                 captured[var_name] = value
-                if verbose:
-                    print(f"    capture {var_name} = {value!r}", file=out)
+                if not quiet:
+                    print(f"    * capture {var_name} = {value!r}", file=out)
 
         store["steps"][rendered.name] = captured
 

@@ -47,9 +47,29 @@ python3 -m apiwf -f workflow.toml
 # 変数注入
 python3 -m apiwf run -f workflow.toml -v env=production -v user_id=123
 
-# リクエスト/レスポンス詳細を表示
-python3 -m apiwf run -f workflow.toml --verbose
+# デフォルトでリクエスト/レスポンスの詳細を表示する
+# サマリのみで十分なときは --quiet (-q) で抑制できる
+python3 -m apiwf run -f workflow.toml -q
 ```
+
+### 出力フォーマット
+
+デフォルトでは各ステップごとに、curl `-v` 風の `>` (リクエスト) と `<` (レスポンス)
+プレフィックス付きでヘッダーとボディを表示する。
+
+```
+==> [getToken] POST https://api.example.com/auth
+    > Content-Type: application/json
+    >
+    > {"user":"test","pass":"secret"}
+<== [getToken] status=200
+    < Content-Type: application/json
+    <
+    < {"access_token":"tok-xyz"}
+    * capture token = 'tok-xyz'
+```
+
+`--quiet` (`-q`) を指定すると `==>` / `<==` の各ステップ1行サマリだけになる。
 
 ### 単一スクリプトの生成
 
@@ -71,7 +91,7 @@ python3 -m apiwf generate -f workflow.toml -v env=production -o workflow.py
 
 ```bash
 python3 workflow.py
-python3 workflow.py -v env=staging --verbose
+python3 workflow.py -v env=staging --quiet
 ```
 
 ## TOML 仕様
