@@ -429,6 +429,6 @@ FodyWeavers.xsd
 *.msp
 
 
-#workspace
-#!workspace/.gitkeep
+workspace
+!workspace/.gitkeep
 
