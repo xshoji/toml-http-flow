@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apiwf"
+version = "0.1.0"
+description = "TOML-based HTTP workflow CLI tool (stdlib-only)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "xshoji" }]
+keywords = ["toml", "http", "workflow", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+]
+
+[project.scripts]
+apiwf = "apiwf.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["apiwf*"]
+
+[tool.setuptools.package-data]
+apiwf = ["templates/*.tmpl"]
