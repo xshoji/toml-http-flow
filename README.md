@@ -1,4 +1,4 @@
-# toml-http-flow (`apiwf`)
+# toml-http-flow (`httpflow`)
 
 TOMLで定義したHTTPリクエストのワークフローを順次実行するCLIツール。
 **Python 3.11+ の標準ライブラリのみ**で動作し、外部依存はゼロ。
@@ -26,11 +26,11 @@ TOMLで定義したHTTPリクエストのワークフローを順次実行する
 # リポジトリを clone してそのまま実行
 git clone https://github.com/xshoji/toml-http-flow.git
 cd toml-http-flow
-python3 -m apiwf --help
+python3 -m httpflow --help
 
 # あるいは pip install (editable)
 pip install -e .
-apiwf --help
+httpflow --help
 ```
 
 ## 使い方
@@ -39,17 +39,17 @@ apiwf --help
 
 ```bash
 # 基本
-python3 -m apiwf run -f workflow.toml
+python3 -m httpflow run -f workflow.toml
 
 # `run` は省略可（後方互換）
-python3 -m apiwf -f workflow.toml
+python3 -m httpflow -f workflow.toml
 
 # 変数注入
-python3 -m apiwf run -f workflow.toml -v env=production -v user_id=123
+python3 -m httpflow run -f workflow.toml -v env=production -v user_id=123
 
 # デフォルトでリクエスト/レスポンスの詳細を表示する
 # サマリのみで十分なときは --quiet (-q) で抑制できる
-python3 -m apiwf run -f workflow.toml -q
+python3 -m httpflow run -f workflow.toml -q
 ```
 
 ### 出力フォーマット
@@ -85,16 +85,16 @@ python3 -m apiwf run -f workflow.toml -q
 
 ```bash
 # .py ファイルに書き出し
-python3 -m apiwf generate -f workflow.toml -o workflow.py
+python3 -m httpflow generate -f workflow.toml -o workflow.py
 
 # 標準出力に書き出し
-python3 -m apiwf generate -f workflow.toml
+python3 -m httpflow generate -f workflow.toml
 
 # 実行権付き shebang を先頭に付与
-python3 -m apiwf generate -f workflow.toml -o workflow.py --shebang
+python3 -m httpflow generate -f workflow.toml -o workflow.py --shebang
 
 # デフォルト変数を埋め込み
-python3 -m apiwf generate -f workflow.toml -v env=production -o workflow.py
+python3 -m httpflow generate -f workflow.toml -v env=production -o workflow.py
 ```
 
 生成されたスクリプトは本ツール非依存で、どこでも動く:
@@ -266,9 +266,9 @@ toml-http-flow/
 ├── AGENTS.md
 ├── docs/
 │   └── design.md
-├── apiwf/
+├── httpflow/
 │   ├── __init__.py
-│   ├── __main__.py         # `python -m apiwf` のエントリポイント
+│   ├── __main__.py         # `python -m httpflow` のエントリポイント
 │   ├── cli.py              # CLI 引数パース＋ディスパッチ
 │   ├── config.py           # TOMLパース＋データクラス
 │   ├── template.py         # ${...} 展開エンジン
@@ -292,9 +292,9 @@ toml-http-flow/
 python3 -m unittest discover -s tests -v
 
 # CLI 動作確認
-python3 -m apiwf --help
-python3 -m apiwf run --help
-python3 -m apiwf generate --help
+python3 -m httpflow --help
+python3 -m httpflow run --help
+python3 -m httpflow generate --help
 ```
 
 テストは標準ライブラリ `http.server` でローカルモックを立ててHTTP往復もE2E検証する。

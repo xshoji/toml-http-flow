@@ -4,8 +4,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from apiwf.config import RequestConfig, WorkflowConfig
-from apiwf.workflow import run
+from httpflow.config import RequestConfig, WorkflowConfig
+from httpflow.workflow import run
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -53,7 +53,7 @@ class TestWorkflow(unittest.TestCase):
         """body_form values must have ${...} expanded, including when the
         referenced step name contains a hyphen (regression: the template
         regex used to reject hyphens)."""
-        from apiwf.workflow import _render_request
+        from httpflow.workflow import _render_request
 
         req = RequestConfig(
             name="next",

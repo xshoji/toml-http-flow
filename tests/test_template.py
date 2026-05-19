@@ -1,6 +1,6 @@
 import unittest
 
-from apiwf.template import TemplateError, render, render_mapping
+from httpflow.template import TemplateError, render, render_mapping
 
 
 class TestRender(unittest.TestCase):

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "apiwf"
+name = "httpflow"
 version = "0.1.0"
 description = "TOML-based HTTP workflow CLI tool (stdlib-only)."
 readme = "README.md"
@@ -19,10 +19,10 @@ classifiers = [
 ]
 
 [project.scripts]
-apiwf = "apiwf.cli:main"
+httpflow = "httpflow.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["apiwf*"]
+include = ["httpflow*"]
 
 [tool.setuptools.package-data]
-apiwf = ["templates/*.tmpl"]
+httpflow = ["templates/*.tmpl"]

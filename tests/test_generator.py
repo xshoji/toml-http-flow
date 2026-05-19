@@ -9,8 +9,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from apiwf import config as cfg_mod
-from apiwf import generator
+from httpflow import config as cfg_mod
+from httpflow import generator
 
 
 class _Handler(BaseHTTPRequestHandler):

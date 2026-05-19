@@ -2,7 +2,7 @@
 
 The output prioritizes human readability over compactness: each [[requests]]
 block becomes its own ``step_<name>`` function so the script can be tweaked or
-re-run by hand without re-running ``apiwf generate``.
+re-run by hand without re-running ``httpflow generate``.
 """
 
 from __future__ import annotations

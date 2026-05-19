@@ -4,8 +4,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from apiwf.config import RequestConfig
-from apiwf.httpclient import execute, extract
+from httpflow.config import RequestConfig
+from httpflow.httpclient import execute, extract
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -132,14 +132,14 @@ class TestPrepareRequest(unittest.TestCase):
     """Smoke tests for prepare_request helper."""
 
     def test_get_has_no_body(self):
-        from apiwf.httpclient import prepare_request
+        from httpflow.httpclient import prepare_request
         req = RequestConfig(name="g", method="GET", url="http://example.com/")
         request, body_bytes = prepare_request(req)
         self.assertIsNone(body_bytes)
         self.assertEqual(request.get_method(), "GET")
 
     def test_post_json_body_bytes(self):
-        from apiwf.httpclient import prepare_request
+        from httpflow.httpclient import prepare_request
         req = RequestConfig(
             name="p", method="POST", url="http://example.com/",
             headers={"Content-Type": "application/json"},
@@ -150,7 +150,7 @@ class TestPrepareRequest(unittest.TestCase):
         self.assertEqual(request.get_method(), "POST")
 
     def test_body_form_adds_content_type(self):
-        from apiwf.httpclient import prepare_request
+        from httpflow.httpclient import prepare_request
         req = RequestConfig(
             name="f", method="POST", url="http://example.com/",
             body_form={"x": "y"},

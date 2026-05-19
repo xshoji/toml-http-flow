@@ -1,4 +1,4 @@
-"""Command-line interface for apiwf."""
+"""Command-line interface for httpflow."""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ def _parse_vars(items: list[str]) -> dict[str, str]:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="apiwf",
+        prog="httpflow",
         description="TOML-driven HTTP workflow runner (stdlib-only).",
     )
-    parser.add_argument("--version", action="version", version=f"apiwf {__version__}")
+    parser.add_argument("--version", action="version", version=f"httpflow {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     p_run = sub.add_parser("run", help="run a workflow")

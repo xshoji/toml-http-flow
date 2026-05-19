@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from apiwf import config as cfg_mod
+from httpflow import config as cfg_mod
 
 
 SAMPLE = b"""
