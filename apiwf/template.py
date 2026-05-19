@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-PATTERN = re.compile(r"\$(?:\$|\{([\w\.]+)\})")
+# Path segments inside ${...} may contain letters, digits, underscores and
+# hyphens; dots act as the path separator.
+PATTERN = re.compile(r"\$(?:\$|\{([\w.\-]+)\})")
 
 
 class TemplateError(KeyError):

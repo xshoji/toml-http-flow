@@ -44,6 +44,20 @@ class TestRender(unittest.TestCase):
     def test_no_placeholders(self):
         self.assertEqual(render("plain text", self.store), "plain text")
 
+    def test_hyphen_in_step_name(self):
+        store = {
+            "vars": {},
+            "steps": {"httpbinorg-post": {"argsAaa2": "hello"}},
+        }
+        self.assertEqual(
+            render("v=${steps.httpbinorg-post.argsAaa2}", store),
+            "v=hello",
+        )
+
+    def test_hyphen_in_var_name(self):
+        store = {"vars": {"my-key": "ok"}, "steps": {}}
+        self.assertEqual(render("${vars.my-key}", store), "ok")
+
 
 if __name__ == "__main__":
     unittest.main()
