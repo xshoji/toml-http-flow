@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from . import __version__
-from .config import RequestConfig, WorkflowConfig
+from .config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
 
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
@@ -71,6 +71,18 @@ def _emit_step(req: RequestConfig, func_name: str) -> str:
     lines.append(f"    name = {req.name!r}")
     lines.append(f"    method = {method!r}")
     lines.append(f"    url = render({_str_literal(req.url)}, store)")
+
+    if method in SPECIAL_METHODS:
+        if method == "SLEEP":
+            lines.append("")
+            lines.append('    print(f"==> {_now()} [{name}] {method} {url}")')
+            lines.append("    seconds = float(url)")
+            lines.append("    if not quiet:")
+            lines.append('        print(f"    > sleep {seconds} seconds")')
+            lines.append("    time.sleep(seconds)")
+            lines.append('    print(f"<== {_now()} [{name}] done")')
+            lines.append('    store["steps"][name] = {}')
+            return "\n".join(lines)
 
     if req.headers:
         lines.append(f"    headers = render_mapping({_dict_literal(req.headers)}, store)")

@@ -23,6 +23,9 @@ class WorkflowConfig:
     requests: list[RequestConfig]
 
 
+SPECIAL_METHODS = {"SLEEP"}
+
+
 def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
     """Parse a list of "Key<sep>Value" strings into a dict.
 
@@ -54,6 +57,28 @@ def _build_request(d: dict[str, Any]) -> RequestConfig:
             f"request {d.get('name')!r}: 'body' and 'body_form' are mutually exclusive"
         )
 
+    method = str(d["method"]).upper()
+
+    # --- SLEEP step validation ---
+    if method == "SLEEP":
+        if d.get("headers") or d.get("body") or d.get("body_form") or d.get("capture"):
+            raise ValueError(
+                f"request {d['name']!r}: 'SLEEP' step must not specify "
+                f"headers, body, body_form, or capture"
+            )
+        try:
+            float(d["url"])
+        except ValueError as exc:
+            raise ValueError(
+                f"request {d['name']!r}: 'SLEEP' step requires a numeric 'url' "
+                f"(seconds), got: {d['url']!r}"
+            ) from exc
+        return RequestConfig(
+            name=str(d["name"]),
+            method=method,
+            url=str(d["url"]),
+        )
+
     headers = parse_kv_list(d.get("headers", []), ":")
     body = d.get("body")
     body_form = parse_kv_list(d["body_form"], "=") if "body_form" in d else None
@@ -61,8 +86,6 @@ def _build_request(d: dict[str, Any]) -> RequestConfig:
 
     if body is not None and not isinstance(body, str):
         raise ValueError(f"request {d['name']!r}: 'body' must be a string")
-
-    method = str(d["method"]).upper()
 
     return RequestConfig(
         name=str(d["name"]),

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import datetime
 import sys
+import time
 import urllib.parse
 from dataclasses import replace
 from typing import Any
 
-from .config import RequestConfig, WorkflowConfig
+from .config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
 from .httpclient import execute, extract, prepare_request
 from .template import render, render_mapping
 
@@ -101,6 +102,22 @@ def run(
         rendered = _render_request(req, store)
 
         print(f"==> {_now()} [{rendered.name}] {rendered.method} {rendered.url}", file=out)
+
+        if rendered.method in SPECIAL_METHODS:
+            if rendered.method == "SLEEP":
+                try:
+                    seconds = float(rendered.url)
+                except ValueError as exc:
+                    raise RuntimeError(
+                        f"step {rendered.name!r}: 'SLEEP' url must be numeric, got: {rendered.url!r}"
+                    ) from exc
+                if not quiet:
+                    print(f"    > sleep {seconds} seconds", file=out)
+                time.sleep(seconds)
+                print(f"<== {_now()} [{rendered.name}] done", file=out)
+                store["steps"][rendered.name] = {}
+                continue
+
         if not quiet:
             _log_request(rendered, out)
 

@@ -105,6 +105,48 @@ class TestGenerator(unittest.TestCase):
             # Capture line
             self.assertIn("* capture token = 'gen-tok'", stdout)
 
+    def test_generate_with_sleep_step(self):
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "wait"
+            method = "SLEEP"
+            url = "0.05"
+
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://127.0.0.1:1/ping"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+            # Must compile
+            compile(script, "<generated>", "exec")
+
+            # Check that the sleep step exists and has correct structure
+            self.assertIn("time.sleep(seconds)", script)
+            self.assertIn("SLEEP", script)
+            self.assertIn("done", script)
+
+            # The sleep step should NOT call do_request / log_request with headers
+            step_lines = []
+            in_step = False
+            for line in script.splitlines():
+                if line.startswith("def step_wait"):
+                    in_step = True
+                elif in_step and line.startswith("def "):
+                    break
+                if in_step:
+                    step_lines.append(line)
+            step_src = "\n".join(step_lines)
+            self.assertNotIn("do_request(", step_src)
+            self.assertNotIn("headers", step_src)
+
 
 if __name__ == "__main__":
     unittest.main()

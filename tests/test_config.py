@@ -84,11 +84,37 @@ body_form = ["a = b"]
         with self.assertRaises(ValueError):
             cfg_mod.load(path)
 
-    def test_missing_required(self):
+    def test_sleep_rejects_headers(self):
         bad = b"""
 [[requests]]
-name = "noMethod"
-url = "http://example.com"
+name = "bad"
+method = "SLEEP"
+url = "5"
+headers = ["X: Y"]
+"""
+        path = self._write(bad)
+        with self.assertRaises(ValueError) as ctx:
+            cfg_mod.load(path)
+        self.assertIn("SLEEP", str(ctx.exception))
+
+    def test_sleep_rejects_body(self):
+        bad = b"""
+[[requests]]
+name = "bad"
+method = "SLEEP"
+url = "5"
+body = "hi"
+"""
+        path = self._write(bad)
+        with self.assertRaises(ValueError):
+            cfg_mod.load(path)
+
+    def test_sleep_rejects_non_numeric_url(self):
+        bad = b"""
+[[requests]]
+name = "bad"
+method = "SLEEP"
+url = "abc"
 """
         path = self._write(bad)
         with self.assertRaises(ValueError):
