@@ -13,6 +13,7 @@ TOMLで定義したHTTPリクエストのワークフローを順次実行する
 - 後段のステップから前段のレスポンスを `${steps.<name>.<key>}` で参照
 - `-v key=value` で外部変数を注入 (`${vars.<name>}` で参照)
 - JSONレスポンスから `data.user.id` / `items[0].id` 形式でフィールド抽出
+- **特殊ステップ `SLEEP`** で指定秒数の待機を挿入可能
 - 標準ライブラリ (`tomllib`, `urllib`, `json`, `argparse`) のみで実装
 - 単一の自己完結 Python スクリプトを生成可能 (`generate` サブコマンド)
 
@@ -170,6 +171,12 @@ capture = ["token = access_token"]
 
 
 [[requests]]
+name    = "wait"
+method  = "SLEEP"
+url     = "2"
+
+
+[[requests]]
 name    = "getUser"
 method  = "GET"
 url     = "https://api.example.com/me"
@@ -199,8 +206,8 @@ body_form = [
 | フィールド | 必須 | 型             | 説明 |
 |------------|------|----------------|------|
 | `name`     | ○    | string         | ステップ名（変数参照に使用） |
-| `method`   | ○    | string         | HTTPメソッド (GET/POST/PUT/DELETE 等) |
-| `url`      | ○    | string         | リクエストURL |
+| `method`   | ○    | string         | HTTPメソッド (GET/POST/PUT/DELETE) または特殊ステップ (`SLEEP`) |
+| `url`      | ○    | string         | リクエストURL、または特殊ステップのパラメータ（例: SLEEP の秒数） |
 | `headers`  | -    | array[string]  | `"Key: Value"` 形式 |
 | `body`     | -    | string         | 生テキストボディ (`body_form` と排他) |
 | `body_form`| -    | array[string]  | `"key = value"` 形式、`application/x-www-form-urlencoded` 自動付与 |
@@ -239,6 +246,26 @@ capture = [
 - ドット区切りで階層を辿る
 - `[N]` でリストのインデックスを指定
 - 指定パスが存在しなければエラーで停止
+
+### SLEEP 特殊ステップ
+
+`method = "SLEEP"` とすることで、指定秒数の待機を行うステップを挿入できます。
+
+```toml
+[[requests]]
+name   = "wait2s"
+method = "SLEEP"
+url    = "2"
+```
+
+- `url` に待機秒数を指定します（テンプレート変数 `${vars.delay}` も使用可）。
+- `headers` / `body` / `body_form` / `capture` は指定できません（バリデーションエラー）。
+- 実行時出力:
+  ```
+  ==> 2026-05-20 01:00:00.000 [wait2s] SLEEP 2
+      > sleep 2.0 seconds
+  <== 2026-05-20 01:00:02.000 [wait2s] done
+  ```
 
 ## テンプレート記法
 
@@ -282,7 +309,8 @@ toml-http-flow/
     ├── test_config.py
     ├── test_httpclient.py
     ├── test_workflow.py
-    └── test_generator.py
+    ├── test_generator.py
+    └── test_sleep.py
 ```
 
 ## 開発
