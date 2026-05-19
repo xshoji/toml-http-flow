@@ -1,62 +1,64 @@
 # toml-http-flow (`httpflow`)
 
-TOMLで定義したHTTPリクエストのワークフローを順次実行するCLIツール。
-**Python 3.11+ の標準ライブラリのみ**で動作し、外部依存はゼロ。
+A CLI tool that runs a workflow of HTTP requests defined in TOML, in order.
+Implemented using **only the Python 3.11+ standard library** — zero external
+dependencies.
 
-加えて、ワークフローTOMLを **本ツールに依存しない単一の Python スクリプト** に
-書き出す `generate` サブコマンドを備えており、証跡保存・配布・CI/CDへの
-組み込みに使える。
+It also ships a `generate` subcommand that emits a **single self-contained
+Python script** from a workflow TOML — useful for archiving, distribution,
+and embedding into CI/CD pipelines without this tool installed.
 
-## 特徴
+## Features
 
-- TOML で1リクエスト = 1ブロック (`[[requests]]`) として記述
-- 後段のステップから前段のレスポンスを `${steps.<name>.<key>}` で参照
-- `-v key=value` で外部変数を注入 (`${vars.<name>}` で参照)
-- JSONレスポンスから `data.user.id` / `items[0].id` 形式でフィールド抽出
-- **特殊ステップ `SLEEP`** で指定秒数の待機を挿入可能
-- 標準ライブラリ (`tomllib`, `urllib`, `json`, `argparse`) のみで実装
-- 単一の自己完結 Python スクリプトを生成可能 (`generate` サブコマンド)
+- Describe a workflow as one request per block (`[[requests]]`) in TOML
+- Reference previous responses from later steps via `${steps.<name>.<key>}`
+- Inject external variables with `-v key=value` (referenced as `${vars.<name>}`)
+- Extract values from JSON responses using `data.user.id` / `items[0].id` style paths
+- **Special step `SLEEP`** lets you insert a wait of N seconds
+- Implemented purely on the standard library (`tomllib`, `urllib`, `json`, `argparse`)
+- Generates a single self-contained Python script (`generate` subcommand)
 
-## 要件
+## Requirements
 
-- Python 3.11 以上 (`tomllib` 標準同梱のため)
+- Python 3.11 or newer (because `tomllib` ships in the standard library)
 
-## インストール
+## Installation
 
 ```bash
-# リポジトリを clone してそのまま実行
+# Clone the repo and run directly
 git clone https://github.com/xshoji/toml-http-flow.git
 cd toml-http-flow
 python3 -m httpflow --help
 
-# あるいは pip install (editable)
+# Or install with pip (editable)
 pip install -e .
 httpflow --help
 ```
 
-## 使い方
+## Usage
 
-### ワークフローの実行
+### Running a workflow
 
 ```bash
-# 基本
+# Basic
 python3 -m httpflow run -f workflow.toml
 
-# `run` は省略可（後方互換）
+# `run` can be omitted (backward compatibility)
 python3 -m httpflow -f workflow.toml
 
-# 変数注入
+# Inject variables
 python3 -m httpflow run -f workflow.toml -v env=production -v user_id=123
 
-# デフォルトでリクエスト/レスポンスの詳細を表示する
-# サマリのみで十分なときは --quiet (-q) で抑制できる
+# By default, request/response details are shown.
+# Use --quiet (-q) when you only need the summary lines.
 python3 -m httpflow run -f workflow.toml -q
 ```
 
-### 出力フォーマット
+### Output format
 
-デフォルトでは各ステップごとに、curl `-vvv` 風の `>` (リクエスト) と `<` (レスポンス)
-プレフィックス付きでヘッダーとボディを表示する。
+By default, for each step the request and response are printed with
+curl `-vvv`-style `>` (request) and `<` (response) prefixes, including
+headers and body.
 
 ```
 ==> 2026-05-19 23:35:49.123 [getToken]
@@ -77,38 +79,40 @@ python3 -m httpflow run -f workflow.toml -q
     * capture token = 'tok-xyz'
 ```
 
-各ステップの `==>` (送信直前) と `<==` (受信直後) にはローカル時刻 (ミリ秒精度) が付く。
-リクエストには `Host` など urllib が自動付与するヘッダー推定値も出力し、
-レスポンスには `HTTP/1.1 200 OK` のようなステータスラインを表示する。
-`--quiet` (`-q`) を指定するとこの2行のサマリだけになる。
+Each step prints local time (millisecond precision) on the `==>` (right
+before send) and `<==` (right after receive) lines. The request side also
+shows headers `urllib` auto-adds (such as `Host`), and the response side
+shows the status line such as `HTTP/1.1 200 OK`.
+With `--quiet` (`-q`) only the two summary lines are shown.
 
-### 単一スクリプトの生成
+### Generating a single script
 
 ```bash
-# .py ファイルに書き出し
+# Write to a .py file
 python3 -m httpflow generate -f workflow.toml -o workflow.py
 
-# 標準出力に書き出し
+# Write to stdout
 python3 -m httpflow generate -f workflow.toml
 
-# 実行権付き shebang を先頭に付与
+# Prepend an executable shebang
 python3 -m httpflow generate -f workflow.toml -o workflow.py --shebang
 
-# デフォルト変数を埋め込み
+# Embed default variables
 python3 -m httpflow generate -f workflow.toml -v env=production -o workflow.py
 ```
 
-生成されたスクリプトは本ツール非依存で、どこでも動く:
+The generated script does not depend on this tool and runs anywhere:
 
 ```bash
 python3 workflow.py
 python3 workflow.py -v env=staging --quiet
 ```
 
-#### 生成スクリプトの構造（手で編集する前提）
+#### Structure of the generated script (designed to be edited by hand)
 
-生成スクリプトは **可読性とアドホック編集のしやすさ** を最優先したレイアウトで出力される。
-1つの `[[requests]]` ブロックは、独立した `step_<name>` 関数として展開される。
+The generated script is laid out to prioritize **readability and ease of
+ad-hoc editing**. Each `[[requests]]` block expands to an independent
+`step_<name>` function.
 
 ```python
 def step_getToken(store, quiet=False):
@@ -132,29 +136,30 @@ def main():
     step_updateProfile(store, quiet=args.quiet)
 ```
 
-よくある編集ユースケース:
+Common editing use cases:
 
-- **このステップだけ叩き直したい** → `main()` 内の他のステップ呼び出しをコメントアウト
-- **順番を入れ替えたい** → `main()` 内の呼び出し順を並べ替え
-- **URL/ヘッダー/ボディを少しだけ変えて再実行** → 該当 `step_*` 関数を直に編集
-- **ステップを丸ごと足したい** → 既存関数をコピーして関数名・内容を書き換え、`main()` に1行追加
+- **Re-run just this step** → comment out the other step calls in `main()`
+- **Reorder steps** → reorder the calls in `main()`
+- **Slightly tweak URL/headers/body and re-run** → edit the corresponding `step_*` function directly
+- **Add a brand-new step** → copy an existing function, rename it, change the contents, and add one line to `main()`
 
-ランタイムヘルパ (`render` / `extract` / `do_request` / `log_*`) はスクリプト先頭に
-インライン定義されており、本ツール側のコードに依存しない。
+The runtime helpers (`render` / `extract` / `do_request` / `log_*`) are
+inlined at the top of the generated script and do not depend on this tool's
+codebase.
 
-## TOML 仕様
+## TOML specification
 
-### 設計方針
+### Design policy
 
-**1リクエスト = 1つの `[[requests]]` ブロック**に収めることを最優先。
-`headers` / `body_form` / `capture` はサブテーブルではなく
-`"Key: Value"` / `"key = value"` 形式の **文字列配列** として記述する。
+The top priority is **fit one request into one `[[requests]]` block**.
+`headers` / `body_form` / `capture` are written as **arrays of strings**
+in the form `"Key: Value"` / `"key = value"` rather than as sub-tables.
 
-- HTTP / curl と同じ記法で親しみやすい
-- 改行・末尾カンマが使えて項目が増えても読みやすい
-- 1ブロックで全情報が完結し、視認性が高い
+- Familiar — same notation as HTTP / curl
+- Multi-line and trailing commas keep things readable as items grow
+- Each block is self-contained, which improves scannability
 
-### サンプル
+### Sample
 
 ```toml
 # workflow.toml
@@ -201,36 +206,37 @@ body_form = [
 ]
 ```
 
-### フィールド一覧
+### Field list
 
-| フィールド | 必須 | 型             | 説明 |
-|------------|------|----------------|------|
-| `name`     | ○    | string         | ステップ名（変数参照に使用） |
-| `method`   | ○    | string         | HTTPメソッド (GET/POST/PUT/DELETE) または特殊ステップ (`SLEEP`) |
-| `url`      | ○    | string         | リクエストURL、または特殊ステップのパラメータ（例: SLEEP の秒数） |
-| `headers`  | -    | array[string]  | `"Key: Value"` 形式 |
-| `body`     | -    | string         | 生テキストボディ (`body_form` と排他) |
-| `body_form`| -    | array[string]  | `"key = value"` 形式、`application/x-www-form-urlencoded` 自動付与 |
-| `capture`  | -    | array[string]  | `"var_name = json.path"` 形式 |
+| Field       | Required | Type           | Description |
+|-------------|----------|----------------|-------------|
+| `name`      | ✓        | string         | Step name (used for variable references) |
+| `method`    | ✓        | string         | HTTP method (GET/POST/PUT/DELETE) or special step (`SLEEP`) |
+| `url`       | ✓        | string         | Request URL, or the parameter for a special step (e.g. seconds for SLEEP) |
+| `headers`   | -        | array[string]  | `"Key: Value"` form |
+| `body`      | -        | string         | Raw text body (mutually exclusive with `body_form`) |
+| `body_form` | -        | array[string]  | `"key = value"` form; `application/x-www-form-urlencoded` is auto-added |
+| `capture`   | -        | array[string]  | `"var_name = json.path"` form |
 
-### パース規則
+### Parse rules
 
-| フィールド | 区切り | 分割回数 | 例 | 結果 |
-|------------|--------|----------|-----|------|
-| `headers`  | 最初の `:` | 1回 | `"Authorization: Bearer abc"` | `{"Authorization": "Bearer abc"}` |
-| `body_form`| 最初の `=` | 1回 | `"email = a@example.com"` | `{"email": "a@example.com"}` |
-| `capture`  | 最初の `=` | 1回 | `"token = access_token"` | `{"token": "access_token"}` |
+| Field       | Separator     | Split count | Example | Result |
+|-------------|---------------|-------------|---------|--------|
+| `headers`   | first `:`     | 1           | `"Authorization: Bearer abc"` | `{"Authorization": "Bearer abc"}` |
+| `body_form` | first `=`     | 1           | `"email = a@example.com"`     | `{"email": "a@example.com"}` |
+| `capture`   | first `=`     | 1           | `"token = access_token"`      | `{"token": "access_token"}` |
 
-- 区切り文字の前後の空白はトリムされる
-- 区切り文字が値側に含まれていても、**最初の1つ**だけが区切りとして扱われる
-  - 例: `"X-Url: https://example.com:8080/path"` → `key=X-Url`, `value=https://example.com:8080/path`
+- Whitespace around the separator is trimmed
+- Even if the separator character also appears in the value, **only the first occurrence** is treated as a separator
+  - Example: `"X-Url: https://example.com:8080/path"` → `key=X-Url`, `value=https://example.com:8080/path`
 
-### `capture` のパス記法
+### Path notation for `capture`
 
-JSONレスポンスから値を取り出して、変数ストアの `steps.<step_name>.<var_name>` に保存する。
+Extract a value from a JSON response and store it under
+`steps.<step_name>.<var_name>` in the variable store.
 
 ```jsonc
-// レスポンス
+// Response
 {
   "data": { "user": { "id": 42, "tags": ["admin", "owner"] } }
 }
@@ -243,13 +249,13 @@ capture = [
 ]
 ```
 
-- ドット区切りで階層を辿る
-- `[N]` でリストのインデックスを指定
-- 指定パスが存在しなければエラーで停止
+- Dots descend through the hierarchy
+- `[N]` selects a list index
+- A missing path stops execution with an error
 
-### SLEEP 特殊ステップ
+### SLEEP special step
 
-`method = "SLEEP"` とすることで、指定秒数の待機を行うステップを挿入できます。
+Setting `method = "SLEEP"` inserts a step that waits for a specified number of seconds.
 
 ```toml
 [[requests]]
@@ -258,18 +264,18 @@ method = "SLEEP"
 url    = "2"
 ```
 
-- `url` に待機秒数を指定します（テンプレート変数 `${vars.delay}` も使用可）。
-- `headers` / `body` / `body_form` / `capture` は指定できません（バリデーションエラー）。
-- 実行時出力:
+- Specify the wait in seconds via `url` (template variables such as `${vars.delay}` are also allowed).
+- `headers` / `body` / `body_form` / `capture` cannot be set (validation error).
+- Runtime output:
   ```
   ==> 2026-05-20 01:00:00.000 [wait2s] SLEEP 2
       > sleep 2.0 seconds
   <== 2026-05-20 01:00:02.000 [wait2s] done
   ```
 
-## テンプレート記法
+## Template notation
 
-`${...}` 形式の変数参照。`$$` で `$` 1文字にエスケープ。
+Variable references use the `${...}` form. Escape `$` with `$$`.
 
 ```toml
 url     = "https://api.${vars.env}.example.com/me"
@@ -277,14 +283,14 @@ headers = ["Authorization: Bearer ${steps.getToken.token}"]
 body    = '{"price":"$$100"}'   # → {"price":"$100"}
 ```
 
-参照可能な名前空間:
+Available namespaces:
 
-- `vars.<name>` … CLI の `-v key=value` で注入した変数
-- `steps.<step_name>.<capture_key>` … 前段ステップで `capture` した値
+- `vars.<name>` — variables injected via the CLI's `-v key=value`
+- `steps.<step_name>.<capture_key>` — values captured by previous steps
 
-未定義変数を参照すると `TemplateError` で停止する。
+Referencing an undefined variable raises `TemplateError` and stops execution.
 
-## プロジェクト構成
+## Project layout
 
 ```
 toml-http-flow/
@@ -295,15 +301,15 @@ toml-http-flow/
 │   └── design.md
 ├── httpflow/
 │   ├── __init__.py
-│   ├── __main__.py         # `python -m httpflow` のエントリポイント
-│   ├── cli.py              # CLI 引数パース＋ディスパッチ
-│   ├── config.py           # TOMLパース＋データクラス
-│   ├── template.py         # ${...} 展開エンジン
-│   ├── httpclient.py       # urllib HTTPクライアント＋JSONパス抽出
-│   ├── workflow.py         # ステップ実行＋変数ストア
-│   ├── generator.py        # ワークフロー → 単一 .py 生成
+│   ├── __main__.py         # entry point for `python -m httpflow`
+│   ├── cli.py              # CLI argument parsing and dispatch
+│   ├── config.py           # TOML parsing and dataclasses
+│   ├── template.py         # ${...} expansion engine
+│   ├── httpclient.py       # urllib HTTP client and JSON path extraction
+│   ├── workflow.py         # step execution and variable store
+│   ├── generator.py        # workflow → single .py generator
 │   └── templates/
-│       └── runner.py.tmpl  # 生成スクリプトのテンプレート
+│       └── runner.py.tmpl  # template for the generated script
 └── tests/
     ├── test_template.py
     ├── test_config.py
@@ -313,27 +319,28 @@ toml-http-flow/
     └── test_sleep.py
 ```
 
-## 開発
+## Development
 
 ```bash
-# テスト実行 (標準ライブラリ unittest)
+# Run tests (standard-library unittest)
 python3 -m unittest discover -s tests -v
 
-# CLI 動作確認
+# Smoke-check the CLI
 python3 -m httpflow --help
 python3 -m httpflow run --help
 python3 -m httpflow generate --help
 ```
 
-テストは標準ライブラリ `http.server` でローカルモックを立ててHTTP往復もE2E検証する。
+Tests spin up a local mock with the standard-library `http.server` so even
+the HTTP round-trip is exercised end-to-end.
 
-## 終了コード
+## Exit codes
 
-| コード | 意味 |
-|--------|------|
-| `0`    | 全ステップ成功 |
-| `1`    | TOMLパース失敗 / バリデーション失敗 / HTTP失敗 / capture失敗 など |
+| Code | Meaning |
+|------|---------|
+| `0`  | All steps succeeded |
+| `1`  | TOML parse failure / validation failure / HTTP failure / capture failure, etc. |
 
-## ライセンス
+## License
 
 [MIT](LICENSE)
