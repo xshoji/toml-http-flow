@@ -135,10 +135,12 @@ def render_mapping(mapping: dict[str, str], store: dict) -> dict[str, str]: ...
 @dataclass
 class Response:
     status: int
+    reason: str
     headers: dict[str, str]
     body_text: str
     body_json: Any | None
 
+def prepare_request(req: RequestConfig) -> tuple[urllib.request.Request, bytes | None]: ...
 def execute(req: RequestConfig) -> Response: ...
 def extract(body: Any, path: str) -> Any: ...
 ```
@@ -488,15 +490,21 @@ python -m apiwf generate -f workflow.toml    # 標準出力に出力
 ### 6.1.1 詳細出力フォーマット
 
 デフォルト（`--quiet` 未指定）では、各ステップごとに以下を出力する。
-リクエストは `>`、レスポンスは `<` をプレフィックスとし、curl の `-v` に近い書式で揃える。
+リクエストは `>`、レスポンスは `<` をプレフィックスとし、curl の `-vvv` に近い書式で揃える。
 
 ```
-==> 2026-05-19 23:35:49.123 [<step_name>] <METHOD> <URL>
+==> 2026-05-19 23:35:49.123 [<step_name>]
+    > <METHOD> <path> HTTP/1.1
+    > Host: api.example.com
+    > Content-Length: 31
+    > User-Agent: Python-urllib/3.12
+    > Accept-Encoding: identity
     > Header-Key: value
     > ...
     >
     > <body 1行ずつ>
 <== 2026-05-19 23:35:49.456 [<step_name>] status=<code>
+    < HTTP/1.1 200 OK
     < Header-Key: value
     < ...
     <
@@ -505,6 +513,9 @@ python -m apiwf generate -f workflow.toml    # 標準出力に出力
 ```
 
 - 各リクエスト送信直前 / レスポンス受信直後にローカル時刻（ミリ秒精度）を出力する。
+- リクエストライン（`> POST /auth HTTP/1.1`）を出力する。
+- urllib が自動付与する `Host`, `Content-Length`, `User-Agent`, `Accept-Encoding` は推定値で出力する。
+- レスポンスのステータスライン（`< HTTP/1.1 200 OK`）を出力する。
 - `--quiet` 指定時は `==>` / `<==` の2行（タイムスタンプ付き）のみ出力する。
 
 ### 6.2 サブコマンド: `generate`
@@ -599,9 +610,9 @@ def step_getToken(store, quiet=False):
     body_form = None
     body_bytes = render('{"user":"test","pass":"secret"}', store).encode("utf-8")
 
-    log_request(name, method, url, headers, body_bytes, body_form, quiet)
-    status, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
-    log_response(name, status, resp_headers, text, quiet)
+    log_request(method, url, headers, body_bytes, body_form, quiet)
+    status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
+    log_response(name, status, reason, resp_headers, text, quiet)
 
     if body_json is None:
         raise RuntimeError(f"step {name!r}: capture requested but response is not JSON")

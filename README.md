@@ -54,22 +54,31 @@ python3 -m apiwf run -f workflow.toml -q
 
 ### 出力フォーマット
 
-デフォルトでは各ステップごとに、curl `-v` 風の `>` (リクエスト) と `<` (レスポンス)
+デフォルトでは各ステップごとに、curl `-vvv` 風の `>` (リクエスト) と `<` (レスポンス)
 プレフィックス付きでヘッダーとボディを表示する。
 
 ```
-==> 2026-05-19 23:35:49.123 [getToken] POST https://api.example.com/auth
+==> 2026-05-19 23:35:49.123 [getToken]
+    > POST /auth HTTP/1.1
+    > Host: api.example.com
+    > Content-Length: 31
+    > User-Agent: Python-urllib/3.12
+    > Accept-Encoding: identity
     > Content-Type: application/json
     >
     > {"user":"test","pass":"secret"}
 <== 2026-05-19 23:35:49.456 [getToken] status=200
+    < HTTP/1.1 200 OK
     < Content-Type: application/json
+    < Content-Length: 27
     <
     < {"access_token":"tok-xyz"}
     * capture token = 'tok-xyz'
 ```
 
 各ステップの `==>` (送信直前) と `<==` (受信直後) にはローカル時刻 (ミリ秒精度) が付く。
+リクエストには `Host` など urllib が自動付与するヘッダー推定値も出力し、
+レスポンスには `HTTP/1.1 200 OK` のようなステータスラインを表示する。
 `--quiet` (`-q`) を指定するとこの2行のサマリだけになる。
 
 ### 単一スクリプトの生成
