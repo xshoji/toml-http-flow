@@ -58,18 +58,19 @@ python3 -m apiwf run -f workflow.toml -q
 プレフィックス付きでヘッダーとボディを表示する。
 
 ```
-==> [getToken] POST https://api.example.com/auth
+==> 2026-05-19 23:35:49.123 [getToken] POST https://api.example.com/auth
     > Content-Type: application/json
     >
     > {"user":"test","pass":"secret"}
-<== [getToken] status=200
+<== 2026-05-19 23:35:49.456 [getToken] status=200
     < Content-Type: application/json
     <
     < {"access_token":"tok-xyz"}
     * capture token = 'tok-xyz'
 ```
 
-`--quiet` (`-q`) を指定すると `==>` / `<==` の各ステップ1行サマリだけになる。
+各ステップの `==>` (送信直前) と `<==` (受信直後) にはローカル時刻 (ミリ秒精度) が付く。
+`--quiet` (`-q`) を指定するとこの2行のサマリだけになる。
 
 ### 単一スクリプトの生成
 
@@ -93,6 +94,43 @@ python3 -m apiwf generate -f workflow.toml -v env=production -o workflow.py
 python3 workflow.py
 python3 workflow.py -v env=staging --quiet
 ```
+
+#### 生成スクリプトの構造（手で編集する前提）
+
+生成スクリプトは **可読性とアドホック編集のしやすさ** を最優先したレイアウトで出力される。
+1つの `[[requests]]` ブロックは、独立した `step_<name>` 関数として展開される。
+
+```python
+def step_getToken(store, quiet=False):
+    """[[requests]] name = 'getToken' — POST https://api.example.com/auth"""
+    name = 'getToken'
+    method = 'POST'
+    url = render('https://api.example.com/auth', store)
+    headers = render_mapping({
+        'Content-Type': 'application/json',
+    }, store)
+    body_form = None
+    body_bytes = render('{"user":"test","pass":"secret"}', store).encode("utf-8")
+    ...
+
+def main():
+    ...
+    # === Workflow ===
+    # Comment out a line to skip that step. Reorder lines to change execution order.
+    step_getToken(store, quiet=args.quiet)
+    step_getUser(store, quiet=args.quiet)
+    step_updateProfile(store, quiet=args.quiet)
+```
+
+よくある編集ユースケース:
+
+- **このステップだけ叩き直したい** → `main()` 内の他のステップ呼び出しをコメントアウト
+- **順番を入れ替えたい** → `main()` 内の呼び出し順を並べ替え
+- **URL/ヘッダー/ボディを少しだけ変えて再実行** → 該当 `step_*` 関数を直に編集
+- **ステップを丸ごと足したい** → 既存関数をコピーして関数名・内容を書き換え、`main()` に1行追加
+
+ランタイムヘルパ (`render` / `extract` / `do_request` / `log_*`) はスクリプト先頭に
+インライン定義されており、本ツール側のコードに依存しない。
 
 ## TOML 仕様
 
