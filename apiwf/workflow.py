@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import sys
 from dataclasses import replace
 from typing import Any
@@ -9,6 +10,12 @@ from typing import Any
 from .config import RequestConfig, WorkflowConfig
 from .httpclient import execute, extract
 from .template import render, render_mapping
+
+
+def _now() -> str:
+    """Local time stamp with millisecond precision, e.g. ``2026-05-19 23:35:49.123``."""
+    now = datetime.datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
 
 
 def _render_request(req: RequestConfig, store: dict[str, Any]) -> RequestConfig:
@@ -61,12 +68,12 @@ def run(
     for req in config.requests:
         rendered = _render_request(req, store)
 
-        print(f"==> [{rendered.name}] {rendered.method} {rendered.url}", file=out)
+        print(f"==> {_now()} [{rendered.name}] {rendered.method} {rendered.url}", file=out)
         if not quiet:
             _print_request_details(rendered, out)
 
         resp = execute(rendered)
-        print(f"<== [{rendered.name}] status={resp.status}", file=out)
+        print(f"<== {_now()} [{rendered.name}] status={resp.status}", file=out)
         if not quiet:
             _print_response_details(resp, out)
 

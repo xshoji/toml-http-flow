@@ -49,6 +49,33 @@ class TestWorkflow(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
+    def test_body_form_template_rendering_with_hyphen_step(self):
+        """body_form values must have ${...} expanded, including when the
+        referenced step name contains a hyphen (regression: the template
+        regex used to reject hyphens)."""
+        from apiwf.workflow import _render_request
+
+        req = RequestConfig(
+            name="next",
+            method="POST",
+            url="http://example.com/x",
+            body_form={
+                "nickname": "new_name",
+                "email": "test@email.com",
+                "args": "${steps.httpbinorg-post.argsAaa2}",
+            },
+        )
+        store = {
+            "vars": {},
+            "steps": {"httpbinorg-post": {"argsAaa2": "hello-world"}},
+        }
+        rendered = _render_request(req, store)
+        self.assertEqual(rendered.body_form, {
+            "nickname": "new_name",
+            "email": "test@email.com",
+            "args": "hello-world",
+        })
+
     def test_two_step_capture_and_template(self):
         base = f"http://127.0.0.1:{self.port}"
         cfg = WorkflowConfig(
@@ -77,6 +104,16 @@ class TestWorkflow(unittest.TestCase):
         self.assertEqual(store["steps"]["getUser"]["uid"], 7)
         self.assertEqual(store["steps"]["getUser"]["echoed_auth"], "Bearer tok-abc")
         self.assertEqual(store["vars"], {"env": "test"})
+
+        # Each request and response summary line must include a local
+        # timestamp like "==> 2026-05-19 23:35:49.123 [getToken] ...".
+        import re as _re
+        ts = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}"
+        output = buf.getvalue()
+        self.assertRegex(output, rf"==> {ts} \[getToken\] POST ")
+        self.assertRegex(output, rf"<== {ts} \[getToken\] status=200")
+        self.assertRegex(output, rf"==> {ts} \[getUser\] GET ")
+        self.assertRegex(output, rf"<== {ts} \[getUser\] status=200")
 
 
 if __name__ == "__main__":
