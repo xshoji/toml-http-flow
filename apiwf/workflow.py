@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import datetime
 import sys
+import urllib.parse
 from dataclasses import replace
 from typing import Any
 
 from .config import RequestConfig, WorkflowConfig
-from .httpclient import execute, extract
+from .httpclient import execute, extract, prepare_request
 from .template import render, render_mapping
 
 
@@ -29,9 +30,38 @@ def _render_request(req: RequestConfig, store: dict[str, Any]) -> RequestConfig:
     )
 
 
-def _print_request_details(req: RequestConfig, out) -> None:
+def _log_request(req: RequestConfig, out) -> None:
+    """Print the request line and headers that urllib will actually send."""
+    request, body_bytes = prepare_request(req)
+
+    # Request line: e.g. POST /auth HTTP/1.1
+    parsed = urllib.parse.urlparse(req.url)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    print(f"    > {req.method.upper()} {path} HTTP/1.1", file=out)
+
+    # Host header (estimated)
+    print(f"    > Host: {parsed.netloc}", file=out)
+
+    # Explicit user headers
     for k, v in req.headers.items():
         print(f"    > {k}: {v}", file=out)
+
+    # Estimated headers that urllib adds automatically
+    if body_bytes is not None:
+        print(f"    > Content-Length: {len(body_bytes)}", file=out)
+
+    lower_headers = {h.lower() for h in req.headers}
+    if "user-agent" not in lower_headers:
+        print(
+            f"    > User-Agent: Python-urllib/{sys.version_info.major}.{sys.version_info.minor}",
+            file=out,
+        )
+    if "accept-encoding" not in lower_headers:
+        print("    > Accept-Encoding: identity", file=out)
+
+    # Body
     if req.body is not None:
         print("    >", file=out)
         for line in req.body.splitlines() or [""]:
@@ -42,7 +72,9 @@ def _print_request_details(req: RequestConfig, out) -> None:
             print(f"    >   {k} = {v}", file=out)
 
 
-def _print_response_details(resp, out) -> None:
+def _log_response(resp, out) -> None:
+    """Print the HTTP status line and response headers/body."""
+    print(f"    < HTTP/1.1 {resp.status} {resp.reason}", file=out)
     for k, v in resp.headers.items():
         print(f"    < {k}: {v}", file=out)
     if resp.body_text:
@@ -70,12 +102,12 @@ def run(
 
         print(f"==> {_now()} [{rendered.name}] {rendered.method} {rendered.url}", file=out)
         if not quiet:
-            _print_request_details(rendered, out)
+            _log_request(rendered, out)
 
         resp = execute(rendered)
         print(f"<== {_now()} [{rendered.name}] status={resp.status}", file=out)
         if not quiet:
-            _print_response_details(resp, out)
+            _log_response(resp, out)
 
         captured: dict[str, Any] = {}
         if rendered.capture:

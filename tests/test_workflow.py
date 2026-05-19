@@ -115,6 +115,46 @@ class TestWorkflow(unittest.TestCase):
         self.assertRegex(output, rf"==> {ts} \[getUser\] GET ")
         self.assertRegex(output, rf"<== {ts} \[getUser\] status=200")
 
+    # --- curl -vvv detailed output assertions ---
+
+    def test_request_line_and_estimated_headers(self):
+        """The detailed output must include the request line, Host,
+        and estimated User-Agent/Accept-Encoding when not supplied."""
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="ping",
+                    method="GET",
+                    url=f"{base}/me",
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        run(cfg, out=buf)
+        output = buf.getvalue()
+        self.assertIn("    > GET /me HTTP/1.1", output)
+        self.assertIn("    > Host:", output)
+        self.assertIn("    > User-Agent: Python-urllib/", output)
+        self.assertIn("    > Accept-Encoding: identity", output)
+
+    def test_response_status_line(self):
+        """The detailed output must include the HTTP/1.1 status line."""
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="ping",
+                    method="GET",
+                    url=f"{base}/me",
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        run(cfg, out=buf)
+        output = buf.getvalue()
+        self.assertIn("    < HTTP/1.1 200 OK", output)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -89,13 +89,12 @@ def _emit_step(req: RequestConfig, func_name: str) -> str:
     else:
         lines.append("    body_form = None")
         lines.append("    body_bytes = None")
-
-    lines.append("")
+    # request header estimation requires method/url/headers/body_bytes
     lines.append("    log_request(name, method, url, headers, body_bytes, body_form, quiet)")
     lines.append(
-        "    status, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)"
+        "    status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)"
     )
-    lines.append("    log_response(name, status, resp_headers, text, quiet)")
+    lines.append("    log_response(name, status, reason, resp_headers, text, quiet)")
     lines.append("")
 
     if req.capture:

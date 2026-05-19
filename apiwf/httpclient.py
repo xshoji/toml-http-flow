@@ -19,30 +19,26 @@ PATH_TOKEN = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
 @dataclass
 class Response:
     status: int
+    reason: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     body_text: str = ""
     body_json: Any | None = None
 
 
-def _build_body(req: RequestConfig) -> tuple[bytes | None, dict[str, str]]:
-    """Return (body_bytes, extra_headers) based on the request body fields."""
+def prepare_request(req: RequestConfig) -> tuple[urllib.request.Request, bytes | None]:
+    """Build a urllib Request object plus the body bytes that will be sent."""
     extra: dict[str, str] = {}
+    body_bytes: bytes | None = None
     if req.body_form is not None:
         encoded = urllib.parse.urlencode(req.body_form)
         if not any(h.lower() == "content-type" for h in req.headers):
             extra["Content-Type"] = "application/x-www-form-urlencoded"
-        return encoded.encode("utf-8"), extra
-    if req.body is not None:
-        return req.body.encode("utf-8"), extra
-    return None, extra
-
-
-def execute(req: RequestConfig, timeout: float | None = None) -> Response:
-    """Execute a single HTTP request and return the response."""
-    body_bytes, extra_headers = _build_body(req)
+        body_bytes = encoded.encode("utf-8")
+    elif req.body is not None:
+        body_bytes = req.body.encode("utf-8")
 
     headers = dict(req.headers)
-    for k, v in extra_headers.items():
+    for k, v in extra.items():
         headers.setdefault(k, v)
 
     request = urllib.request.Request(
@@ -51,11 +47,18 @@ def execute(req: RequestConfig, timeout: float | None = None) -> Response:
         method=req.method.upper(),
         headers=headers,
     )
+    return request, body_bytes
+
+
+def execute(req: RequestConfig, timeout: float | None = None) -> Response:
+    """Execute a single HTTP request and return the response."""
+    request, _ = prepare_request(req)
 
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             raw = resp.read()
             status = resp.status
+            reason = resp.reason
             resp_headers = {k: v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as e:
         body = e.read() if e.fp is not None else b""
@@ -73,6 +76,7 @@ def execute(req: RequestConfig, timeout: float | None = None) -> Response:
 
     return Response(
         status=status,
+        reason=reason,
         headers=resp_headers,
         body_text=text,
         body_json=body_json,

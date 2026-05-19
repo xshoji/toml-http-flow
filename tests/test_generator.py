@@ -84,8 +84,26 @@ class TestGenerator(unittest.TestCase):
                 capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(res.returncode, 0, msg=res.stderr)
-            self.assertIn("[getToken]", res.stdout)
-            self.assertIn("[getUser]", res.stdout)
+            stdout = res.stdout
+
+            # Basic presence checks
+            self.assertIn("[getToken]", stdout)
+            self.assertIn("[getUser]", stdout)
+
+            # --- curl -vvv detail assertions ---
+            # Request line
+            self.assertIn("    > POST /auth HTTP/1.1", stdout)
+            self.assertIn("    > GET /me HTTP/1.1", stdout)
+
+            # Estimated headers
+            self.assertIn("    > Host:", stdout)
+            self.assertIn("    > User-Agent: Python-urllib/", stdout)
+
+            # Response status line
+            self.assertIn("    < HTTP/1.1 200 OK", stdout)
+
+            # Capture line
+            self.assertIn("* capture token = 'gen-tok'", stdout)
 
 
 if __name__ == "__main__":

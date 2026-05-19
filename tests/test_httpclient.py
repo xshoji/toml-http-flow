@@ -92,6 +92,73 @@ class TestHTTPClient(unittest.TestCase):
         self.assertIn(b"a=1", body)
         self.assertIn(b"b=hello+world", body)
 
+    # -- reason field (201 (Created)) --
+    def test_post_reason(self):
+        class _CreatedHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(length)
+                body = json.dumps({"id": 42}).encode("utf-8")
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                return
+
+        srv = HTTPServer(("127.0.0.1", 0), _CreatedHandler)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            req = RequestConfig(
+                name="c", method="POST", url=f"http://127.0.0.1:{port}/items",
+                headers={"Content-Type": "application/json"},
+                body='{"name":"x"}',
+            )
+            resp = execute(req)
+            self.assertEqual(resp.status, 201)
+            self.assertEqual(resp.reason, "Created")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    # -- no explicit test for reason on 200; mock framework may return "OK" --
+
+
+class TestPrepareRequest(unittest.TestCase):
+    """Smoke tests for prepare_request helper."""
+
+    def test_get_has_no_body(self):
+        from apiwf.httpclient import prepare_request
+        req = RequestConfig(name="g", method="GET", url="http://example.com/")
+        request, body_bytes = prepare_request(req)
+        self.assertIsNone(body_bytes)
+        self.assertEqual(request.get_method(), "GET")
+
+    def test_post_json_body_bytes(self):
+        from apiwf.httpclient import prepare_request
+        req = RequestConfig(
+            name="p", method="POST", url="http://example.com/",
+            headers={"Content-Type": "application/json"},
+            body='{"a":1}',
+        )
+        request, body_bytes = prepare_request(req)
+        self.assertEqual(body_bytes, b'{"a":1}')
+        self.assertEqual(request.get_method(), "POST")
+
+    def test_body_form_adds_content_type(self):
+        from apiwf.httpclient import prepare_request
+        req = RequestConfig(
+            name="f", method="POST", url="http://example.com/",
+            body_form={"x": "y"},
+        )
+        request, body_bytes = prepare_request(req)
+        self.assertEqual(request.get_header("Content-type"), "application/x-www-form-urlencoded")
+        self.assertIsNotNone(body_bytes)
+
 
 class TestExtract(unittest.TestCase):
     def test_top_level(self):

@@ -29,7 +29,7 @@ def _now():
 
 # ─── runtime helpers (inlined; no apiwf dependency) ─────────────────
 TEMPLATE_PATTERN = re.compile(r"\$(?:\$|\{([\w.\-]+)\})")
-PATH_TOKEN = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
+PATH_TOKEN = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
 
 
 def _lookup(store, parts):
@@ -76,6 +76,7 @@ def do_request(method, url, headers, body_bytes, timeout=None):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
             status = resp.status
+            reason = resp.reason
             resp_headers = {k: v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as e:
         body = e.read() if e.fp is not None else b""
@@ -86,15 +87,36 @@ def do_request(method, url, headers, body_bytes, timeout=None):
         body_json = json.loads(text) if text else None
     except json.JSONDecodeError:
         body_json = None
-    return status, resp_headers, text, body_json
+    return status, reason, resp_headers, text, body_json
 
 
 def log_request(name, method, url, headers, body_bytes, body_form, quiet):
     print(f"==> {_now()} [{name}] {method} {url}")
     if quiet:
         return
+
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    print(f"    > {method} {path} HTTP/1.1")
+    print(f"    > Host: {parsed.netloc}")
+
+    # Explicit user headers
     for k, v in headers.items():
         print(f"    > {k}: {v}")
+
+    # Estimated headers
+    if body_bytes is not None:
+        print(f"    > Content-Length: {len(body_bytes)}")
+    lower_headers = {h.lower() for h in headers}
+    if "user-agent" not in lower_headers:
+        print(
+            f"    > User-Agent: Python-urllib/{sys.version_info.major}.{sys.version_info.minor}"
+        )
+    if "accept-encoding" not in lower_headers:
+        print("    > Accept-Encoding: identity")
+
     if body_form is not None:
         print("    > (form)")
         for k, v in body_form.items():
@@ -110,10 +132,11 @@ def log_request(name, method, url, headers, body_bytes, body_form, quiet):
             print(f"    > {line}")
 
 
-def log_response(name, status, resp_headers, text, quiet):
+def log_response(name, status, reason, resp_headers, text, quiet):
     print(f"<== {_now()} [{name}] status={status}")
     if quiet:
         return
+    print(f"    < HTTP/1.1 {status} {reason}")
     for k, v in resp_headers.items():
         print(f"    < {k}: {v}")
     if text:
