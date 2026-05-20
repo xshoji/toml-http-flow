@@ -39,6 +39,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("-q", "--quiet", action="store_true",
                        help="suppress per-step request/response detail output "
                             "(detail is ON by default)")
+    p_run.add_argument("--pretty-json", action="store_true",
+                       help="pretty-print JSON request/response bodies with 2-space indent")
 
     p_gen = sub.add_parser("generate", help="emit a standalone runner script")
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
@@ -77,7 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         vars_ = _parse_vars(args.var)
         try:
-            workflow.run(cfg, vars_, quiet=args.quiet)
+            workflow.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1

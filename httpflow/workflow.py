@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import sys
 import time
 import urllib.parse
@@ -32,6 +33,21 @@ def _render_request(req: RequestConfig, store: dict[str, Any]) -> RequestConfig:
     )
 
 
+def _maybe_pretty_json(text: str, pretty_json: bool) -> str:
+    """Return ``text`` re-formatted as 2-space-indent JSON when applicable.
+
+    If ``pretty_json`` is False, or ``text`` is empty / not parseable as JSON,
+    the input is returned unchanged.
+    """
+    if not pretty_json or not text:
+        return text
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text
+    return json.dumps(parsed, indent=2, ensure_ascii=False)
+
+
 def _log_description(req: RequestConfig, out) -> None:
     """Print the optional per-step description right after the ``==>`` line."""
     if not req.description:
@@ -40,7 +56,7 @@ def _log_description(req: RequestConfig, out) -> None:
         print(f"    # {line}", file=out)
 
 
-def _log_request(req: RequestConfig, out) -> None:
+def _log_request(req: RequestConfig, out, *, pretty_json: bool = False) -> None:
     """Print the request line and headers that urllib will actually send."""
     request, body_bytes = prepare_request(req)
 
@@ -73,8 +89,9 @@ def _log_request(req: RequestConfig, out) -> None:
 
     # Body
     if req.body is not None:
+        body_text = _maybe_pretty_json(req.body, pretty_json)
         print("    >", file=out)
-        for line in req.body.splitlines() or [""]:
+        for line in body_text.splitlines() or [""]:
             print(f"    > {line}", file=out)
     elif req.body_form is not None:
         print("    > (form)", file=out)
@@ -82,14 +99,15 @@ def _log_request(req: RequestConfig, out) -> None:
             print(f"    >   {k} = {v}", file=out)
 
 
-def _log_response(resp, out) -> None:
+def _log_response(resp, out, *, pretty_json: bool = False) -> None:
     """Print the HTTP status line and response headers/body."""
     print(f"    < HTTP/1.1 {resp.status} {resp.reason}", file=out)
     for k, v in resp.headers.items():
         print(f"    < {k}: {v}", file=out)
     if resp.body_text:
+        body_text = _maybe_pretty_json(resp.body_text, pretty_json)
         print("    <", file=out)
-        for line in resp.body_text.splitlines():
+        for line in body_text.splitlines():
             print(f"    < {line}", file=out)
 
 
@@ -99,6 +117,7 @@ def _execute_http_attempt(
     *,
     quiet: bool,
     out,
+    pretty_json: bool = False,
 ) -> None:
     """Render, send, log, and capture a single HTTP attempt.
 
@@ -109,12 +128,12 @@ def _execute_http_attempt(
     _log_description(rendered, out)
 
     if not quiet:
-        _log_request(rendered, out)
+        _log_request(rendered, out, pretty_json=pretty_json)
 
     resp = execute(rendered)
     print(f"<== {_now()} [{rendered.name}] status={resp.status}", file=out)
     if not quiet:
-        _log_response(resp, out)
+        _log_response(resp, out, pretty_json=pretty_json)
 
     captured: dict[str, Any] = {}
     if rendered.capture:
@@ -136,12 +155,14 @@ def run(
     vars_: dict[str, str] | None = None,
     *,
     quiet: bool = False,
+    pretty_json: bool = False,
     out=sys.stdout,
 ) -> dict[str, Any]:
     """Run every request in ``config`` and return the final variable store.
 
     By default each step's request and response details are printed to ``out``.
     Pass ``quiet=True`` to print only the one-line summary per step.
+    Pass ``pretty_json=True`` to pretty-print JSON bodies with 2-space indent.
     """
     store: dict[str, Any] = {"vars": dict(vars_ or {}), "steps": {}}
 
@@ -170,13 +191,13 @@ def run(
 
         # Plain HTTP step (no polling).
         if req.until is None:
-            _execute_http_attempt(req, store, quiet=quiet, out=out)
+            _execute_http_attempt(req, store, quiet=quiet, out=out, pretty_json=pretty_json)
             continue
 
         # HTTP step with `until` polling.
         until = req.until
         for attempt in range(1, until.max_attempts + 1):
-            _execute_http_attempt(req, store, quiet=quiet, out=out)
+            _execute_http_attempt(req, store, quiet=quiet, out=out, pretty_json=pretty_json)
             if evaluate_condition(until.condition, store):
                 if not quiet:
                     print(

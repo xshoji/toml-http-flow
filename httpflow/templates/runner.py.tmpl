@@ -91,7 +91,18 @@ def do_request(method, url, headers, body_bytes, timeout=None):
     return status, reason, resp_headers, text, body_json
 
 
-def log_request(name, method, url, headers, body_bytes, body_form, quiet, description=None):
+def _maybe_pretty_json(text, pretty_json):
+    """Re-format ``text`` as 2-space-indent JSON if it parses; else return as-is."""
+    if not pretty_json or not text:
+        return text
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text
+    return json.dumps(parsed, indent=2, ensure_ascii=False)
+
+
+def log_request(name, method, url, headers, body_bytes, body_form, quiet, description=None, pretty_json=False):
     print(f"==> {_now()} [{name}] {method} {url}")
     if description:
         for line in description.splitlines() or [""]:
@@ -131,12 +142,13 @@ def log_request(name, method, url, headers, body_bytes, body_form, quiet, descri
         except UnicodeDecodeError:
             print(f"    > <{len(body_bytes)} bytes>")
             return
+        text = _maybe_pretty_json(text, pretty_json)
         print("    >")
         for line in text.splitlines() or [""]:
             print(f"    > {line}")
 
 
-def log_response(name, status, reason, resp_headers, text, quiet):
+def log_response(name, status, reason, resp_headers, text, quiet, pretty_json=False):
     print(f"<== {_now()} [{name}] status={status}")
     if quiet:
         return
@@ -144,6 +156,7 @@ def log_response(name, status, reason, resp_headers, text, quiet):
     for k, v in resp_headers.items():
         print(f"    < {k}: {v}")
     if text:
+        text = _maybe_pretty_json(text, pretty_json)
         print("    <")
         for line in text.splitlines():
             print(f"    < {line}")
@@ -239,6 +252,8 @@ def main():
     parser.add_argument("-q", "--quiet", action="store_true",
                         help="suppress per-step request/response detail output "
                              "(detail is ON by default)")
+    parser.add_argument("--pretty-json", action="store_true",
+                        help="pretty-print JSON request/response bodies with 2-space indent")
     args = parser.parse_args()
 
     store = {"vars": dict(DEFAULT_VARS), "steps": {}}

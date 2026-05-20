@@ -64,7 +64,7 @@ def _sanitize_ident(name: str, used: set[str]) -> str:
 def _emit_step(req: RequestConfig, func_name: str) -> str:
     lines: list[str] = []
     method = req.method.upper()
-    lines.append(f"def {func_name}(store, quiet=False):")
+    lines.append(f"def {func_name}(store, quiet=False, pretty_json=False):")
     lines.append(
         f'    """[[requests]] name = {req.name!r} — {method} {req.url}"""'
     )
@@ -107,12 +107,15 @@ def _emit_step(req: RequestConfig, func_name: str) -> str:
     # request header estimation requires method/url/headers/body_bytes
     desc_arg = f", description={req.description!r}" if req.description else ""
     lines.append(
-        f"    log_request(name, method, url, headers, body_bytes, body_form, quiet{desc_arg})"
+        f"    log_request(name, method, url, headers, body_bytes, body_form, quiet"
+        f"{desc_arg}, pretty_json=pretty_json)"
     )
     lines.append(
         "    status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)"
     )
-    lines.append("    log_response(name, status, reason, resp_headers, text, quiet)")
+    lines.append(
+        "    log_response(name, status, reason, resp_headers, text, quiet, pretty_json=pretty_json)"
+    )
     lines.append("")
 
     if req.capture:
@@ -180,7 +183,7 @@ def generate(
     for req in cfg.requests:
         fn = _sanitize_ident(req.name, used)
         step_blocks.append(_emit_step(req, fn))
-        step_calls.append(f"    {fn}(store, quiet=args.quiet)")
+        step_calls.append(f"    {fn}(store, quiet=args.quiet, pretty_json=args.pretty_json)")
 
     if not step_blocks:
         step_functions_src = "# (no [[requests]] blocks in source TOML)"
