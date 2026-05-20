@@ -12,6 +12,7 @@ from typing import Any
 from .config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
 from .httpclient import execute, extract, prepare_request
 from .template import render, render_mapping
+from .until import evaluate as evaluate_condition
 
 
 def _now() -> str:
@@ -29,6 +30,14 @@ def _render_request(req: RequestConfig, store: dict[str, Any]) -> RequestConfig:
         body=render(req.body, store) if req.body is not None else None,
         body_form=render_mapping(req.body_form, store) if req.body_form is not None else None,
     )
+
+
+def _log_description(req: RequestConfig, out) -> None:
+    """Print the optional per-step description right after the ``==>`` line."""
+    if not req.description:
+        return
+    for line in req.description.splitlines() or [""]:
+        print(f"    # {line}", file=out)
 
 
 def _log_request(req: RequestConfig, out) -> None:
@@ -84,6 +93,44 @@ def _log_response(resp, out) -> None:
             print(f"    < {line}", file=out)
 
 
+def _execute_http_attempt(
+    req: RequestConfig,
+    store: dict[str, Any],
+    *,
+    quiet: bool,
+    out,
+) -> None:
+    """Render, send, log, and capture a single HTTP attempt.
+
+    On return, ``store["steps"][req.name]`` is updated with captured values.
+    """
+    rendered = _render_request(req, store)
+    print(f"==> {_now()} [{rendered.name}] {rendered.method} {rendered.url}", file=out)
+    _log_description(rendered, out)
+
+    if not quiet:
+        _log_request(rendered, out)
+
+    resp = execute(rendered)
+    print(f"<== {_now()} [{rendered.name}] status={resp.status}", file=out)
+    if not quiet:
+        _log_response(resp, out)
+
+    captured: dict[str, Any] = {}
+    if rendered.capture:
+        if resp.body_json is None:
+            raise RuntimeError(
+                f"step {rendered.name!r}: capture requested but response is not JSON"
+            )
+        for var_name, path in rendered.capture.items():
+            value = extract(resp.body_json, path)
+            captured[var_name] = value
+            if not quiet:
+                print(f"    * capture {var_name} = {value!r}", file=out)
+
+    store["steps"][rendered.name] = captured
+
+
 def run(
     config: WorkflowConfig,
     vars_: dict[str, str] | None = None,
@@ -99,45 +146,57 @@ def run(
     store: dict[str, Any] = {"vars": dict(vars_ or {}), "steps": {}}
 
     for req in config.requests:
-        rendered = _render_request(req, store)
-
-        print(f"==> {_now()} [{rendered.name}] {rendered.method} {rendered.url}", file=out)
-
-        if rendered.method in SPECIAL_METHODS:
-            if rendered.method == "SLEEP":
+        # SLEEP step: no HTTP, no until.
+        if req.method in SPECIAL_METHODS:
+            if req.method == "SLEEP":
+                rendered_url = render(req.url, store)
+                print(
+                    f"==> {_now()} [{req.name}] {req.method} {rendered_url}",
+                    file=out,
+                )
+                _log_description(req, out)
                 try:
-                    seconds = float(rendered.url)
+                    seconds = float(rendered_url)
                 except ValueError as exc:
                     raise RuntimeError(
-                        f"step {rendered.name!r}: 'SLEEP' url must be numeric, got: {rendered.url!r}"
+                        f"step {req.name!r}: 'SLEEP' url must be numeric, got: {rendered_url!r}"
                     ) from exc
                 if not quiet:
                     print(f"    > sleep {seconds} seconds", file=out)
                 time.sleep(seconds)
-                print(f"<== {_now()} [{rendered.name}] done", file=out)
-                store["steps"][rendered.name] = {}
+                print(f"<== {_now()} [{req.name}] done", file=out)
+                store["steps"][req.name] = {}
                 continue
 
-        if not quiet:
-            _log_request(rendered, out)
+        # Plain HTTP step (no polling).
+        if req.until is None:
+            _execute_http_attempt(req, store, quiet=quiet, out=out)
+            continue
 
-        resp = execute(rendered)
-        print(f"<== {_now()} [{rendered.name}] status={resp.status}", file=out)
-        if not quiet:
-            _log_response(resp, out)
-
-        captured: dict[str, Any] = {}
-        if rendered.capture:
-            if resp.body_json is None:
-                raise RuntimeError(
-                    f"step {rendered.name!r}: capture requested but response is not JSON"
-                )
-            for var_name, path in rendered.capture.items():
-                value = extract(resp.body_json, path)
-                captured[var_name] = value
+        # HTTP step with `until` polling.
+        until = req.until
+        for attempt in range(1, until.max_attempts + 1):
+            _execute_http_attempt(req, store, quiet=quiet, out=out)
+            if evaluate_condition(until.condition, store):
                 if not quiet:
-                    print(f"    * capture {var_name} = {value!r}", file=out)
-
-        store["steps"][rendered.name] = captured
+                    print(
+                        f"    * until satisfied on attempt {attempt}",
+                        file=out,
+                    )
+                break
+            if attempt < until.max_attempts:
+                if not quiet:
+                    print(
+                        f"    * until not satisfied "
+                        f"(attempt {attempt}/{until.max_attempts}), "
+                        f"retrying in {until.interval}s",
+                        file=out,
+                    )
+                time.sleep(until.interval)
+        else:
+            raise RuntimeError(
+                f"step {req.name!r}: until condition not satisfied "
+                f"after {until.max_attempts} attempts: {until.condition!r}"
+            )
 
     return store

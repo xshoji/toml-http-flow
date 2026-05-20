@@ -76,6 +76,9 @@ def _emit_step(req: RequestConfig, func_name: str) -> str:
         if method == "SLEEP":
             lines.append("")
             lines.append('    print(f"==> {_now()} [{name}] {method} {url}")')
+            if req.description:
+                lines.append(f"    for _ln in {req.description!r}.splitlines() or ['']:")
+                lines.append('        print(f"    # {_ln}")')
             lines.append("    seconds = float(url)")
             lines.append("    if not quiet:")
             lines.append('        print(f"    > sleep {seconds} seconds")')
@@ -102,7 +105,10 @@ def _emit_step(req: RequestConfig, func_name: str) -> str:
         lines.append("    body_form = None")
         lines.append("    body_bytes = None")
     # request header estimation requires method/url/headers/body_bytes
-    lines.append("    log_request(name, method, url, headers, body_bytes, body_form, quiet)")
+    desc_arg = f", description={req.description!r}" if req.description else ""
+    lines.append(
+        f"    log_request(name, method, url, headers, body_bytes, body_form, quiet{desc_arg})"
+    )
     lines.append(
         "    status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)"
     )
@@ -122,7 +128,37 @@ def _emit_step(req: RequestConfig, func_name: str) -> str:
     else:
         lines.append('    store["steps"][name] = {}')
 
-    return "\n".join(lines)
+    if req.until is None:
+        return "\n".join(lines)
+
+    # Wrap the request/capture body in a polling loop. Keep only the ``def``
+    # line and docstring outside the loop so that the rest (including the
+    # ``name = ...`` assignment and any template rendering of url/headers/
+    # body) is re-evaluated for every attempt.
+    head = lines[:2]
+    body = lines[2:]
+    until = req.until
+    head.append(f"    until_condition = {until.condition!r}")
+    head.append(f"    until_interval = {until.interval!r}")
+    head.append(f"    until_max_attempts = {until.max_attempts!r}")
+    head.append("    name = " + repr(req.name))
+    head.append("    for attempt in range(1, until_max_attempts + 1):")
+    indented = ["    " + ln if ln else ln for ln in body]
+    tail = [
+        "        if eval_until(until_condition, store):",
+        "            if not quiet:",
+        '                print(f"    * until satisfied on attempt {attempt}")',
+        "            break",
+        "        if attempt < until_max_attempts:",
+        "            if not quiet:",
+        '                print(f"    * until not satisfied (attempt {attempt}/{until_max_attempts}), '
+        'retrying in {until_interval}s")',
+        "            time.sleep(until_interval)",
+        "    else:",
+        '        raise RuntimeError(f"step {name!r}: until condition not satisfied '
+        'after {until_max_attempts} attempts: {until_condition!r}")',
+    ]
+    return "\n".join(head + indented + tail)
 
 
 # ---------------------------------------------------------------- public API
