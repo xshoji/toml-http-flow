@@ -217,6 +217,7 @@ body_form = [
 | `body`      | -        | string         | Raw text body (mutually exclusive with `body_form`) |
 | `body_form` | -        | array[string]  | `"key = value"` form; `application/x-www-form-urlencoded` is auto-added |
 | `capture`   | -        | array[string]  | `"var_name = json.path"` form |
+| `until`     | -        | array[string]  | Polling settings (see below). Repeat the request until a condition is met |
 
 ### Parse rules
 
@@ -272,6 +273,49 @@ url    = "2"
       > sleep 2.0 seconds
   <== 2026-05-20 01:00:02.000 [wait2s] done
   ```
+
+### Polling with `until`
+
+Use the optional `until` field to repeatedly send the same request until a condition is satisfied. This is useful when you need to wait for a resource to reach a target state (for example, `active`).
+
+```toml
+[[requests]]
+name    = "pollStatus"
+method  = "GET"
+url     = "https://api.example.com/jobs/${steps.createJob.id}"
+capture = ["status = data.status"]
+until   = [
+    "condition    = ${steps.pollStatus.status} == active",
+    "interval     = 2.0",
+    "max_attempts = 30",
+]
+```
+
+| Key           | Required | Type  | Default | Description                                    |
+|---------------|----------|-------|---------|------------------------------------------------|
+| `condition`   | Yes      | string| —       | Expression to evaluate after each attempt      |
+| `interval`    | No       | float | `1.0`   | Seconds to wait between attempts               |
+| `max_attempts`| No       | int   | `10`    | Maximum number of attempts (raises error on exhaustion) |
+
+How it works:
+
+1. Send the request (first attempt outputs the normal request/response log).
+2. Evaluate `capture`, update the variable store.
+3. Expand templates in `condition`, then evaluate.
+4. If truthy, proceed to the next step. If falsy, wait for `interval` seconds and repeat from 1.
+5. If `max_attempts` is exceeded without satisfying the condition, the step fails.
+
+Supported operators in `condition`:
+
+| Operator | Example                              | Meaning                     |
+|----------|--------------------------------------|-----------------------------|
+| `==`     | `${steps.x.status} == active`        | String equality             |
+| `!=`     | `${steps.x.status} != pending`       | String inequality           |
+| `~`      | `${steps.x.message} ~ /success/i`    | Regular expression match (`/pattern/flags`) |
+| `in`     | `${steps.x.code} in [200, 201, 204]` | Included in a comma-separated list |
+
+- Both operands are evaluated as strings after template expansion.
+- HTTP errors (4xx/5xx) during polling fail immediately without retry.
 
 ## Template notation
 
