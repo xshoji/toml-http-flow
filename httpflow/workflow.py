@@ -63,12 +63,14 @@ def _log_description(req: RequestConfig, out) -> None:
         print(f"    # {line}", file=out)
 
 
-def _log_request(req: RequestConfig, out, *, pretty_json: bool = False) -> None:
+def _log_request(
+    req: RequestConfig, out, *, pretty_json: bool = False, no_mask: bool = False
+) -> None:
     """Print the request line and headers that urllib will actually send."""
     request, body_bytes = prepare_request(req)
 
     # Request line: e.g. POST /auth HTTP/1.1 (query masked)
-    parsed = urllib.parse.urlparse(mask_url(req.url))
+    parsed = urllib.parse.urlparse(mask_url(req.url, disabled=no_mask))
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
@@ -78,7 +80,7 @@ def _log_request(req: RequestConfig, out, *, pretty_json: bool = False) -> None:
     print(f"    > Host: {parsed.netloc}", file=out)
 
     # Explicit user headers (masked)
-    for k, v in mask_headers(req.headers).items():
+    for k, v in mask_headers(req.headers, disabled=no_mask).items():
         print(f"    > {k}: {v}", file=out)
 
     # Estimated headers that urllib adds automatically
@@ -96,23 +98,23 @@ def _log_request(req: RequestConfig, out, *, pretty_json: bool = False) -> None:
 
     # Body (masked, then pretty-printed)
     if req.body is not None:
-        body_text = _maybe_pretty_json(mask_body_text(req.body), pretty_json)
+        body_text = _maybe_pretty_json(mask_body_text(req.body, disabled=no_mask), pretty_json)
         print("    >", file=out)
         for line in body_text.splitlines() or [""]:
             print(f"    > {line}", file=out)
     elif req.body_form is not None:
         print("    > (form)", file=out)
-        for k, v in mask_form(req.body_form).items():
+        for k, v in mask_form(req.body_form, disabled=no_mask).items():
             print(f"    >   {k} = {v}", file=out)
 
 
-def _log_response(resp, out, *, pretty_json: bool = False) -> None:
+def _log_response(resp, out, *, pretty_json: bool = False, no_mask: bool = False) -> None:
     """Print the HTTP status line and response headers/body."""
     print(f"    < HTTP/1.1 {resp.status} {resp.reason}", file=out)
-    for k, v in mask_headers(resp.headers).items():
+    for k, v in mask_headers(resp.headers, disabled=no_mask).items():
         print(f"    < {k}: {v}", file=out)
     if resp.body_text:
-        body_text = _maybe_pretty_json(mask_body_text(resp.body_text), pretty_json)
+        body_text = _maybe_pretty_json(mask_body_text(resp.body_text, disabled=no_mask), pretty_json)
         print("    <", file=out)
         for line in body_text.splitlines():
             print(f"    < {line}", file=out)
@@ -125,6 +127,7 @@ def _execute_http_attempt(
     quiet: bool,
     out,
     pretty_json: bool = False,
+    no_mask: bool = False,
 ) -> None:
     """Render, send, log, and capture a single HTTP attempt.
 
@@ -132,18 +135,18 @@ def _execute_http_attempt(
     """
     rendered = _render_request(req, store)
     print(
-        f"==> {_now()} [{rendered.name}] {rendered.method} {mask_url(rendered.url)}",
+        f"==> {_now()} [{rendered.name}] {rendered.method} {mask_url(rendered.url, disabled=no_mask)}",
         file=out,
     )
     _log_description(rendered, out)
 
     if not quiet:
-        _log_request(rendered, out, pretty_json=pretty_json)
+        _log_request(rendered, out, pretty_json=pretty_json, no_mask=no_mask)
 
     resp = execute(rendered)
     print(f"<== {_now()} [{rendered.name}] status={resp.status}", file=out)
     if not quiet:
-        _log_response(resp, out, pretty_json=pretty_json)
+        _log_response(resp, out, pretty_json=pretty_json, no_mask=no_mask)
 
     captured: dict[str, Any] = {}
     if rendered.capture:
@@ -155,7 +158,7 @@ def _execute_http_attempt(
             value = extract(resp.body_json, path)
             captured[var_name] = value
             if not quiet:
-                shown = mask_capture_value(var_name, value)
+                shown = mask_capture_value(var_name, value, disabled=no_mask)
                 print(f"    * capture {var_name} = {shown!r}", file=out)
 
     store["steps"][rendered.name] = captured
@@ -167,6 +170,7 @@ def run(
     *,
     quiet: bool = False,
     pretty_json: bool = False,
+    no_mask: bool = False,
     out=sys.stdout,
 ) -> dict[str, Any]:
     """Run every request in ``config`` and return the final variable store.
@@ -174,6 +178,7 @@ def run(
     By default each step's request and response details are printed to ``out``.
     Pass ``quiet=True`` to print only the one-line summary per step.
     Pass ``pretty_json=True`` to pretty-print JSON bodies with 2-space indent.
+    Pass ``no_mask=True`` to disable masking of sensitive fields in log output.
     """
     store: dict[str, Any] = {"vars": dict(vars_ or {}), "steps": {}}
 
@@ -202,13 +207,13 @@ def run(
 
         # Plain HTTP step (no polling).
         if req.until is None:
-            _execute_http_attempt(req, store, quiet=quiet, out=out, pretty_json=pretty_json)
+            _execute_http_attempt(req, store, quiet=quiet, out=out, pretty_json=pretty_json, no_mask=no_mask)
             continue
 
         # HTTP step with `until` polling.
         until = req.until
         for attempt in range(1, until.max_attempts + 1):
-            _execute_http_attempt(req, store, quiet=quiet, out=out, pretty_json=pretty_json)
+            _execute_http_attempt(req, store, quiet=quiet, out=out, pretty_json=pretty_json, no_mask=no_mask)
             if evaluate_condition(until.condition, store):
                 if not quiet:
                     print(

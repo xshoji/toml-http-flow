@@ -110,12 +110,10 @@ class TestGenerator(unittest.TestCase):
             self.assertIn("    > Authorization: ***", stdout)
             self.assertNotIn("Bearer gen-tok", stdout)
 
-            # ---- Run #2: HTTPFLOW_MASK_DISABLED=1 → masking disabled ----
-            import os as _os
-            env = {**_os.environ, "HTTPFLOW_MASK_DISABLED": "1"}
+            # ---- Run #2: --no-mask → masking disabled ----
             res2 = subprocess.run(
-                [sys.executable, str(script_path)],
-                capture_output=True, text=True, timeout=10, env=env,
+                [sys.executable, str(script_path), "--no-mask"],
+                capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(res2.returncode, 0, msg=res2.stderr)
             stdout2 = res2.stdout

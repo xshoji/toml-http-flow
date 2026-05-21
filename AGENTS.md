@@ -8,7 +8,7 @@ Read this before changing any code.
 - Name: `httpflow` (package / CLI name) / `toml-http-flow` (repository)
 - Type: CLI tool
 - Purpose: run an HTTP workflow defined in TOML in order / emit a single .py script
-- Specification: [docs/design.md](docs/design.md) is the **single source of truth**. Update it first whenever the spec changes.
+- Specification: each file under [docs/design/](docs/design/) and [docs/design.md](docs/design.md) is the **single source of truth**. Update it first whenever the spec changes.
 
 ## Absolute requirements
 

@@ -20,13 +20,10 @@ PATH_TOKEN = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
 
 
 # ─── sensitive-field masking (inlined; configurable via env vars) ─────
-# Env vars:
-#   HTTPFLOW_MASK_DISABLED        - "1"/"true"/"yes"/"on" to disable
-#   HTTPFLOW_MASK_PLACEHOLDER     - replacement string (default "***")
-#   HTTPFLOW_MASK_HEADERS         - comma-separated, REPLACES defaults
-#   HTTPFLOW_MASK_HEADERS_EXTRA   - comma-separated, ADDED to defaults
-#   HTTPFLOW_MASK_BODY_KEYS       - comma-separated, REPLACES defaults
-#   HTTPFLOW_MASK_BODY_KEYS_EXTRA - comma-separated, ADDED to defaults
+# Env var:
+#   HTTPFLOW_MASK_EXTRA - comma-separated key names added to the default set.
+#   Applies to headers, body, query, and capture alike.
+_PLACEHOLDER = "***"
 DEFAULT_SENSITIVE_HEADERS = frozenset({
     "authorization", "proxy-authorization", "cookie", "set-cookie",
     "x-api-key", "x-auth-token", "x-access-token",
@@ -48,100 +45,70 @@ def _mask_norm(name):
     return name.lower().replace("_", "").replace("-", "").replace(" ", "")
 
 
-def _mask_env_set(env_name):
-    raw = os.environ.get(env_name, "")
+def _mask_extra_set():
+    raw = os.environ.get("HTTPFLOW_MASK_EXTRA", "")
     return {_mask_norm(item) for item in raw.split(",") if item.strip()}
 
 
-def _mask_disabled():
-    return os.environ.get("HTTPFLOW_MASK_DISABLED", "").strip().lower() in (
-        "1", "true", "yes", "on"
-    )
-
-
-def _mask_placeholder():
-    return os.environ.get("HTTPFLOW_MASK_PLACEHOLDER") or "***"
-
-
-def _mask_resolve(defaults, override_env, extra_env):
-    override = _mask_env_set(override_env)
-    base = override if override else {_mask_norm(x) for x in defaults}
-    base |= _mask_env_set(extra_env)
+def _mask_all_targets():
+    base = {_mask_norm(x) for x in DEFAULT_SENSITIVE_HEADERS}
+    base |= {_mask_norm(x) for x in DEFAULT_SENSITIVE_BODY_KEYS}
+    base |= _mask_extra_set()
     return base
 
 
-def _mask_header_set():
-    return _mask_resolve(
-        DEFAULT_SENSITIVE_HEADERS,
-        "HTTPFLOW_MASK_HEADERS",
-        "HTTPFLOW_MASK_HEADERS_EXTRA",
-    )
-
-
-def _mask_body_set():
-    return _mask_resolve(
-        DEFAULT_SENSITIVE_BODY_KEYS,
-        "HTTPFLOW_MASK_BODY_KEYS",
-        "HTTPFLOW_MASK_BODY_KEYS_EXTRA",
-    )
-
-
-def mask_headers(headers):
-    if _mask_disabled():
+def mask_headers(headers, disabled=False):
+    if disabled:
         return dict(headers)
-    targets = _mask_header_set()
-    mark = _mask_placeholder()
-    return {k: (mark if _mask_norm(k) in targets else v) for k, v in headers.items()}
+    targets = _mask_all_targets()
+    return {k: (_PLACEHOLDER if _mask_norm(k) in targets else v) for k, v in headers.items()}
 
 
-def _mask_obj(obj, targets, mark):
+def _mask_obj(obj, targets):
     if isinstance(obj, dict):
         return {
-            k: (mark if isinstance(k, str) and _mask_norm(k) in targets
-                else _mask_obj(v, targets, mark))
+            k: (_PLACEHOLDER if isinstance(k, str) and _mask_norm(k) in targets
+                else _mask_obj(v, targets))
             for k, v in obj.items()
         }
     if isinstance(obj, list):
-        return [_mask_obj(item, targets, mark) for item in obj]
+        return [_mask_obj(item, targets) for item in obj]
     return obj
 
 
-def mask_form(form):
-    if _mask_disabled():
+def mask_form(form, disabled=False):
+    if disabled:
         return dict(form)
-    targets = _mask_body_set()
-    mark = _mask_placeholder()
-    return {k: (mark if _mask_norm(k) in targets else v) for k, v in form.items()}
+    targets = _mask_all_targets()
+    return {k: (_PLACEHOLDER if _mask_norm(k) in targets else v) for k, v in form.items()}
 
 
-def mask_url(url):
-    if _mask_disabled():
+def mask_url(url, disabled=False):
+    if disabled:
         return url
     parsed = urllib.parse.urlsplit(url)
     if not parsed.query:
         return url
-    targets = _mask_body_set()
-    mark = _mask_placeholder()
+    targets = _mask_all_targets()
     pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    masked = [(k, mark if _mask_norm(k) in targets else v) for k, v in pairs]
+    masked = [(k, _PLACEHOLDER if _mask_norm(k) in targets else v) for k, v in pairs]
     return urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(masked)))
 
 
-def mask_capture_value(name, value):
-    if _mask_disabled():
+def mask_capture_value(name, value, disabled=False):
+    if disabled:
         return value
-    if _mask_norm(name) in _mask_body_set():
-        return _mask_placeholder()
+    if _mask_norm(name) in _mask_all_targets():
+        return _PLACEHOLDER
     return value
 
 
-def mask_body_text(text):
-    if _mask_disabled() or not text:
+def mask_body_text(text, disabled=False):
+    if disabled or not text:
         return text
-    targets = _mask_body_set()
-    mark = _mask_placeholder()
+    targets = _mask_all_targets()
     try:
-        return json.dumps(_mask_obj(json.loads(text), targets, mark), ensure_ascii=False)
+        return json.dumps(_mask_obj(json.loads(text), targets), ensure_ascii=False)
     except (json.JSONDecodeError, ValueError):
         pass
     if "=" in text and "\n" not in text and " " not in text:
@@ -149,7 +116,7 @@ def mask_body_text(text):
             pairs = urllib.parse.parse_qsl(text, keep_blank_values=True, strict_parsing=True)
         except ValueError:
             return text
-        masked = [(k, mark if _mask_norm(k) in targets else v) for k, v in pairs]
+        masked = [(k, _PLACEHOLDER if _mask_norm(k) in targets else v) for k, v in pairs]
         return urllib.parse.urlencode(masked)
     return text
 
@@ -231,14 +198,14 @@ def _print_lines(prefix, text):
         print(f"    {prefix} {line}")
 
 
-def _log_request(method, url, headers, body_bytes, body_form, pretty_json):
-    parsed = urllib.parse.urlparse(mask_url(url))
+def _log_request(method, url, headers, body_bytes, body_form, pretty_json, no_mask=False):
+    parsed = urllib.parse.urlparse(mask_url(url, disabled=no_mask))
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
     print(f"    > {method} {path} HTTP/1.1")
     print(f"    > Host: {parsed.netloc}")
-    for k, v in mask_headers(headers).items():
+    for k, v in mask_headers(headers, disabled=no_mask).items():
         print(f"    > {k}: {v}")
     lower = {h.lower() for h in headers}
     if body_bytes is not None:
@@ -249,26 +216,26 @@ def _log_request(method, url, headers, body_bytes, body_form, pretty_json):
         print("    > Accept-Encoding: identity")
     if body_form is not None:
         print("    > (form)")
-        for k, v in mask_form(body_form).items():
+        for k, v in mask_form(body_form, disabled=no_mask).items():
             print(f"    >   {k} = {v}")
     elif body_bytes is not None:
         try:
-            _print_lines(">", _pretty(mask_body_text(body_bytes.decode("utf-8")), pretty_json))
+            _print_lines(">", _pretty(mask_body_text(body_bytes.decode("utf-8"), disabled=no_mask), pretty_json))
         except UnicodeDecodeError:
             print(f"    > <{len(body_bytes)} bytes>")
 
 
-def _log_response(status, reason, resp_headers, text, pretty_json):
+def _log_response(status, reason, resp_headers, text, pretty_json, no_mask=False):
     print(f"    < HTTP/1.1 {status} {reason}")
-    for k, v in mask_headers(resp_headers).items():
+    for k, v in mask_headers(resp_headers, disabled=no_mask).items():
         print(f"    < {k}: {v}")
     if text:
-        _print_lines("<", _pretty(mask_body_text(text), pretty_json))
+        _print_lines("<", _pretty(mask_body_text(text, disabled=no_mask), pretty_json))
 
 
 def run_step(store, name, method, url, *,
              headers=None, body=None, body_form=None, capture=None,
-             description=None, quiet=False, pretty_json=False):
+             description=None, quiet=False, pretty_json=False, no_mask=False):
     """Render → send → log → capture a single HTTP step."""
     url = render(url, store)
     headers = render_mapping(headers, store) if headers else {}
@@ -282,17 +249,17 @@ def run_step(store, name, method, url, *,
     else:
         body_bytes = None
 
-    print(f"==> {_now()} [{name}] {method} {mask_url(url)}")
+    print(f"==> {_now()} [{name}] {method} {mask_url(url, disabled=no_mask)}")
     if description:
         for line in description.splitlines() or [""]:
             print(f"    # {line}")
     if not quiet:
-        _log_request(method, url, headers, body_bytes, body_form, pretty_json)
+        _log_request(method, url, headers, body_bytes, body_form, pretty_json, no_mask=no_mask)
 
     status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
     print(f"<== {_now()} [{name}] status={status}")
     if not quiet:
-        _log_response(status, reason, resp_headers, text, pretty_json)
+        _log_response(status, reason, resp_headers, text, pretty_json, no_mask=no_mask)
 
     captured = {}
     if capture:
@@ -301,7 +268,7 @@ def run_step(store, name, method, url, *,
         for var, path in capture.items():
             captured[var] = extract(body_json, path)
             if not quiet:
-                shown = mask_capture_value(var, captured[var])
+                shown = mask_capture_value(var, captured[var], disabled=no_mask)
                 print(f"    * capture {var} = {shown!r}")
     store["steps"][name] = captured
 
@@ -402,6 +369,8 @@ def main():
                    help="suppress per-step request/response detail (detail is ON by default)")
     p.add_argument("--pretty-json", action="store_true",
                    help="pretty-print JSON request/response bodies with 2-space indent")
+    p.add_argument("--no-mask", action="store_true",
+                   help="disable masking of sensitive fields in log output (masking is ON by default)")
     args = p.parse_args()
 
     store = {"vars": dict(DEFAULT_VARS), "steps": {}}

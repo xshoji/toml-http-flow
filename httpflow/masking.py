@@ -3,14 +3,10 @@
 Masking only affects what is *printed* to the log; it never changes the
 bytes sent over the wire nor values stored in ``store["steps"]``.
 
-Configurable via environment variables (all optional):
+The only configurable environment variable (all optional):
 
-- ``HTTPFLOW_MASK_DISABLED``        — ``1``/``true``/``yes``/``on`` to disable
-- ``HTTPFLOW_MASK_PLACEHOLDER``     — replacement string (default ``"***"``)
-- ``HTTPFLOW_MASK_HEADERS``         — comma-separated; **replaces** defaults
-- ``HTTPFLOW_MASK_HEADERS_EXTRA``   — comma-separated; **added to** defaults
-- ``HTTPFLOW_MASK_BODY_KEYS``       — comma-separated; **replaces** defaults
-- ``HTTPFLOW_MASK_BODY_KEYS_EXTRA`` — comma-separated; **added to** defaults
+- ``HTTPFLOW_MASK_EXTRA`` — comma-separated key names added to the default
+  sensitive-key set.  Applies to headers, body, query, and capture alike.
 
 Key comparison normalizes by lower-casing and stripping ``_``/``-``/space,
 so ``apiKey`` / ``API-KEY`` / ``api_key`` / ``apikey`` all collapse to the
@@ -24,6 +20,7 @@ import os
 import urllib.parse
 from typing import Any
 
+_PLACEHOLDER = "***"
 
 DEFAULT_SENSITIVE_HEADERS: frozenset[str] = frozenset({
     "authorization",
@@ -74,120 +71,85 @@ def _norm(name: str) -> str:
     return name.lower().replace("_", "").replace("-", "").replace(" ", "")
 
 
-def _split_env(name: str) -> set[str]:
-    """Read ``$name`` as a comma-separated list of normalized key names."""
-    raw = os.environ.get(name, "")
+def _extra_set() -> set[str]:
+    """Read ``HTTPFLOW_MASK_EXTRA`` as a comma-separated list of normalized keys."""
+    raw = os.environ.get("HTTPFLOW_MASK_EXTRA", "")
     return {_norm(item) for item in raw.split(",") if item.strip()}
 
 
-def _bool_env(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
-
-
-def is_disabled() -> bool:
-    """Return True when masking is globally disabled via env var."""
-    return _bool_env("HTTPFLOW_MASK_DISABLED")
-
-
-def placeholder() -> str:
-    """Return the replacement string used in place of masked values."""
-    return os.environ.get("HTTPFLOW_MASK_PLACEHOLDER") or "***"
-
-
-def _resolve(default: frozenset[str], override_env: str, extra_env: str) -> set[str]:
-    override = _split_env(override_env)
-    base = override if override else {_norm(x) for x in default}
-    base |= _split_env(extra_env)
+def _all_targets() -> set[str]:
+    """Return the complete set of normalized key names to mask."""
+    base = {_norm(x) for x in DEFAULT_SENSITIVE_HEADERS}
+    base |= {_norm(x) for x in DEFAULT_SENSITIVE_BODY_KEYS}
+    base |= _extra_set()
     return base
 
 
-def sensitive_headers() -> set[str]:
-    """Return the active set of header names (normalized) to mask."""
-    return _resolve(
-        DEFAULT_SENSITIVE_HEADERS,
-        "HTTPFLOW_MASK_HEADERS",
-        "HTTPFLOW_MASK_HEADERS_EXTRA",
-    )
-
-
-def sensitive_body_keys() -> set[str]:
-    """Return the active set of body/query/capture key names (normalized) to mask."""
-    return _resolve(
-        DEFAULT_SENSITIVE_BODY_KEYS,
-        "HTTPFLOW_MASK_BODY_KEYS",
-        "HTTPFLOW_MASK_BODY_KEYS_EXTRA",
-    )
-
-
-def mask_headers(headers: dict[str, str]) -> dict[str, str]:
+def mask_headers(headers: dict[str, str], disabled: bool = False) -> dict[str, str]:
     """Return a copy of ``headers`` with sensitive header values replaced."""
-    if is_disabled():
+    if disabled:
         return dict(headers)
-    targets = sensitive_headers()
-    mark = placeholder()
-    return {k: (mark if _norm(k) in targets else v) for k, v in headers.items()}
+    targets = _all_targets()
+    return {k: (_PLACEHOLDER if _norm(k) in targets else v) for k, v in headers.items()}
 
 
-def _mask_obj(obj: Any, targets: set[str], mark: str) -> Any:
+def _mask_obj(obj: Any, targets: set[str]) -> Any:
     """Recursively mask values whose dict key matches ``targets``."""
     if isinstance(obj, dict):
         return {
-            k: (mark if isinstance(k, str) and _norm(k) in targets
-                else _mask_obj(v, targets, mark))
+            k: (_PLACEHOLDER if isinstance(k, str) and _norm(k) in targets
+                else _mask_obj(v, targets))
             for k, v in obj.items()
         }
     if isinstance(obj, list):
-        return [_mask_obj(item, targets, mark) for item in obj]
+        return [_mask_obj(item, targets) for item in obj]
     return obj
 
 
-def mask_form(form: dict[str, str]) -> dict[str, str]:
+def mask_form(form: dict[str, str], disabled: bool = False) -> dict[str, str]:
     """Return a copy of a form-data mapping with sensitive values replaced."""
-    if is_disabled():
+    if disabled:
         return dict(form)
-    targets = sensitive_body_keys()
-    mark = placeholder()
-    return {k: (mark if _norm(k) in targets else v) for k, v in form.items()}
+    targets = _all_targets()
+    return {k: (_PLACEHOLDER if _norm(k) in targets else v) for k, v in form.items()}
 
 
-def mask_url(url: str) -> str:
+def mask_url(url: str, disabled: bool = False) -> str:
     """Replace query-parameter values for sensitive keys in ``url``."""
-    if is_disabled():
+    if disabled:
         return url
     parsed = urllib.parse.urlsplit(url)
     if not parsed.query:
         return url
-    targets = sensitive_body_keys()
-    mark = placeholder()
+    targets = _all_targets()
     pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    masked = [(k, mark if _norm(k) in targets else v) for k, v in pairs]
+    masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
     new_query = urllib.parse.urlencode(masked)
     return urllib.parse.urlunsplit(parsed._replace(query=new_query))
 
 
-def mask_capture_value(name: str, value: Any) -> Any:
+def mask_capture_value(name: str, value: Any, disabled: bool = False) -> Any:
     """Return ``value`` masked when ``name`` matches a sensitive key."""
-    if is_disabled():
+    if disabled:
         return value
-    if _norm(name) in sensitive_body_keys():
-        return placeholder()
+    if _norm(name) in _all_targets():
+        return _PLACEHOLDER
     return value
 
 
-def mask_body_text(text: str) -> str:
+def mask_body_text(text: str, disabled: bool = False) -> str:
     """Best-effort masking for a raw body string.
 
     Tries JSON first, then form-urlencoded; if neither, returns ``text``
     unchanged (plain text bodies are not auto-redacted).
     """
-    if is_disabled() or not text:
+    if disabled or not text:
         return text
-    targets = sensitive_body_keys()
-    mark = placeholder()
+    targets = _all_targets()
     # JSON?
     try:
         parsed = json.loads(text)
-        return json.dumps(_mask_obj(parsed, targets, mark), ensure_ascii=False)
+        return json.dumps(_mask_obj(parsed, targets), ensure_ascii=False)
     except (json.JSONDecodeError, ValueError):
         pass
     # form-urlencoded? (single-line, contains '=' and no whitespace/newlines)
@@ -198,6 +160,6 @@ def mask_body_text(text: str) -> str:
             )
         except ValueError:
             return text
-        masked = [(k, mark if _norm(k) in targets else v) for k, v in pairs]
+        masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
         return urllib.parse.urlencode(masked)
     return text

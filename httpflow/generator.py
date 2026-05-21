@@ -66,7 +66,7 @@ def _sanitize_ident(name: str, used: set[str]) -> str:
 def _emit_sleep_step(req: RequestConfig, func_name: str) -> str:
     """SLEEP: kept inline (no headers / no do_request) for human readability."""
     lines = [
-        f"def {func_name}(store, quiet=False, pretty_json=False):",
+        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
         f'    """[[requests]] name = {req.name!r} — SLEEP {req.url}"""',
         f"    name = {req.name!r}",
         f"    url = render({_str_literal(req.url)}, store)",
@@ -102,14 +102,14 @@ def _emit_run_step_call(req: RequestConfig, indent: str = "    ") -> str:
         args.append("capture=" + _dict_literal(req.capture, indent=pad))
     if req.description:
         args.append(f"description={req.description!r}")
-    args.append("quiet=quiet, pretty_json=pretty_json")
+    args.append("quiet=quiet, pretty_json=pretty_json, no_mask=no_mask")
     return f"{indent}run_step(\n" + ",\n".join(f"{pad}{a}" for a in args) + f",\n{indent})"
 
 
 def _emit_http_step(req: RequestConfig, func_name: str) -> str:
     """Plain HTTP step: docstring + a single ``run_step(...)`` call."""
     return "\n".join([
-        f"def {func_name}(store, quiet=False, pretty_json=False):",
+        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
         f'    """[[requests]] name = {req.name!r} — {req.method.upper()} {req.url}"""',
         _emit_run_step_call(req, indent="    "),
     ])
@@ -120,7 +120,7 @@ def _emit_until_step(req: RequestConfig, func_name: str) -> str:
     assert req.until is not None
     u = req.until
     return "\n".join([
-        f"def {func_name}(store, quiet=False, pretty_json=False):",
+        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
         f'    """[[requests]] name = {req.name!r} — {req.method.upper()} {req.url}"""',
         "    def attempt():",
         _emit_run_step_call(req, indent="        "),
@@ -157,7 +157,9 @@ def generate(
     for req in cfg.requests:
         fn = _sanitize_ident(req.name, used)
         step_blocks.append(_emit_step(req, fn))
-        step_calls.append(f"    {fn}(store, quiet=args.quiet, pretty_json=args.pretty_json)")
+        step_calls.append(
+            f"    {fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)"
+        )
 
     if not step_blocks:
         step_functions_src = "# (no [[requests]] blocks in source TOML)"

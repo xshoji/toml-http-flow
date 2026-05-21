@@ -40,15 +40,8 @@ class _EnvScope:
 
 
 def _clean_env():
-    """Force-clear every HTTPFLOW_MASK_* env var to defaults."""
-    return _EnvScope(
-        HTTPFLOW_MASK_DISABLED=None,
-        HTTPFLOW_MASK_PLACEHOLDER=None,
-        HTTPFLOW_MASK_HEADERS=None,
-        HTTPFLOW_MASK_HEADERS_EXTRA=None,
-        HTTPFLOW_MASK_BODY_KEYS=None,
-        HTTPFLOW_MASK_BODY_KEYS_EXTRA=None,
-    )
+    """Force-clear HTTPFLOW_MASK_EXTRA env var."""
+    return _EnvScope(HTTPFLOW_MASK_EXTRA=None)
 
 
 # ----------------------------------------------------------------- unit tests
@@ -82,30 +75,16 @@ class TestMaskHeaders(unittest.TestCase):
             })
         self.assertEqual(out, {"x-api-key": "***", "X_API_KEY": "***", "X-Api-Key": "***"})
 
-    def test_disabled_env(self):
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_DISABLED="1"):
-            out = masking.mask_headers({"Authorization": "Bearer x"})
+    def test_disabled_flag(self):
+        with _clean_env():
+            out = masking.mask_headers({"Authorization": "Bearer x"}, disabled=True)
         self.assertEqual(out, {"Authorization": "Bearer x"})
 
-    def test_custom_placeholder(self):
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_PLACEHOLDER="<redacted>"):
-            out = masking.mask_headers({"Authorization": "Bearer x"})
-        self.assertEqual(out["Authorization"], "<redacted>")
-
-    def test_replace_defaults_env(self):
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_HEADERS="X-Trace-Id"):
+    def test_extra_env_adds_x_trace_id(self):
+        with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
             out = masking.mask_headers({
-                "Authorization": "Bearer x",     # NOT masked anymore
-                "X-Trace-Id": "trace-1",         # masked
-            })
-        self.assertEqual(out["Authorization"], "Bearer x")
-        self.assertEqual(out["X-Trace-Id"], "***")
-
-    def test_extra_env_adds_to_defaults(self):
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_HEADERS_EXTRA="X-Trace-Id"):
-            out = masking.mask_headers({
-                "Authorization": "Bearer x",     # still masked
-                "X-Trace-Id": "trace-1",         # newly masked
+                "Authorization": "Bearer x",     # still masked (default)
+                "X-Trace-Id": "trace-1",         # newly masked via extra
             })
         self.assertEqual(out["Authorization"], "***")
         self.assertEqual(out["X-Trace-Id"], "***")
@@ -136,9 +115,9 @@ class TestMaskBodyText(unittest.TestCase):
         self.assertEqual(out, "just a plain message")
 
     def test_disabled(self):
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_DISABLED="true"):
+        with _clean_env():
             text = '{"password":"p"}'
-            self.assertEqual(masking.mask_body_text(text), text)
+            self.assertEqual(masking.mask_body_text(text, disabled=True), text)
 
     def test_list_of_dicts(self):
         with _clean_env():
@@ -172,6 +151,11 @@ class TestMaskCaptureValue(unittest.TestCase):
     def test_non_sensitive_kept(self):
         with _clean_env():
             self.assertEqual(masking.mask_capture_value("user_id", 7), 7)
+
+    def test_extra_env_masks_header_name_in_capture_too(self):
+        # HTTPFLOW_MASK_EXTRA applies to headers, body, query, and capture alike.
+        with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
+            self.assertEqual(masking.mask_capture_value("X-Trace-Id", "trace-1"), "***")
 
 
 # ----------------------------------------------------------------- workflow integration
@@ -214,7 +198,7 @@ class TestWorkflowMasking(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
-    def _run(self, env=None):
+    def _run(self, no_mask=False, env=None):
         cfg = WorkflowConfig(requests=[
             RequestConfig(
                 name="auth",
@@ -231,7 +215,7 @@ class TestWorkflowMasking(unittest.TestCase):
         ])
         buf = io.StringIO()
         with _clean_env(), _EnvScope(**(env or {})):
-            store = run(cfg, out=buf)
+            store = run(cfg, out=buf, no_mask=no_mask)
         return buf.getvalue(), store
 
     def test_defaults_mask_everything_sensible(self):
@@ -267,31 +251,25 @@ class TestWorkflowMasking(unittest.TestCase):
         # non-sensitive var name stays visible
         self.assertIn("* capture user = 'alice'", output)
 
-    def test_disable_via_env(self):
-        output, _ = self._run({"HTTPFLOW_MASK_DISABLED": "1"})
+    def test_disable_via_no_mask_flag(self):
+        output, _ = self._run(no_mask=True)
         self.assertIn("Bearer real-secret", output)
         self.assertIn("hunter2", output)
         self.assertIn("tok-xyz", output)
         self.assertIn("token=qparam-secret", output)
 
-    def test_custom_placeholder(self):
-        output, _ = self._run({"HTTPFLOW_MASK_PLACEHOLDER": "<X>"})
-        self.assertIn("Authorization: <X>", output)
-        self.assertIn("* capture token = '<X>'", output)
-
-    def test_extra_headers_env_adds_x_trace_id(self):
-        output, _ = self._run({"HTTPFLOW_MASK_HEADERS_EXTRA": "X-Trace-Id"})
+    def test_extra_env_masks_header_and_body_alike(self):
+        # HTTPFLOW_MASK_EXTRA applies to both headers and body keys (and capture).
+        output, _ = self._run(env={"HTTPFLOW_MASK_EXTRA": "X-Trace-Id,user"})
+        # X-Trace-Id header masked
         self.assertIn("X-Trace-Id: ***", output)
         # default behaviour for Authorization preserved
         self.assertIn("Authorization: ***", output)
-
-    def test_replace_body_keys_env(self):
-        # Replace defaults with only "user" → 'password' stops being masked,
-        # 'user' starts being masked.
-        output, _ = self._run({"HTTPFLOW_MASK_BODY_KEYS": "user"})
-        self.assertIn("hunter2", output)              # password no longer masked
-        self.assertNotIn('"user": "alice"', output)   # user value masked
+        # "user" body key masked (body+query+capture)
+        self.assertNotIn('"user": "alice"', output)
         self.assertIn('"user": "***"', output)
+        # capture "user" also masked
+        self.assertIn("* capture user = '***'", output)
 
 
 if __name__ == "__main__":

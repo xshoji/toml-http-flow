@@ -41,6 +41,8 @@ def _build_parser() -> argparse.ArgumentParser:
                             "(detail is ON by default)")
     p_run.add_argument("--pretty-json", action="store_true",
                        help="pretty-print JSON request/response bodies with 2-space indent")
+    p_run.add_argument("--no-mask", action="store_true",
+                       help="disable masking of sensitive fields in log output (masking is ON by default)")
 
     p_gen = sub.add_parser("generate", help="emit a standalone runner script")
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
@@ -79,7 +81,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         vars_ = _parse_vars(args.var)
         try:
-            workflow.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json)
+            workflow.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json,
+                         no_mask=args.no_mask)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
