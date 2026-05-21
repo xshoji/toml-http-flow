@@ -24,6 +24,33 @@ def _parse_vars(items: list[str]) -> dict[str, str]:
     return out
 
 
+def _parse_repeat_vars(items: list[str]) -> dict[str, list[str]]:
+    """Parse ``--repeat-vars "name=v1,v2,v3"`` arguments into a dict.
+
+    The same key supplied twice is rejected; whitespace around the key and
+    each comma-separated value is trimmed.
+    """
+    out: dict[str, list[str]] = {}
+    for kv in items:
+        if "=" not in kv:
+            raise SystemExit(
+                f"--repeat-vars requires name=v1,v2,..., got: {kv!r}"
+            )
+        k, _, v = kv.partition("=")
+        k = k.strip()
+        if not k:
+            raise SystemExit(f"--repeat-vars has empty key: {kv!r}")
+        if k in out:
+            raise SystemExit(f"--repeat-vars duplicated key: {k!r}")
+        values = [x.strip() for x in v.split(",")]
+        if not values or any(x == "" for x in values):
+            raise SystemExit(
+                f"--repeat-vars must supply non-empty comma-separated values: {kv!r}"
+            )
+        out[k] = values
+    return out
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="httpflow",
@@ -43,6 +70,10 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="pretty-print JSON request/response bodies with 2-space indent")
     p_run.add_argument("--no-mask", action="store_true",
                        help="disable masking of sensitive fields in log output (masking is ON by default)")
+    p_run.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
+                       help="comma-separated values for ${repeat.K} (repeatable). "
+                            "All --repeat-vars must have the same number of values; "
+                            "the workflow is executed once per index.")
 
     p_gen = sub.add_parser("generate", help="emit a standalone runner script")
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
@@ -80,9 +111,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "run":
         vars_ = _parse_vars(args.var)
+        repeat_vars = _parse_repeat_vars(args.repeat_vars)
         try:
             workflow.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json,
-                         no_mask=args.no_mask)
+                         no_mask=args.no_mask, repeat_vars=repeat_vars)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1

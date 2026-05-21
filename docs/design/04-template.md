@@ -34,7 +34,37 @@ ${vars.<variable_name>}
 url = "https://api.${vars.env}.example.com/user"
 ```
 
-## 5.3 リテラル `$` のエスケープ
+## 5.3 repeat変数の参照
+
+```
+${repeat.<variable_name>}
+```
+
+ワークフロー全体を「実行時に与えた値リストの数だけ」繰り返し実行する
+仕組み。`${repeat.X}` を1箇所でも使ったTOMLでは、CLI実行時に
+`--repeat-vars "X=v1,v2,v3"` の指定が **必須** になる。
+詳細は [05-cli.md §6.1.3](05-cli.md) と
+[06-workflow-flow.md](06-workflow-flow.md) を参照。
+
+例:
+
+```toml
+[[requests]]
+name   = "echo"
+method = "GET"
+url    = "https://api.example.com/echo?id=${repeat.id}&label=${repeat.label}"
+```
+
+```bash
+python -m httpflow run -f workflow.toml \
+    --repeat-vars "id=1,2,3" \
+    --repeat-vars "label=a,b,c"
+```
+
+→ `(id=1, label=a)` → `(id=2, label=b)` → `(id=3, label=c)` の3回、
+ワークフロー全体が実行される。
+
+## 5.4 リテラル `$` のエスケープ
 
 `string.Template` の慣例に倣い `$$` で `$` 1文字として扱う。
 
@@ -42,7 +72,7 @@ url = "https://api.${vars.env}.example.com/user"
 body = '{"price":"$$100"}'   # → {"price":"$100"}
 ```
 
-## 5.4 パス要素で使える文字
+## 5.5 パス要素で使える文字
 
 `${...}` 内のパス要素には以下を許可する:
 
@@ -60,7 +90,7 @@ body = '{"price":"$$100"}'   # → {"price":"$100"}
 url = "https://api.example.com/x?args=${steps.httpbinorg-post.token}"
 ```
 
-## 5.5 実装方針
+## 5.6 実装方針
 
 `re.sub` のコールバックで置換する。
 ネームスペース（`steps` / `vars`）を区別せず、単一のルックアップ関数で解決する。

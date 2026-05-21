@@ -19,8 +19,57 @@ from .masking import (
     mask_headers,
     mask_url,
 )
-from .template import render, render_mapping
+from .template import find_repeat_names, render, render_mapping
 from .until import evaluate as evaluate_condition
+
+
+def collect_repeat_names(config: WorkflowConfig) -> set[str]:
+    """Return every ``${repeat.<name>}`` referenced anywhere in ``config``."""
+    found: set[str] = set()
+    for req in config.requests:
+        found.update(find_repeat_names(req.url))
+        for k, v in req.headers.items():
+            found.update(find_repeat_names(k))
+            found.update(find_repeat_names(v))
+        found.update(find_repeat_names(req.body))
+        if req.body_form:
+            for k, v in req.body_form.items():
+                found.update(find_repeat_names(k))
+                found.update(find_repeat_names(v))
+        if req.until is not None:
+            found.update(find_repeat_names(req.until.condition))
+    return found
+
+
+def build_repeat_iterations(
+    repeat_vars: dict[str, list[str]] | None,
+    required: set[str],
+) -> list[dict[str, str]]:
+    """Validate ``--repeat-vars`` input and expand it into per-iteration dicts.
+
+    - Returns ``[{}]`` (one iteration, empty mapping) when nothing is required
+      and nothing was supplied.
+    - Raises ``ValueError`` when required names are missing, unknown extras
+      are supplied, or value-lists have differing lengths.
+    """
+    repeat_vars = dict(repeat_vars or {})
+    missing = required - set(repeat_vars)
+    if missing:
+        raise ValueError(
+            f"--repeat-vars missing for: {sorted(missing)}"
+        )
+    if not repeat_vars:
+        return [{}]
+    lengths = {k: len(v) for k, v in repeat_vars.items()}
+    distinct = set(lengths.values())
+    if len(distinct) != 1:
+        raise ValueError(
+            f"--repeat-vars value counts must match across all keys, got: {lengths}"
+        )
+    n = distinct.pop()
+    if n == 0:
+        raise ValueError("--repeat-vars must supply at least one value per key")
+    return [{k: repeat_vars[k][i] for k in repeat_vars} for i in range(n)]
 
 
 def _now() -> str:
@@ -171,6 +220,7 @@ def run(
     quiet: bool = False,
     pretty_json: bool = False,
     no_mask: bool = False,
+    repeat_vars: dict[str, list[str]] | None = None,
     out=sys.stdout,
 ) -> dict[str, Any]:
     """Run every request in ``config`` and return the final variable store.
@@ -179,9 +229,46 @@ def run(
     Pass ``quiet=True`` to print only the one-line summary per step.
     Pass ``pretty_json=True`` to pretty-print JSON bodies with 2-space indent.
     Pass ``no_mask=True`` to disable masking of sensitive fields in log output.
+    Pass ``repeat_vars`` to iterate the entire workflow once per index of the
+    supplied value lists; ``${repeat.<name>}`` references inside the TOML
+    resolve to the value for the current iteration.
     """
-    store: dict[str, Any] = {"vars": dict(vars_ or {}), "steps": {}}
+    required_repeat = collect_repeat_names(config)
+    iterations = build_repeat_iterations(repeat_vars, required_repeat)
 
+    store: dict[str, Any] = {
+        "vars": dict(vars_ or {}),
+        "steps": {},
+        "repeat": {},
+    }
+
+    total = len(iterations)
+    for idx, repeat_iter in enumerate(iterations, start=1):
+        store["repeat"] = dict(repeat_iter)
+        if repeat_iter:
+            store["steps"] = {}
+            print(
+                f"=== repeat iteration {idx}/{total} {repeat_iter} ===",
+                file=out,
+            )
+        _run_once(
+            config, store, quiet=quiet, pretty_json=pretty_json,
+            no_mask=no_mask, out=out,
+        )
+
+    return store
+
+
+def _run_once(
+    config: WorkflowConfig,
+    store: dict[str, Any],
+    *,
+    quiet: bool,
+    pretty_json: bool,
+    no_mask: bool,
+    out,
+) -> None:
+    """Execute every request in ``config`` exactly once against ``store``."""
     for req in config.requests:
         # SLEEP step: no HTTP, no until.
         if req.method in SPECIAL_METHODS:
@@ -235,5 +322,3 @@ def run(
                 f"step {req.name!r}: until condition not satisfied "
                 f"after {until.max_attempts} attempts: {until.condition!r}"
             )
-
-    return store

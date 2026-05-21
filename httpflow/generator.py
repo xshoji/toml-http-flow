@@ -154,25 +154,37 @@ def generate(
     used: set[str] = set()
     step_blocks: list[str] = []
     step_calls: list[str] = []
+    # 8-space indent: step calls live inside the per-iteration ``for`` loop
+    # in ``main()`` so they can re-execute when --repeat-vars is supplied.
     for req in cfg.requests:
         fn = _sanitize_ident(req.name, used)
         step_blocks.append(_emit_step(req, fn))
         step_calls.append(
-            f"    {fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)"
+            f"        {fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)"
         )
 
     if not step_blocks:
         step_functions_src = "# (no [[requests]] blocks in source TOML)"
-        step_calls_src = "    pass  # no steps"
+        step_calls_src = "        pass  # no steps"
     else:
         step_functions_src = "\n\n\n".join(step_blocks)
         step_calls_src = "\n".join(step_calls)
+
+    # Required ${repeat.<name>} variables, embedded as a Python set literal so
+    # the generated script can validate --repeat-vars at runtime.
+    from .workflow import collect_repeat_names
+    required_repeat = sorted(collect_repeat_names(cfg))
+    if required_repeat:
+        repeat_lit = "{" + ", ".join(repr(n) for n in required_repeat) + "}"
+    else:
+        repeat_lit = "set()"
 
     rendered = (
         template
         .replace("{{VERSION}}", __version__)
         .replace("{{GENERATED_AT}}", timestamp)
         .replace("{{DEFAULT_VARS}}", _dict_literal(dict(default_vars or {}), indent=""))
+        .replace("{{REQUIRED_REPEAT_VARS}}", repeat_lit)
         .replace("{{STEP_FUNCTIONS}}", step_functions_src)
         .replace("{{STEP_CALLS}}", step_calls_src)
     )

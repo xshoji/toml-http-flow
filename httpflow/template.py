@@ -9,6 +9,10 @@ from typing import Any
 # hyphens; dots act as the path separator.
 PATTERN = re.compile(r"\$(?:\$|\{([\w.\-]+)\})")
 
+# Matches ``${repeat.<name>}`` references, used by the workflow runner to
+# decide which repeat variables must be supplied via ``--repeat-vars``.
+REPEAT_PATTERN = re.compile(r"\$\{repeat\.([\w\-]+)\}")
+
 
 class TemplateError(KeyError):
     """Raised when a referenced template variable is not found."""
@@ -40,3 +44,10 @@ def render(text: str, store: dict) -> str:
 def render_mapping(mapping: dict[str, str], store: dict) -> dict[str, str]:
     """Render every value in a string-to-string mapping."""
     return {k: render(v, store) for k, v in mapping.items()}
+
+
+def find_repeat_names(text: str | None) -> set[str]:
+    """Return the set of ``${repeat.<name>}`` names referenced in ``text``."""
+    if not text:
+        return set()
+    return set(REPEAT_PATTERN.findall(text))

@@ -355,6 +355,45 @@ def poll_until(name, attempt_fn, condition, interval, max_attempts, store, quiet
 # ─── default variables (override with -v key=value at runtime) ──────
 DEFAULT_VARS = {{DEFAULT_VARS}}
 
+# Names referenced by ${repeat.<name>} in the source TOML. Each one MUST be
+# supplied at runtime via --repeat-vars NAME=v1,v2,...
+REQUIRED_REPEAT_VARS = {{REQUIRED_REPEAT_VARS}}
+
+
+def _build_repeat_iterations(repeat_args):
+    """Parse --repeat-vars CLI entries and expand them into per-iteration dicts."""
+    parsed = {}
+    for kv in repeat_args:
+        if "=" not in kv:
+            raise SystemExit(
+                f"error: --repeat-vars requires name=v1,v2,..., got: {kv!r}"
+            )
+        k, _, v = kv.partition("=")
+        k = k.strip()
+        if not k:
+            raise SystemExit(f"error: --repeat-vars has empty key: {kv!r}")
+        if k in parsed:
+            raise SystemExit(f"error: --repeat-vars duplicated key: {k!r}")
+        values = [x.strip() for x in v.split(",")]
+        if not values or any(x == "" for x in values):
+            raise SystemExit(
+                f"error: --repeat-vars must supply non-empty comma-separated values: {kv!r}"
+            )
+        parsed[k] = values
+    missing = REQUIRED_REPEAT_VARS - set(parsed)
+    if missing:
+        raise SystemExit(f"error: --repeat-vars missing for: {sorted(missing)}")
+    if not parsed:
+        return [{}]
+    lengths = {k: len(v) for k, v in parsed.items()}
+    distinct = set(lengths.values())
+    if len(distinct) != 1:
+        raise SystemExit(
+            f"error: --repeat-vars value counts must match across all keys, got: {lengths}"
+        )
+    n = distinct.pop()
+    return [{k: parsed[k][i] for k in parsed} for i in range(n)]
+
 
 # ─── steps (one function per [[requests]] block) ────────────────────
 {{STEP_FUNCTIONS}}
@@ -371,9 +410,13 @@ def main():
                    help="pretty-print JSON request/response bodies with 2-space indent")
     p.add_argument("--no-mask", action="store_true",
                    help="disable masking of sensitive fields in log output (masking is ON by default)")
+    p.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
+                   help="comma-separated values for ${repeat.K} (repeatable). "
+                        "All --repeat-vars must share the same number of values; "
+                        "the workflow is executed once per index.")
     args = p.parse_args()
 
-    store = {"vars": dict(DEFAULT_VARS), "steps": {}}
+    store = {"vars": dict(DEFAULT_VARS), "steps": {}, "repeat": {}}
     for kv in args.var:
         if "=" not in kv:
             print(f"error: -v/--var requires key=value, got: {kv!r}", file=sys.stderr)
@@ -381,8 +424,17 @@ def main():
         k, _, v = kv.partition("=")
         store["vars"][k.strip()] = v
 
-    # === Workflow ===
-    # Comment out a line to skip that step. Reorder lines to change execution order.
+    iterations = _build_repeat_iterations(args.repeat_vars)
+    total = len(iterations)
+
+    for _idx, _repeat_iter in enumerate(iterations, start=1):
+        store["repeat"] = dict(_repeat_iter)
+        if _repeat_iter:
+            store["steps"] = {}
+            print(f"=== repeat iteration {_idx}/{total} {_repeat_iter} ===")
+
+        # === Workflow ===
+        # Comment out a line to skip that step. Reorder lines to change execution order.
 {{STEP_CALLS}}
 
     return 0
