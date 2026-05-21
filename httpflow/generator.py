@@ -1,8 +1,10 @@
 """Generate a standalone single-file Python runner from a WorkflowConfig.
 
-The output prioritizes human readability over compactness: each [[requests]]
-block becomes its own ``step_<name>`` function so the script can be tweaked or
-re-run by hand without re-running ``httpflow generate``.
+Each ``[[requests]]`` block becomes its own ``step_<name>`` function so that
+individual steps can be tweaked or re-run by hand without re-running
+``httpflow generate``. The bulk of the work (rendering, sending, logging and
+capturing) lives in the ``run_step`` helper inlined from the template, so each
+step function stays small and reads as a declaration of the request data.
 """
 
 from __future__ import annotations
@@ -61,107 +63,79 @@ def _sanitize_ident(name: str, used: set[str]) -> str:
 # ---------------------------------------------------------------- step emitter
 
 
-def _emit_step(req: RequestConfig, func_name: str) -> str:
-    lines: list[str] = []
-    method = req.method.upper()
-    lines.append(f"def {func_name}(store, quiet=False, pretty_json=False):")
-    lines.append(
-        f'    """[[requests]] name = {req.name!r} — {method} {req.url}"""'
-    )
-    lines.append(f"    name = {req.name!r}")
-    lines.append(f"    method = {method!r}")
-    lines.append(f"    url = render({_str_literal(req.url)}, store)")
-
-    if method in SPECIAL_METHODS:
-        if method == "SLEEP":
-            lines.append("")
-            lines.append('    print(f"==> {_now()} [{name}] {method} {url}")')
-            if req.description:
-                lines.append(f"    for _ln in {req.description!r}.splitlines() or ['']:")
-                lines.append('        print(f"    # {_ln}")')
-            lines.append("    seconds = float(url)")
-            lines.append("    if not quiet:")
-            lines.append('        print(f"    > sleep {seconds} seconds")')
-            lines.append("    time.sleep(seconds)")
-            lines.append('    print(f"<== {_now()} [{name}] done")')
-            lines.append('    store["steps"][name] = {}')
-            return "\n".join(lines)
-
-    if req.headers:
-        lines.append(f"    headers = render_mapping({_dict_literal(req.headers)}, store)")
-    else:
-        lines.append("    headers = {}")
-
-    if req.body is not None:
-        lines.append("    body_form = None")
-        lines.append(
-            f"    body_bytes = render({_str_literal(req.body)}, store).encode(\"utf-8\")"
-        )
-    elif req.body_form is not None:
-        lines.append(f"    body_form = render_mapping({_dict_literal(req.body_form)}, store)")
-        lines.append('    body_bytes = urllib.parse.urlencode(body_form).encode("utf-8")')
-        lines.append("    apply_form_content_type(headers)")
-    else:
-        lines.append("    body_form = None")
-        lines.append("    body_bytes = None")
-    # request header estimation requires method/url/headers/body_bytes
-    desc_arg = f", description={req.description!r}" if req.description else ""
-    lines.append(
-        f"    log_request(name, method, url, headers, body_bytes, body_form, quiet"
-        f"{desc_arg}, pretty_json=pretty_json)"
-    )
-    lines.append(
-        "    status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)"
-    )
-    lines.append(
-        "    log_response(name, status, reason, resp_headers, text, quiet, pretty_json=pretty_json)"
-    )
-    lines.append("")
-
-    if req.capture:
-        lines.append("    if body_json is None:")
-        lines.append(
-            '        raise RuntimeError(f"step {name!r}: capture requested but response is not JSON")'
-        )
-        lines.append("    captured = {}")
-        for var_name, path in req.capture.items():
-            lines.append(f"    captured[{var_name!r}] = extract(body_json, {path!r})")
-            lines.append(f"    log_capture({var_name!r}, captured[{var_name!r}], quiet)")
-        lines.append('    store["steps"][name] = captured')
-    else:
-        lines.append('    store["steps"][name] = {}')
-
-    if req.until is None:
-        return "\n".join(lines)
-
-    # Wrap the request/capture body in a polling loop. Keep only the ``def``
-    # line and docstring outside the loop so that the rest (including the
-    # ``name = ...`` assignment and any template rendering of url/headers/
-    # body) is re-evaluated for every attempt.
-    head = lines[:2]
-    body = lines[2:]
-    until = req.until
-    head.append(f"    until_condition = {until.condition!r}")
-    head.append(f"    until_interval = {until.interval!r}")
-    head.append(f"    until_max_attempts = {until.max_attempts!r}")
-    head.append("    name = " + repr(req.name))
-    head.append("    for attempt in range(1, until_max_attempts + 1):")
-    indented = ["    " + ln if ln else ln for ln in body]
-    tail = [
-        "        if eval_until(until_condition, store):",
-        "            if not quiet:",
-        '                print(f"    * until satisfied on attempt {attempt}")',
-        "            break",
-        "        if attempt < until_max_attempts:",
-        "            if not quiet:",
-        '                print(f"    * until not satisfied (attempt {attempt}/{until_max_attempts}), '
-        'retrying in {until_interval}s")',
-        "            time.sleep(until_interval)",
-        "    else:",
-        '        raise RuntimeError(f"step {name!r}: until condition not satisfied '
-        'after {until_max_attempts} attempts: {until_condition!r}")',
+def _emit_sleep_step(req: RequestConfig, func_name: str) -> str:
+    """SLEEP: kept inline (no headers / no do_request) for human readability."""
+    lines = [
+        f"def {func_name}(store, quiet=False, pretty_json=False):",
+        f'    """[[requests]] name = {req.name!r} — SLEEP {req.url}"""',
+        f"    name = {req.name!r}",
+        f"    url = render({_str_literal(req.url)}, store)",
+        '    print(f"==> {_now()} [{name}] SLEEP {url}")',
     ]
-    return "\n".join(head + indented + tail)
+    if req.description:
+        lines.append(f"    for _ln in {req.description!r}.splitlines() or ['']:")
+        lines.append('        print(f"    # {_ln}")')
+    lines += [
+        "    seconds = float(url)",
+        "    if not quiet:",
+        '        print(f"    > sleep {seconds} seconds")',
+        "    time.sleep(seconds)",
+        '    print(f"<== {_now()} [{name}] done")',
+        '    store["steps"][name] = {}',
+    ]
+    return "\n".join(lines)
+
+
+def _emit_run_step_call(req: RequestConfig, indent: str = "    ") -> str:
+    """Build a ``run_step(...)`` invocation for an HTTP request."""
+    pad = indent + "    "
+    args: list[str] = [
+        f"store, {req.name!r}, {req.method.upper()!r}, {_str_literal(req.url)}"
+    ]
+    if req.headers:
+        args.append("headers=" + _dict_literal(req.headers, indent=pad))
+    if req.body is not None:
+        args.append("body=" + _str_literal(req.body))
+    if req.body_form is not None:
+        args.append("body_form=" + _dict_literal(req.body_form, indent=pad))
+    if req.capture:
+        args.append("capture=" + _dict_literal(req.capture, indent=pad))
+    if req.description:
+        args.append(f"description={req.description!r}")
+    args.append("quiet=quiet, pretty_json=pretty_json")
+    return f"{indent}run_step(\n" + ",\n".join(f"{pad}{a}" for a in args) + f",\n{indent})"
+
+
+def _emit_http_step(req: RequestConfig, func_name: str) -> str:
+    """Plain HTTP step: docstring + a single ``run_step(...)`` call."""
+    return "\n".join([
+        f"def {func_name}(store, quiet=False, pretty_json=False):",
+        f'    """[[requests]] name = {req.name!r} — {req.method.upper()} {req.url}"""',
+        _emit_run_step_call(req, indent="    "),
+    ])
+
+
+def _emit_until_step(req: RequestConfig, func_name: str) -> str:
+    """HTTP step wrapped in a ``poll_until`` loop."""
+    assert req.until is not None
+    u = req.until
+    return "\n".join([
+        f"def {func_name}(store, quiet=False, pretty_json=False):",
+        f'    """[[requests]] name = {req.name!r} — {req.method.upper()} {req.url}"""',
+        "    def attempt():",
+        _emit_run_step_call(req, indent="        "),
+        f"    poll_until({req.name!r}, attempt, {u.condition!r}, "
+        f"{u.interval!r}, {u.max_attempts!r}, store, quiet)",
+    ])
+
+
+def _emit_step(req: RequestConfig, func_name: str) -> str:
+    if req.method in SPECIAL_METHODS:
+        if req.method == "SLEEP":
+            return _emit_sleep_step(req, func_name)
+    if req.until is not None:
+        return _emit_until_step(req, func_name)
+    return _emit_http_step(req, func_name)
 
 
 # ---------------------------------------------------------------- public API
