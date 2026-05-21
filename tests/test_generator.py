@@ -79,6 +79,7 @@ class TestGenerator(unittest.TestCase):
             script_path = tmp_path / "workflow.py"
             script_path.write_text(script, encoding="utf-8")
 
+            # ---- Run #1: default behaviour → masking is ON ----
             res = subprocess.run(
                 [sys.executable, str(script_path)],
                 capture_output=True, text=True, timeout=10,
@@ -102,8 +103,24 @@ class TestGenerator(unittest.TestCase):
             # Response status line
             self.assertIn("    < HTTP/1.1 200 OK", stdout)
 
-            # Capture line
-            self.assertIn("* capture token = 'gen-tok'", stdout)
+            # Capture line masked by default
+            self.assertIn("* capture token = '***'", stdout)
+            self.assertNotIn("gen-tok", stdout)
+            # Authorization header masked in second request
+            self.assertIn("    > Authorization: ***", stdout)
+            self.assertNotIn("Bearer gen-tok", stdout)
+
+            # ---- Run #2: HTTPFLOW_MASK_DISABLED=1 → masking disabled ----
+            import os as _os
+            env = {**_os.environ, "HTTPFLOW_MASK_DISABLED": "1"}
+            res2 = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True, text=True, timeout=10, env=env,
+            )
+            self.assertEqual(res2.returncode, 0, msg=res2.stderr)
+            stdout2 = res2.stdout
+            self.assertIn("* capture token = 'gen-tok'", stdout2)
+            self.assertIn("    > Authorization: Bearer gen-tok", stdout2)
 
     def test_generate_with_sleep_step(self):
         toml_text = textwrap.dedent("""

@@ -12,6 +12,13 @@ from typing import Any
 
 from .config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
 from .httpclient import execute, extract, prepare_request
+from .masking import (
+    mask_body_text,
+    mask_capture_value,
+    mask_form,
+    mask_headers,
+    mask_url,
+)
 from .template import render, render_mapping
 from .until import evaluate as evaluate_condition
 
@@ -60,8 +67,8 @@ def _log_request(req: RequestConfig, out, *, pretty_json: bool = False) -> None:
     """Print the request line and headers that urllib will actually send."""
     request, body_bytes = prepare_request(req)
 
-    # Request line: e.g. POST /auth HTTP/1.1
-    parsed = urllib.parse.urlparse(req.url)
+    # Request line: e.g. POST /auth HTTP/1.1 (query masked)
+    parsed = urllib.parse.urlparse(mask_url(req.url))
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
@@ -70,8 +77,8 @@ def _log_request(req: RequestConfig, out, *, pretty_json: bool = False) -> None:
     # Host header (estimated)
     print(f"    > Host: {parsed.netloc}", file=out)
 
-    # Explicit user headers
-    for k, v in req.headers.items():
+    # Explicit user headers (masked)
+    for k, v in mask_headers(req.headers).items():
         print(f"    > {k}: {v}", file=out)
 
     # Estimated headers that urllib adds automatically
@@ -87,25 +94,25 @@ def _log_request(req: RequestConfig, out, *, pretty_json: bool = False) -> None:
     if "accept-encoding" not in lower_headers:
         print("    > Accept-Encoding: identity", file=out)
 
-    # Body
+    # Body (masked, then pretty-printed)
     if req.body is not None:
-        body_text = _maybe_pretty_json(req.body, pretty_json)
+        body_text = _maybe_pretty_json(mask_body_text(req.body), pretty_json)
         print("    >", file=out)
         for line in body_text.splitlines() or [""]:
             print(f"    > {line}", file=out)
     elif req.body_form is not None:
         print("    > (form)", file=out)
-        for k, v in req.body_form.items():
+        for k, v in mask_form(req.body_form).items():
             print(f"    >   {k} = {v}", file=out)
 
 
 def _log_response(resp, out, *, pretty_json: bool = False) -> None:
     """Print the HTTP status line and response headers/body."""
     print(f"    < HTTP/1.1 {resp.status} {resp.reason}", file=out)
-    for k, v in resp.headers.items():
+    for k, v in mask_headers(resp.headers).items():
         print(f"    < {k}: {v}", file=out)
     if resp.body_text:
-        body_text = _maybe_pretty_json(resp.body_text, pretty_json)
+        body_text = _maybe_pretty_json(mask_body_text(resp.body_text), pretty_json)
         print("    <", file=out)
         for line in body_text.splitlines():
             print(f"    < {line}", file=out)
@@ -124,7 +131,10 @@ def _execute_http_attempt(
     On return, ``store["steps"][req.name]`` is updated with captured values.
     """
     rendered = _render_request(req, store)
-    print(f"==> {_now()} [{rendered.name}] {rendered.method} {rendered.url}", file=out)
+    print(
+        f"==> {_now()} [{rendered.name}] {rendered.method} {mask_url(rendered.url)}",
+        file=out,
+    )
     _log_description(rendered, out)
 
     if not quiet:
@@ -145,7 +155,8 @@ def _execute_http_attempt(
             value = extract(resp.body_json, path)
             captured[var_name] = value
             if not quiet:
-                print(f"    * capture {var_name} = {value!r}", file=out)
+                shown = mask_capture_value(var_name, value)
+                print(f"    * capture {var_name} = {shown!r}", file=out)
 
     store["steps"][rendered.name] = captured
 

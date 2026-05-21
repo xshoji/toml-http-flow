@@ -603,6 +603,60 @@ python -m httpflow generate -f workflow.toml    # 標準出力に出力
   JSON でない（フォーム/プレーンテキスト等）場合は通常通り未加工で出力する。
   生成スクリプト（`generate`）にも同じ `--pretty-json` フラグが用意される。
 
+### 6.1.2 センシティブフィールドのマスキング
+
+詳細出力（`>` / `<` 行および `==>` の URL、`* capture` 行）に含まれる
+機密情報を、ログ表示時に `***`（既定値）へ置換する。
+**マスキングはデフォルトで ON**。実際に送出される HTTP リクエスト本体や
+変数ストア (`store["steps"]`) には一切手を加えない（あくまで「画面に出す
+文字列」だけを差し替える）。
+
+対象は以下:
+
+| 箇所                    | 判定対象                                         |
+|-------------------------|--------------------------------------------------|
+| リクエストヘッダー      | ヘッダー名（既定: `Authorization`, `Cookie`, …） |
+| レスポンスヘッダー      | ヘッダー名（同上）                               |
+| リクエスト URL のクエリ | クエリパラメータ名（既定: `token`, `password`, …）|
+| リクエスト body (JSON)  | キー名を再帰的に判定                             |
+| リクエスト body (form)  | キー名                                           |
+| レスポンス body (JSON)  | キー名を再帰的に判定                             |
+| `* capture` 行          | キャプチャ先変数名                               |
+
+JSON / form として解釈できない plain-text body はそのまま出力する。
+
+#### デフォルトの既知キー（大文字小文字・`_`/`-` の差は無視）
+
+- ヘッダー: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`,
+  `X-Api-Key`, `X-Auth-Token`, `X-Access-Token`, `X-Csrf-Token`,
+  `X-Xsrf-Token`, `X-Session-Token`, `X-Session-Id`, `X-Secret-Key`
+- ボディ/クエリ/capture: `password`, `passwd`, `pwd`, `secret`,
+  `client_secret`, `token`, `access_token`, `refresh_token`, `id_token`,
+  `auth_token`, `session_token`, `api_key`, `apikey`, `private_key`,
+  `authorization`, `auth`, `session`, `session_id`, `cookie`,
+  `credit_card`, `card_number`, `cvv`, `cvc`, `pin`, `ssn`
+
+#### 環境変数による上書き
+
+| 環境変数                          | 説明                                                                 |
+|-----------------------------------|----------------------------------------------------------------------|
+| `HTTPFLOW_MASK_DISABLED`          | `1` / `true` / `yes` / `on` でマスキング全体を無効化                 |
+| `HTTPFLOW_MASK_PLACEHOLDER`       | 置換文字列（デフォルト `***`）                                       |
+| `HTTPFLOW_MASK_HEADERS`           | 対象ヘッダー名（カンマ区切り）。**デフォルトを置き換える**           |
+| `HTTPFLOW_MASK_HEADERS_EXTRA`     | 対象ヘッダー名（カンマ区切り）。**デフォルトに追加する**             |
+| `HTTPFLOW_MASK_BODY_KEYS`         | 対象 body/クエリ/capture キー名（カンマ区切り）。**デフォルトを置換**|
+| `HTTPFLOW_MASK_BODY_KEYS_EXTRA`   | 対象 body/クエリ/capture キー名（カンマ区切り）。**デフォルトに追加**|
+
+判定はキー名を `lower()` してから `_` / `-` / 空白を除去した正規化形で
+完全一致比較する。例: `apiKey`, `API-KEY`, `api_key`, `apikey` はすべて
+同じキーとして扱う。
+
+#### 生成スクリプト (`generate`) との関係
+
+生成スクリプト側にも同等のマスキングロジック（既定キーと環境変数の解釈）
+を**インライン**で埋め込み、`httpflow` 本体が無くても同じ環境変数で同じ
+ようにマスキングできるようにする。
+
 ### 6.2 サブコマンド: `generate`
 
 | 引数            | 必須 | 説明                                              |
