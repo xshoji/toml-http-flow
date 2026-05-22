@@ -13,11 +13,9 @@ from typing import Any
 from .config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
 from .httpclient import execute, extract, prepare_request
 from .masking import (
-    mask_body_text,
-    mask_capture_value,
-    mask_form,
-    mask_headers,
+    mask,
     mask_url,
+    mask_value,
 )
 from .template import find_repeat_names, render, render_mapping
 from .until import evaluate as evaluate_condition
@@ -129,8 +127,8 @@ def _log_request(
     print(f"    > Host: {parsed.netloc}", file=out)
 
     # Explicit user headers (masked)
-    for k, v in mask_headers(req.headers, disabled=no_mask).items():
-        print(f"    > {k}: {v}", file=out)
+    for k, v in req.headers.items():
+        print(f"    > {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
 
     # Estimated headers that urllib adds automatically
     if body_bytes is not None:
@@ -147,23 +145,23 @@ def _log_request(
 
     # Body (masked, then pretty-printed)
     if req.body is not None:
-        body_text = _maybe_pretty_json(mask_body_text(req.body, disabled=no_mask), pretty_json)
+        body_text = _maybe_pretty_json(mask(req.body, disabled=no_mask), pretty_json)
         print("    >", file=out)
         for line in body_text.splitlines() or [""]:
             print(f"    > {line}", file=out)
     elif req.body_form is not None:
         print("    > (form)", file=out)
-        for k, v in mask_form(req.body_form, disabled=no_mask).items():
-            print(f"    >   {k} = {v}", file=out)
+        for k, v in req.body_form.items():
+            print(f"    >   {k} = {mask_value(k, v, disabled=no_mask)}", file=out)
 
 
 def _log_response(resp, out, *, pretty_json: bool = False, no_mask: bool = False) -> None:
     """Print the HTTP status line and response headers/body."""
     print(f"    < HTTP/1.1 {resp.status} {resp.reason}", file=out)
-    for k, v in mask_headers(resp.headers, disabled=no_mask).items():
-        print(f"    < {k}: {v}", file=out)
+    for k, v in resp.headers.items():
+        print(f"    < {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
     if resp.body_text:
-        body_text = _maybe_pretty_json(mask_body_text(resp.body_text, disabled=no_mask), pretty_json)
+        body_text = _maybe_pretty_json(mask(resp.body_text, disabled=no_mask), pretty_json)
         print("    <", file=out)
         for line in body_text.splitlines():
             print(f"    < {line}", file=out)
@@ -207,7 +205,7 @@ def _execute_http_attempt(
             value = extract(resp.body_json, path)
             captured[var_name] = value
             if not quiet:
-                shown = mask_capture_value(var_name, value, disabled=no_mask)
+                shown = mask_value(var_name, value, disabled=no_mask)
                 print(f"    * capture {var_name} = {shown!r}", file=out)
 
     store["steps"][rendered.name] = captured

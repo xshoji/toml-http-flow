@@ -85,14 +85,6 @@ def _all_targets() -> set[str]:
     return base
 
 
-def mask_headers(headers: dict[str, str], disabled: bool = False) -> dict[str, str]:
-    """Return a copy of ``headers`` with sensitive header values replaced."""
-    if disabled:
-        return dict(headers)
-    targets = _all_targets()
-    return {k: (_PLACEHOLDER if _norm(k) in targets else v) for k, v in headers.items()}
-
-
 def _mask_obj(obj: Any, targets: set[str]) -> Any:
     """Recursively mask values whose dict key matches ``targets``."""
     if isinstance(obj, dict):
@@ -106,12 +98,30 @@ def _mask_obj(obj: Any, targets: set[str]) -> Any:
     return obj
 
 
-def mask_form(form: dict[str, str], disabled: bool = False) -> dict[str, str]:
-    """Return a copy of a form-data mapping with sensitive values replaced."""
-    if disabled:
-        return dict(form)
+def mask(text: str, disabled: bool = False) -> str:
+    """Best-effort masking for a raw string.
+
+    Tries JSON first, then form-urlencoded; if neither, returns ``text``
+    unchanged (plain text bodies are not auto-redacted).
+    """
+    if disabled or not text:
+        return text
     targets = _all_targets()
-    return {k: (_PLACEHOLDER if _norm(k) in targets else v) for k, v in form.items()}
+    try:
+        parsed = json.loads(text)
+        return json.dumps(_mask_obj(parsed, targets), ensure_ascii=False)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    if "=" in text and "\n" not in text and " " not in text:
+        try:
+            pairs = urllib.parse.parse_qsl(
+                text, keep_blank_values=True, strict_parsing=True
+            )
+        except ValueError:
+            return text
+        masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
+        return urllib.parse.urlencode(masked)
+    return text
 
 
 def mask_url(url: str, disabled: bool = False) -> str:
@@ -128,38 +138,10 @@ def mask_url(url: str, disabled: bool = False) -> str:
     return urllib.parse.urlunsplit(parsed._replace(query=new_query))
 
 
-def mask_capture_value(name: str, value: Any, disabled: bool = False) -> Any:
+def mask_value(name: str, value: Any, disabled: bool = False) -> Any:
     """Return ``value`` masked when ``name`` matches a sensitive key."""
     if disabled:
         return value
     if _norm(name) in _all_targets():
         return _PLACEHOLDER
     return value
-
-
-def mask_body_text(text: str, disabled: bool = False) -> str:
-    """Best-effort masking for a raw body string.
-
-    Tries JSON first, then form-urlencoded; if neither, returns ``text``
-    unchanged (plain text bodies are not auto-redacted).
-    """
-    if disabled or not text:
-        return text
-    targets = _all_targets()
-    # JSON?
-    try:
-        parsed = json.loads(text)
-        return json.dumps(_mask_obj(parsed, targets), ensure_ascii=False)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    # form-urlencoded? (single-line, contains '=' and no whitespace/newlines)
-    if "=" in text and "\n" not in text and " " not in text:
-        try:
-            pairs = urllib.parse.parse_qsl(
-                text, keep_blank_values=True, strict_parsing=True
-            )
-        except ValueError:
-            return text
-        masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
-        return urllib.parse.urlencode(masked)
-    return text

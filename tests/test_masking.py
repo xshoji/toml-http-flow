@@ -54,46 +54,10 @@ class TestNorm(unittest.TestCase):
         self.assertEqual(masking._norm("api key"), "apikey")
 
 
-class TestMaskHeaders(unittest.TestCase):
-    def test_defaults_mask_authorization_and_cookie(self):
+class TestMaskJson(unittest.TestCase):
+    def test_recursive(self):
         with _clean_env():
-            out = masking.mask_headers({
-                "Authorization": "Bearer secret-token",
-                "Cookie": "sid=abc",
-                "Accept": "application/json",
-            })
-        self.assertEqual(out["Authorization"], "***")
-        self.assertEqual(out["Cookie"], "***")
-        self.assertEqual(out["Accept"], "application/json")
-
-    def test_case_and_separator_variants(self):
-        with _clean_env():
-            out = masking.mask_headers({
-                "x-api-key": "v1",
-                "X_API_KEY": "v2",
-                "X-Api-Key": "v3",
-            })
-        self.assertEqual(out, {"x-api-key": "***", "X_API_KEY": "***", "X-Api-Key": "***"})
-
-    def test_disabled_flag(self):
-        with _clean_env():
-            out = masking.mask_headers({"Authorization": "Bearer x"}, disabled=True)
-        self.assertEqual(out, {"Authorization": "Bearer x"})
-
-    def test_extra_env_adds_x_trace_id(self):
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
-            out = masking.mask_headers({
-                "Authorization": "Bearer x",     # still masked (default)
-                "X-Trace-Id": "trace-1",         # newly masked via extra
-            })
-        self.assertEqual(out["Authorization"], "***")
-        self.assertEqual(out["X-Trace-Id"], "***")
-
-
-class TestMaskBodyText(unittest.TestCase):
-    def test_json_recursive(self):
-        with _clean_env():
-            out = masking.mask_body_text(
+            out = masking.mask(
                 '{"user":"u","password":"p","nested":{"access_token":"t","keep":"k"}}'
             )
         parsed = json.loads(out)
@@ -102,31 +66,59 @@ class TestMaskBodyText(unittest.TestCase):
         self.assertEqual(parsed["nested"]["access_token"], "***")
         self.assertEqual(parsed["nested"]["keep"], "k")
 
-    def test_form_urlencoded(self):
-        with _clean_env():
-            out = masking.mask_body_text("user=u&password=p&token=abc")
-        self.assertIn("user=u", out)
-        self.assertIn("password=%2A%2A%2A", out)
-        self.assertIn("token=%2A%2A%2A", out)
-
-    def test_plain_text_untouched(self):
-        with _clean_env():
-            out = masking.mask_body_text("just a plain message")
-        self.assertEqual(out, "just a plain message")
-
-    def test_disabled(self):
-        with _clean_env():
-            text = '{"password":"p"}'
-            self.assertEqual(masking.mask_body_text(text, disabled=True), text)
-
     def test_list_of_dicts(self):
         with _clean_env():
-            out = masking.mask_body_text(
+            out = masking.mask(
                 '{"items":[{"name":"a","secret":"s1"},{"name":"b","secret":"s2"}]}'
             )
         parsed = json.loads(out)
         self.assertEqual(parsed["items"][0]["secret"], "***")
         self.assertEqual(parsed["items"][1]["name"], "b")
+
+    def test_disabled(self):
+        with _clean_env():
+            text = '{"password":"p"}'
+            self.assertEqual(masking.mask(text, disabled=True), text)
+
+
+class TestMaskFormUrlencoded(unittest.TestCase):
+    def test_basic(self):
+        with _clean_env():
+            out = masking.mask("user=u&password=p&token=abc")
+        self.assertIn("user=u", out)
+        self.assertIn("password=%2A%2A%2A", out)
+        self.assertIn("token=%2A%2A%2A", out)
+
+
+class TestMaskPlainText(unittest.TestCase):
+    def test_untouched(self):
+        with _clean_env():
+            out = masking.mask("just a plain message")
+        self.assertEqual(out, "just a plain message")
+
+
+class TestMaskHeaders(unittest.TestCase):
+    def test_defaults_mask_authorization_and_cookie(self):
+        with _clean_env():
+            headers = {
+                "Authorization": "Bearer secret-token",
+                "Cookie": "sid=abc",
+                "Accept": "application/json",
+            }
+            out = {k: masking.mask_value(k, v) for k, v in headers.items()}
+        self.assertEqual(out["Authorization"], "***")
+        self.assertEqual(out["Cookie"], "***")
+        self.assertEqual(out["Accept"], "application/json")
+
+    def test_extra_env_adds_x_trace_id(self):
+        with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
+            headers = {
+                "Authorization": "Bearer x",
+                "X-Trace-Id": "trace-1",
+            }
+            out = {k: masking.mask_value(k, v) for k, v in headers.items()}
+        self.assertEqual(out["Authorization"], "***")
+        self.assertEqual(out["X-Trace-Id"], "***")
 
 
 class TestMaskUrl(unittest.TestCase):
@@ -142,20 +134,19 @@ class TestMaskUrl(unittest.TestCase):
             self.assertEqual(masking.mask_url(url), url)
 
 
-class TestMaskCaptureValue(unittest.TestCase):
+class TestMaskValue(unittest.TestCase):
     def test_sensitive_name_masked(self):
         with _clean_env():
-            self.assertEqual(masking.mask_capture_value("token", "abc"), "***")
-            self.assertEqual(masking.mask_capture_value("access_token", "abc"), "***")
+            self.assertEqual(masking.mask_value("token", "abc"), "***")
+            self.assertEqual(masking.mask_value("access_token", "abc"), "***")
 
     def test_non_sensitive_kept(self):
         with _clean_env():
-            self.assertEqual(masking.mask_capture_value("user_id", 7), 7)
+            self.assertEqual(masking.mask_value("user_id", 7), 7)
 
-    def test_extra_env_masks_header_name_in_capture_too(self):
-        # HTTPFLOW_MASK_EXTRA applies to headers, body, query, and capture alike.
+    def test_extra_env_masks_header_name_too(self):
         with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
-            self.assertEqual(masking.mask_capture_value("X-Trace-Id", "trace-1"), "***")
+            self.assertEqual(masking.mask_value("X-Trace-Id", "trace-1"), "***")
 
 
 # ----------------------------------------------------------------- workflow integration
@@ -270,6 +261,32 @@ class TestWorkflowMasking(unittest.TestCase):
         self.assertIn('"user": "***"', output)
         # capture "user" also masked
         self.assertIn("* capture user = '***'", output)
+
+    def test_form_body_key_based_masking(self):
+        """form body values must be masked by key name, not parsed as JSON/form."""
+        cfg = WorkflowConfig(requests=[
+            RequestConfig(
+                name="login",
+                method="POST",
+                url=f"http://127.0.0.1:{self.port}/auth",
+                body_form={
+                    "password": "hunter2",
+                    "note": "a=b",
+                    "metadata": '{"password":"x"}',
+                },
+            ),
+        ])
+        buf = io.StringIO()
+        with _clean_env():
+            run(cfg, out=buf)
+        output = buf.getvalue()
+        # Sensitive key masked
+        self.assertIn("password = ***", output)
+        self.assertNotIn("hunter2", output)
+        # Non-sensitive key with = in value stays as-is (not url-encoded)
+        self.assertIn("note = a=b", output)
+        # Non-sensitive key with JSON-looking value stays as-is (not parsed as JSON)
+        self.assertIn('metadata = {"password":"x"}', output)
 
 
 if __name__ == "__main__":
