@@ -162,6 +162,49 @@ class TestGenerator(unittest.TestCase):
             self.assertNotIn("do_request(", step_src)
             self.assertNotIn("headers", step_src)
 
+    def test_unused_until_helpers_omitted(self):
+        """When no request has until, eval_until / poll_until must not appear."""
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://127.0.0.1:1/ping"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+            compile(script, "<generated>", "exec")
+
+            self.assertNotIn("def eval_until(", script)
+            self.assertNotIn("def poll_until(", script)
+            self.assertIn("(no until blocks", script)
+
+    def test_unused_repeat_helpers_omitted(self):
+        """When no ${repeat.*} is referenced, repeat helpers must not appear."""
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://127.0.0.1:1/ping"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+            compile(script, "<generated>", "exec")
+
+            self.assertNotIn("def _build_repeat_iterations(", script)
+            self.assertNotIn("REQUIRED_REPEAT_VARS", script)
+            self.assertNotIn("--repeat-vars", script)
+            self.assertIn("(no ${repeat.*} references", script)
+
 
 if __name__ == "__main__":
     unittest.main()

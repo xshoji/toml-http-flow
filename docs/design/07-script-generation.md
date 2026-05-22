@@ -108,6 +108,10 @@ if __name__ == "__main__":
    - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数
    - `{{GENERATED_AT}}`: 生成タイムスタンプ
    - `{{VERSION}}`: 本ツールのバージョン
+   - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `eval_until` / `poll_until` を含むヘルパ群（未使用時は省略）
+   - `{{REPEAT_HELPERS}}`: `${repeat.*}` 参照時のみ `_build_repeat_iterations` を含むヘルパ群（未使用時は省略）
+   - `{{ARGPARSE_REPEAT}}`: `--repeat-vars` 引数の定義（未使用時は空文字）
+   - `{{MAIN_REPEAT_SETUP}}`: `repeat` 使用時の反復処理、未使用時は `store['repeat'] = {}
 5. 出力先（`-o` または stdout）に書き出す
 6. `--shebang` 指定時は先頭に `#!/usr/bin/env python3` を付け、`chmod +x` 相当を実施
 

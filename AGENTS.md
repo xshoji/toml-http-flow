@@ -29,7 +29,7 @@ Read this before changing any code.
 | [httpflow/workflow.py](httpflow/workflow.py) | Step execution / variable store management | The shape `store = {"vars": ..., "steps": ...}` is fixed |
 | [httpflow/cli.py](httpflow/cli.py) | `argparse` dispatch | Preserve backward compatibility: when `run` is omitted, treat it as `run` |
 | [httpflow/generator.py](httpflow/generator.py) | TOML → single .py generator | The output must always pass `compile()` syntax validation |
-| [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{REQUESTS}}` `{{DEFAULT_VARS}}` `{{VERSION}}` `{{GENERATED_AT}}` |
+| [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{STEP_FUNCTIONS}}` `{{STEP_CALLS}}` `{{DEFAULT_VARS}}` `{{VERSION}}` `{{GENERATED_AT}}` `{{UNTIL_HELPERS}}` `{{REPEAT_HELPERS}}` `{{ARGPARSE_REPEAT}}` `{{MAIN_REPEAT_SETUP}}` |
 | [tests/](tests/) | `unittest`-based tests | Follow the convention of standing up a local mock with `http.server` |
 
 ## On the duplicated runtime helpers

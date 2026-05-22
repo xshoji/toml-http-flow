@@ -19,6 +19,145 @@ from .config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
 
+# ------------------------------------------------------------------ inlined sources
+
+_UNTIL_SRC = '''\
+_UNTIL_OPS = [
+    (re.compile(r"=="), "=="),
+    (re.compile(r"!="), "!="),
+    (re.compile(r"\\s+in\\s+"), "in"),
+    (re.compile(r"~"), "~"),
+]
+_UNTIL_REGEX_RHS = re.compile(r"^/(.*)/([a-zA-Z]*)$")
+_UNTIL_LIST_RHS = re.compile(r"^\\[(.*)\\]$")
+
+
+def _until_flags(spec):
+    flags = 0
+    for ch in spec:
+        if ch == "i":
+            flags |= re.IGNORECASE
+        elif ch == "m":
+            flags |= re.MULTILINE
+        elif ch == "s":
+            flags |= re.DOTALL
+        else:
+            raise ValueError(f"until condition: unknown regex flag {ch!r}")
+    return flags
+
+
+def eval_until(condition, store):
+    """Evaluate an until-condition string against the variable store."""
+    best = None
+    for pat, op in _UNTIL_OPS:
+        m = pat.search(condition)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), m.end(), op)
+    if best is None:
+        raise ValueError(
+            f"until condition: no operator (==, !=, ~, in) found in {condition!r}"
+        )
+    start, end, op = best
+    lhs = render(condition[:start], store).strip()
+    rhs = render(condition[end:], store).strip()
+
+    if op == "==":
+        return lhs == rhs
+    if op == "!=":
+        return lhs != rhs
+    if op == "~":
+        m = _UNTIL_REGEX_RHS.match(rhs)
+        if m is None:
+            raise ValueError(f"until condition: '~' RHS must be /pattern/[flags], got {rhs!r}")
+        return re.search(m.group(1), lhs, _until_flags(m.group(2))) is not None
+    if op == "in":
+        m = _UNTIL_LIST_RHS.match(rhs)
+        if m is None:
+            raise ValueError(f"until condition: 'in' RHS must be [A, B, C], got {rhs!r}")
+        items = [x.strip() for x in m.group(1).split(",") if x.strip() != ""]
+        return lhs in items
+    raise AssertionError(f"unreachable: unknown operator {op!r}")
+
+
+def poll_until(name, attempt_fn, condition, interval, max_attempts, store, quiet):
+    """Re-invoke ``attempt_fn()`` until ``eval_until(condition, store)`` is true."""
+    for attempt in range(1, max_attempts + 1):
+        attempt_fn()
+        if eval_until(condition, store):
+            if not quiet:
+                print(f"    * until satisfied on attempt {attempt}")
+            return
+        if attempt < max_attempts:
+            if not quiet:
+                print(
+                    f"    * until not satisfied (attempt {attempt}/{max_attempts}),"
+                    f" retrying in {interval}s"
+                )
+            time.sleep(interval)
+    raise RuntimeError(
+        f"step {name!r}: until condition not satisfied "
+        f"after {max_attempts} attempts: {condition!r}"
+    )
+'''
+
+_REPEAT_SRC = '''\
+# Names referenced by ${repeat.<name>} in the source TOML. Each one MUST be
+# supplied at runtime via --repeat-vars NAME=v1,v2,...
+REQUIRED_REPEAT_VARS = {{REQUIRED_REPEAT_VARS}}
+
+
+def _build_repeat_iterations(repeat_args):
+    """Parse --repeat-vars CLI entries and expand them into per-iteration dicts."""
+    parsed = {}
+    for kv in repeat_args:
+        if "=" not in kv:
+            raise SystemExit(
+                f"error: --repeat-vars requires name=v1,v2,..., got: {kv!r}"
+            )
+        k, _, v = kv.partition("=")
+        k = k.strip()
+        if not k:
+            raise SystemExit(f"error: --repeat-vars has empty key: {kv!r}")
+        if k in parsed:
+            raise SystemExit(f"error: --repeat-vars duplicated key: {k!r}")
+        values = [x.strip() for x in v.split(",")]
+        if not values or any(x == "" for x in values):
+            raise SystemExit(
+                f"error: --repeat-vars must supply non-empty comma-separated values: {kv!r}"
+            )
+        parsed[k] = values
+    missing = REQUIRED_REPEAT_VARS - set(parsed)
+    if missing:
+        raise SystemExit(f"error: --repeat-vars missing for: {sorted(missing)}")
+    if not parsed:
+        return [{}]
+    lengths = {k: len(v) for k, v in parsed.items()}
+    distinct = set(lengths.values())
+    if len(distinct) != 1:
+        raise SystemExit(
+            f"error: --repeat-vars value counts must match across all keys, got: {lengths}"
+        )
+    n = distinct.pop()
+    return [{k: parsed[k][i] for k in parsed} for i in range(n)]
+'''
+
+_ARGPARSE_REPEAT_SRC = '''    p.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
+                   help="comma-separated values for ${repeat.K} (repeatable). "
+                        "All --repeat-vars must share the same number of values; "
+                        "the workflow is executed once per index.")'''
+
+_MAIN_REPEAT_SETUP_REPEAT = '''    iterations = _build_repeat_iterations(args.repeat_vars)
+    total = len(iterations)
+
+    for _idx, _repeat_iter in enumerate(iterations, start=1):
+        store["repeat"] = dict(_repeat_iter)
+        if _repeat_iter:
+            store["steps"] = {}
+            print(f"=== repeat iteration {_idx}/{total} {_repeat_iter} ===")
+'''
+
+_MAIN_REPEAT_SETUP_NO_REPEAT = "    store['repeat'] = {}"
+
 
 # ---------------------------------------------------------------- literal helpers
 
@@ -154,37 +293,76 @@ def generate(
     used: set[str] = set()
     step_blocks: list[str] = []
     step_calls: list[str] = []
-    # 8-space indent: step calls live inside the per-iteration ``for`` loop
-    # in ``main()`` so they can re-execute when --repeat-vars is supplied.
+
+    needs_until = False
     for req in cfg.requests:
+        if req.until is not None:
+            needs_until = True
         fn = _sanitize_ident(req.name, used)
         step_blocks.append(_emit_step(req, fn))
         step_calls.append(
-            f"        {fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)"
+            f"{fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)"
         )
 
     if not step_blocks:
         step_functions_src = "# (no [[requests]] blocks in source TOML)"
-        step_calls_src = "        pass  # no steps"
+        step_calls_src = "pass  # no steps"
     else:
         step_functions_src = "\n\n\n".join(step_blocks)
         step_calls_src = "\n".join(step_calls)
 
-    # Required ${repeat.<name>} variables, embedded as a Python set literal so
-    # the generated script can validate --repeat-vars at runtime.
+    # Required ${repeat.<name>} variables
     from .workflow import collect_repeat_names
     required_repeat = sorted(collect_repeat_names(cfg))
+    needs_repeat = bool(required_repeat)
     if required_repeat:
         repeat_lit = "{" + ", ".join(repr(n) for n in required_repeat) + "}"
     else:
         repeat_lit = "set()"
+
+    # Conditional sections
+    until_helpers = _UNTIL_SRC if needs_until else "# (no until blocks — helpers omitted)"
+    repeat_helpers = (
+        _REPEAT_SRC.replace("{{REQUIRED_REPEAT_VARS}}", repeat_lit)
+        if needs_repeat
+        else "# (no ${repeat.*} references — helpers omitted)"
+    )
+    argparse_repeat = _ARGPARSE_REPEAT_SRC if needs_repeat else ""
+    main_repeat_setup = (
+        _MAIN_REPEAT_SETUP_REPEAT if needs_repeat else _MAIN_REPEAT_SETUP_NO_REPEAT
+    )
+
+    # Indent step calls for repeat loop nesting
+    if needs_repeat:
+        step_calls_src = "\n".join(
+            f"        {line}" for line in step_calls_src.splitlines()
+        )
+        # Move the workflow comment into the loop body so indentation is uniform
+        step_calls_src = (
+            "        # === Workflow ===\n"
+            "        # Comment out a line to skip that step. "
+            "Reorder lines to change execution order.\n"
+            + step_calls_src
+        )
+    else:
+        step_calls_src = (
+            "    # === Workflow ===\n"
+            "    # Comment out a line to skip that step. "
+            "Reorder lines to change execution order.\n"
+            + "\n".join(
+                f"    {line}" for line in step_calls_src.splitlines()
+            )
+        )
 
     rendered = (
         template
         .replace("{{VERSION}}", __version__)
         .replace("{{GENERATED_AT}}", timestamp)
         .replace("{{DEFAULT_VARS}}", _dict_literal(dict(default_vars or {}), indent=""))
-        .replace("{{REQUIRED_REPEAT_VARS}}", repeat_lit)
+        .replace("{{UNTIL_HELPERS}}", until_helpers)
+        .replace("{{REPEAT_HELPERS}}", repeat_helpers)
+        .replace("{{ARGPARSE_REPEAT}}", argparse_repeat)
+        .replace("{{MAIN_REPEAT_SETUP}}", main_repeat_setup)
         .replace("{{STEP_FUNCTIONS}}", step_functions_src)
         .replace("{{STEP_CALLS}}", step_calls_src)
     )

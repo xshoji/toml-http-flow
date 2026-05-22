@@ -329,8 +329,19 @@ class TestUntilEquivalence(unittest.TestCase):
     """Generated runner's eval_until must agree with httpflow.until.evaluate."""
 
     def test_equivalence_against_inline_runner(self):
-        # Generate a minimal script just to obtain its eval_until.
-        wf = WorkflowConfig(requests=[])
+        # Generate a script with an until step to force inclusion of eval_until.
+        wf = WorkflowConfig(requests=[
+            RequestConfig(
+                name="dummy",
+                method="GET",
+                url="http://example.com",
+                until=UntilConfig(
+                    condition="${steps.dummy.x} == 1",
+                    interval=1.0,
+                    max_attempts=1,
+                ),
+            ),
+        ])
         script = generator.generate(wf)
         ns: dict = {}
         exec(compile(script, "<generated>", "exec"), ns)
