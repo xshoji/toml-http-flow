@@ -102,11 +102,12 @@ def poll_until(name, attempt_fn, condition, interval, max_attempts, store, quiet
 
 _REPEAT_SRC = '''\
 # Names referenced by ${repeat.<name>} in the source TOML. Each one MUST be
-# supplied at runtime via --repeat-vars NAME=v1,v2,...
+# supplied at runtime via --repeat-vars NAME=v1,v2,... unless it is embedded
+# in DEFAULT_REPEAT_VARS below.
 REQUIRED_REPEAT_VARS = {{REQUIRED_REPEAT_VARS}}
 
 
-def _build_repeat_iterations(repeat_args):
+def _build_repeat_iterations(repeat_args, default_repeat_vars=None):
     """Parse --repeat-vars CLI entries and expand them into per-iteration dicts."""
     parsed = {}
     for kv in repeat_args:
@@ -126,19 +127,21 @@ def _build_repeat_iterations(repeat_args):
                 f"error: --repeat-vars must supply non-empty comma-separated values: {kv!r}"
             )
         parsed[k] = values
-    missing = REQUIRED_REPEAT_VARS - set(parsed)
+    merged = dict(default_repeat_vars or {})
+    merged.update(parsed)
+    missing = REQUIRED_REPEAT_VARS - set(merged)
     if missing:
         raise SystemExit(f"error: --repeat-vars missing for: {sorted(missing)}")
-    if not parsed:
+    if not merged:
         return [{}]
-    lengths = {k: len(v) for k, v in parsed.items()}
+    lengths = {k: len(v) for k, v in merged.items()}
     distinct = set(lengths.values())
     if len(distinct) != 1:
         raise SystemExit(
             f"error: --repeat-vars value counts must match across all keys, got: {lengths}"
         )
     n = distinct.pop()
-    return [{k: parsed[k][i] for k in parsed} for i in range(n)]
+    return [{k: merged[k][i] for k in merged} for i in range(n)]
 '''
 
 _ARGPARSE_REPEAT_SRC = '''    p.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
@@ -146,7 +149,7 @@ _ARGPARSE_REPEAT_SRC = '''    p.add_argument("--repeat-vars", action="append", d
                         "All --repeat-vars must share the same number of values; "
                         "the workflow is executed once per index.")'''
 
-_MAIN_REPEAT_SETUP_REPEAT = '''    iterations = _build_repeat_iterations(args.repeat_vars)
+_MAIN_REPEAT_SETUP_REPEAT = '''    iterations = _build_repeat_iterations(args.repeat_vars, DEFAULT_REPEAT_VARS)
     total = len(iterations)
 
     for _idx, _repeat_iter in enumerate(iterations, start=1):
@@ -280,10 +283,23 @@ def _emit_step(req: RequestConfig, func_name: str) -> str:
 # ---------------------------------------------------------------- public API
 
 
+def _list_dict_literal(d: dict[str, list[str]], indent: str = "    ") -> str:
+    if not d:
+        return "{}"
+    inner = indent + "    "
+    lines = ["{"]
+    for k, v in d.items():
+        items = ", ".join(repr(x) for x in v)
+        lines.append(f"{inner}{k!r}: [" + items + "],")
+    lines.append(f"{indent}}}")
+    return "\n".join(lines)
+
+
 def generate(
     cfg: WorkflowConfig,
     *,
     default_vars: dict[str, str] | None = None,
+    default_repeat_vars: dict[str, list[str]] | None = None,
     shebang: bool = False,
 ) -> str:
     """Return the source of a self-contained runner script."""
@@ -359,6 +375,7 @@ def generate(
         .replace("{{VERSION}}", __version__)
         .replace("{{GENERATED_AT}}", timestamp)
         .replace("{{DEFAULT_VARS}}", _dict_literal(dict(default_vars or {}), indent=""))
+        .replace("{{DEFAULT_REPEAT_VARS}}", _list_dict_literal(dict(default_repeat_vars or {}), indent=""))
         .replace("{{UNTIL_HELPERS}}", until_helpers)
         .replace("{{REPEAT_HELPERS}}", repeat_helpers)
         .replace("{{ARGPARSE_REPEAT}}", argparse_repeat)
