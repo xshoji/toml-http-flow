@@ -51,7 +51,7 @@ DEFAULT_REPEAT_VARS = {}
    - `{{STEP_FUNCTIONS}}`: 各ステップ関数の定義（空行2つで区切り）
    - `{{STEP_CALLS}}`: `main()` 内に並べる `step_xxx(store, quiet=args.quiet, pretty_json=args.pretty_json)` の列
     - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数
-    - `{{DEFAULT_REPEAT_VARS}}`: `--embed --repeat-vars` で渡されたデフォルト repeat 変数（辞書形式、値はリスト）
+    - `{{DEFAULT_REPEAT_VARS}}`: `--repeat-vars` で渡されたデフォルト repeat 変数（辞書形式、値はリスト）
     - `{{GENERATED_AT}}`: 生成タイムスタンプ
     - `{{VERSION}}`: 本ツールのバージョン
    - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `eval_until` / `poll_until` を含むヘルパ群（未使用時は省略）

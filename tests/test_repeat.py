@@ -258,7 +258,7 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
             self.assertNotIn("=== repeat iteration", res.stdout)
 
     def test_embed_repeat_vars(self):
-        """--embed --repeat-vars embeds defaults so the script runs without args."""
+        """--repeat-vars embeds defaults so the script runs without args."""
         from httpflow import config as cfg_mod
 
         base = f"http://127.0.0.1:{self.port}"

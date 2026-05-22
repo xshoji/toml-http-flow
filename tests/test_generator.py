@@ -205,7 +205,7 @@ class TestGenerator(unittest.TestCase):
             self.assertNotIn("--repeat-vars", script)
             self.assertIn("(no ${repeat.*} references", script)
 
-    def test_embed_defaults(self):
+    def test_default_vars_embedded(self):
         """-v K=V sets DEFAULT_VARS; script runs without args and can be overridden."""
         base = f"http://127.0.0.1:{self.port}"
         toml_text = textwrap.dedent(f"""
