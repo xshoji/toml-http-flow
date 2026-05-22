@@ -81,6 +81,12 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="output .py file (default: stdout)")
     p_gen.add_argument("-v", "--var", action="append", default=[],
                        help="default variable embedded in the generated script (repeatable)")
+    p_gen.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
+                       help="default repeat variables embedded in the generated script "
+                            "(requires --embed, repeatable)")
+    p_gen.add_argument("--embed", action="store_true",
+                       help="embed the specified -v/--var and --repeat-vars values "
+                            "into the generated script as defaults")
     p_gen.add_argument("--shebang", action="store_true",
                        help="prepend #!/usr/bin/env python3 and chmod +x the output file")
     return parser
@@ -122,9 +128,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "generate":
         default_vars = _parse_vars(args.var)
+        repeat_vars = _parse_repeat_vars(args.repeat_vars)
+        if repeat_vars and not args.embed:
+            print("error: --repeat-vars for generate requires --embed", file=sys.stderr)
+            return 1
         try:
-            script = generator.generate(cfg, default_vars=default_vars,
-                                        shebang=args.shebang)
+            script = generator.generate(
+                cfg,
+                default_vars=default_vars,
+                default_repeat_vars=repeat_vars if args.embed else None,
+                shebang=args.shebang,
+            )
         except Exception as e:
             print(f"error generating script: {e}", file=sys.stderr)
             return 1
