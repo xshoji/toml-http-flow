@@ -86,8 +86,8 @@ class TestMaskFormUrlencoded(unittest.TestCase):
         with _clean_env():
             out = masking.mask("user=u&password=p&token=abc")
         self.assertIn("user=u", out)
-        self.assertIn("password=%2A%2A%2A", out)
-        self.assertIn("token=%2A%2A%2A", out)
+        self.assertIn("password=***", out)
+        self.assertIn("token=***", out)
 
 
 class TestMaskPlainText(unittest.TestCase):
@@ -125,7 +125,7 @@ class TestMaskUrl(unittest.TestCase):
     def test_query_token_masked(self):
         with _clean_env():
             out = masking.mask_url("https://x/api?token=abc&page=2")
-        self.assertIn("token=%2A%2A%2A", out)
+        self.assertIn("token=***", out)
         self.assertIn("page=2", out)
 
     def test_no_query_unchanged(self):
@@ -227,7 +227,7 @@ class TestWorkflowMasking(unittest.TestCase):
 
         # ---- URL query masked in log ----
         self.assertNotIn("token=qparam-secret", output)
-        self.assertIn("token=%2A%2A%2A", output)
+        self.assertIn("token=***", output)
         self.assertIn("keep=ok", output)
 
         # ---- request body JSON masked in log ----

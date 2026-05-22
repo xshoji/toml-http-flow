@@ -120,7 +120,7 @@ def mask(text: str, disabled: bool = False) -> str:
         except ValueError:
             return text
         masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
-        return urllib.parse.urlencode(masked)
+        return urllib.parse.urlencode(masked, safe="*")
     return text
 
 
@@ -134,7 +134,7 @@ def mask_url(url: str, disabled: bool = False) -> str:
     targets = _all_targets()
     pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
     masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
-    new_query = urllib.parse.urlencode(masked)
+    new_query = urllib.parse.urlencode(masked, safe="*")
     return urllib.parse.urlunsplit(parsed._replace(query=new_query))
 
 
