@@ -257,6 +257,89 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
             # No iteration banner expected for the no-repeat path.
             self.assertNotIn("=== repeat iteration", res.stdout)
 
+    def test_embed_repeat_vars(self):
+        """--embed --repeat-vars embeds defaults so the script runs without args."""
+        from httpflow import config as cfg_mod
+
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "{base}/echo?id=${{repeat.id}}&label=${{repeat.label}}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "wf.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(
+                wf,
+                default_repeat_vars={"id": ["1", "2", "3"], "label": ["a", "b", "c"]},
+            )
+            compile(script, "<generated>", "exec")
+
+            script_path = tmp_path / "wf.py"
+            script_path.write_text(script, encoding="utf-8")
+
+            # No --repeat-vars needed because defaults are embedded
+            res = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            self.assertIn("/echo?id=1&label=a", res.stdout)
+            self.assertIn("/echo?id=2&label=b", res.stdout)
+            self.assertIn("/echo?id=3&label=c", res.stdout)
+
+            # Runtime --repeat-vars overrides embedded defaults
+            res2 = subprocess.run(
+                [sys.executable, str(script_path),
+                 "--repeat-vars", "id=x,y",
+                 "--repeat-vars", "label=A,B"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res2.returncode, 0, msg=res2.stderr)
+            self.assertIn("/echo?id=x&label=A", res2.stdout)
+            self.assertIn("/echo?id=y&label=B", res2.stdout)
+
+    def test_partial_embed_repeat_vars(self):
+        """Embedding one repeat var and passing the other at runtime works."""
+        from httpflow import config as cfg_mod
+
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "{base}/echo?id=${{repeat.id}}&label=${{repeat.label}}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "wf.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(
+                wf,
+                default_repeat_vars={"id": ["1", "2"]},
+            )
+            compile(script, "<generated>", "exec")
+
+            script_path = tmp_path / "wf.py"
+            script_path.write_text(script, encoding="utf-8")
+
+            # label is required but id has embedded defaults
+            res = subprocess.run(
+                [sys.executable, str(script_path),
+                 "--repeat-vars", "label=a,b"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            self.assertIn("/echo?id=1&label=a", res.stdout)
+            self.assertIn("/echo?id=2&label=b", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
