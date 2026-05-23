@@ -289,6 +289,26 @@ def _default_vars_help():
     return "\n".join(lines)
 
 
+def _default_repeat_vars_help():
+    """Return help text listing optional --repeat-vars parameters."""
+    lines = [
+        "comma-separated values for ${repeat.K} (repeatable).",
+        "All --repeat-vars must share the same number of values; the workflow is executed once per index.",
+    ]
+    if DEFAULT_REPEAT_VARS:
+        lines.append("  * DEFAULT_REPEAT_VARS (optional parameters)")
+        lines.extend(f"    - {k}={','.join(v)}" for k, v in DEFAULT_REPEAT_VARS.items())
+    try:
+        required_repeat_vars = REQUIRED_REPEAT_VARS
+    except NameError:
+        required_repeat_vars = set()
+    missing = sorted(required_repeat_vars - set(DEFAULT_REPEAT_VARS))
+    if missing:
+        lines.append("  * Required parameters (referenced by ${repeat.*} but not embedded)")
+        lines.extend(f"    - {k}" for k in missing)
+    return "\n".join(lines)
+
+
 def main():
     p = argparse.ArgumentParser(
         description="Generated API workflow runner",

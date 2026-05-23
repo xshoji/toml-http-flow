@@ -146,9 +146,7 @@ def _build_repeat_iterations(repeat_args, default_repeat_vars=None):
 '''
 
 _ARGPARSE_REPEAT_SRC = '''    p.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
-                   help="comma-separated values for ${repeat.K} (repeatable). "
-                        "All --repeat-vars must share the same number of values; "
-                        "the workflow is executed once per index.")'''
+                   help=_default_repeat_vars_help())'''
 
 _MAIN_REPEAT_SETUP_REPEAT = '''    iterations = _build_repeat_iterations(args.repeat_vars, DEFAULT_REPEAT_VARS)
     total = len(iterations)

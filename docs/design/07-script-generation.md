@@ -43,6 +43,11 @@ DEFAULT_REPEAT_VARS = {}
 - `DEFAULT_VARS`: 生成時に埋め込まれた任意指定パラメータ（`key=value`）
 - `REQUIRED_VARS`: `${vars.<key>}` で参照されているが `DEFAULT_VARS` に埋め込まれていない必須パラメータ（`key`）。該当する変数がある場合のみ表示する。
 
+`${repeat.*}` を使う生成スクリプトの `--help` では、`--repeat-vars` の説明に、
+`DEFAULT_REPEAT_VARS` がある場合のみ埋め込み済み repeat 変数（`key=v1,v2,...`）を表示する。
+また、`${repeat.<key>}` で参照されているが `DEFAULT_REPEAT_VARS` に埋め込まれていない
+必須 repeat 変数（`key`）がある場合は、その名前も表示する。
+
 ## 8.3 生成アルゴリズム
 
 `httpflow/generator.py` の責務:

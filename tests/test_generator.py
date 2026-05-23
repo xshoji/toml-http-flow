@@ -243,8 +243,7 @@ class TestGenerator(unittest.TestCase):
             compile(script, "<generated>", "exec")
 
             self.assertNotIn("def _build_repeat_iterations(", script)
-            self.assertNotIn("REQUIRED_REPEAT_VARS", script)
-            self.assertNotIn("--repeat-vars", script)
+            self.assertNotIn("p.add_argument(\"--repeat-vars\"", script)
             self.assertIn("(no ${repeat.*} references", script)
 
     def test_default_vars_embedded(self):
@@ -322,6 +321,68 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
             self.assertIn("  * DEFAULT_VARS (optional parameters)", help_res.stdout)
             self.assertNotIn("  * Required parameters", help_res.stdout)
+
+    def test_generated_help_shows_default_repeat_vars(self):
+        """--repeat-vars help lists embedded DEFAULT_REPEAT_VARS when present."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/echo?id=${{repeat.id}}&label=${{repeat.label}}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(
+                wf,
+                default_repeat_vars={"id": ["1", "2"], "label": ["a", "b"]},
+            )
+            script_path = tmp_path / "workflow.py"
+            script_path.write_text(script, encoding="utf-8")
+
+            help_res = subprocess.run(
+                [sys.executable, str(script_path), "--help"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+            self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
+            self.assertIn("  * DEFAULT_REPEAT_VARS (optional parameters)", help_res.stdout)
+            self.assertIn("    - id=1,2", help_res.stdout)
+            self.assertIn("    - label=a,b", help_res.stdout)
+
+    def test_generated_help_shows_required_repeat_vars(self):
+        """--repeat-vars help lists missing ${repeat.*} names."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/echo?id=${{repeat.id}}&label=${{repeat.label}}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf, default_repeat_vars={"id": ["1", "2"]})
+            script_path = tmp_path / "workflow.py"
+            script_path.write_text(script, encoding="utf-8")
+
+            help_res = subprocess.run(
+                [sys.executable, str(script_path), "--help"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+            self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
+            self.assertIn("  * DEFAULT_REPEAT_VARS (optional parameters)", help_res.stdout)
+            self.assertIn("    - id=1,2", help_res.stdout)
+            self.assertIn("  * Required parameters (referenced by ${repeat.*} but not embedded)", help_res.stdout)
+            self.assertIn("    - label", help_res.stdout)
 
 
 if __name__ == "__main__":
