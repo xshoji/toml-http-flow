@@ -25,6 +25,9 @@ and embedding into CI/CD pipelines without this tool installed.
 ## Installation
 
 ```bash
+# Run directly from GitHub with pipx
+pipx run --spec git+https://github.com/xshoji/toml-http-flow.git httpflow --help
+
 # Clone the repo and run directly
 git clone https://github.com/xshoji/toml-http-flow.git
 cd toml-http-flow
