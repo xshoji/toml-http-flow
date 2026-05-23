@@ -15,23 +15,23 @@ Pythonの `string.Template` / シェル / Make などで広く使われている
 ## 5.1 ステップ結果の参照
 
 ```
-${steps.<step_name>.<capture_key>}
+${<capture_key>}
 ```
 
 例:
 ```toml
-Authorization = "Bearer ${steps.getToken.token}"
+Authorization = "Bearer ${token}"
 ```
 
 ## 5.2 CLI引数変数の参照
 
 ```
-${vars.<variable_name>}
+${var.<variable_name>}
 ```
 
 例:
 ```toml
-url = "https://api.${vars.env}.example.com/user"
+url = "https://api.${var.env}.example.com/user"
 ```
 
 ## 5.3 repeat変数の参照
@@ -121,7 +121,7 @@ body = '{"price":"$$100"}'   # → {"price":"$100"}
 
 ```toml
 # ステップ名にハイフンを含むケース
-url = "https://api.example.com/x?args=${steps.httpbinorg-post.token}"
+url = "https://api.example.com/x?args=${token}"
 ```
 
 ## 5.8 実装方針
@@ -176,6 +176,6 @@ store = {
     "vars": {"env": "production"},
     "steps": {"getToken": {"token": "abc123"}},
 }
-render("Bearer ${steps.getToken.token}", store)
+render("Bearer ${token}", store)
 # → "Bearer abc123"
 ```

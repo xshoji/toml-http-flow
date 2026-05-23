@@ -41,7 +41,7 @@ DEFAULT_REPEAT_VARS = {}
 生成スクリプトの `--help` では、`-v/--var` の説明にインデント付きで以下を表示する。
 
 - `DEFAULT_VARS`: 生成時に埋め込まれた任意指定パラメータ（`key=value`）
-- `REQUIRED_VARS`: `${vars.<key>}` で参照されているが `DEFAULT_VARS` に埋め込まれていない必須パラメータ（`key`）。該当する変数がある場合のみ表示する。
+- `REQUIRED_VARS`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に埋め込まれていない必須パラメータ（`key`）。該当する変数がある場合のみ表示する。
 
 `${repeat.*}` を使う生成スクリプトの `--help` では、`--repeat-vars` の説明に、
 `DEFAULT_REPEAT_VARS` がある場合のみ埋め込み済み repeat 変数（`key=v1,v2,...`）を表示する。
@@ -64,7 +64,7 @@ DEFAULT_REPEAT_VARS = {}
    - `{{STEP_FUNCTIONS}}`: 各ステップ関数の定義（空行2つで区切り）
    - `{{STEP_CALLS}}`: `main()` 内に並べる `step_xxx(store, quiet=args.quiet, pretty_json=args.pretty_json)` の列
     - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数
-    - `{{REQUIRED_VARS}}`: `${vars.<key>}` で参照されているが `DEFAULT_VARS` に無い変数名
+    - `{{REQUIRED_VARS}}`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に無い変数名
     - `{{DEFAULT_REPEAT_VARS}}`: `--repeat-vars` で渡されたデフォルト repeat 変数（辞書形式、値はリスト）
     - `{{GENERATED_AT}}`: 生成タイムスタンプ
     - `{{VERSION}}`: 本ツールのバージョン

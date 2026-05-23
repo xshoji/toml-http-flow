@@ -70,7 +70,7 @@ python -m httpflow generate -f workflow.toml    # 標準出力に出力
 詳細出力（`>` / `<` 行および `==>` の URL、`* capture` 行）に含まれる
 機密情報を、ログ表示時に `***` へ置換する。
 **マスキングはデフォルトで ON**。実際に送出される HTTP リクエスト本体や
-変数ストア (`store["steps"]`) には一切手を加えない（あくまで「画面に出す
+変数ストア (`store["vars"]`) には一切手を加えない（あくまで「画面に出す
 文字列」だけを差し替える）。
 
 対象は以下:
@@ -142,9 +142,8 @@ python -m httpflow run -f workflow.toml \
   `${repeat.id}` → 第 `i` 要素、`${repeat.label}` → 第 `i` 要素のように
   各キーの **同じインデックスの値** で置換される。
 - 反復の境界に `=== repeat iteration i/N {...} ===` 行が出力される。
-- 各反復の開始時に `store["steps"]` はリセットされる（前イテレーションの
-  capture 結果は次イテレーションに残らない）。`store["vars"]` （`-v` で
-  渡した値）は全イテレーションで共有される。
+- `store["vars"]` （`-v` で渡した値と capture 結果）は全イテレーションで共有される。
+  同じキーを capture した場合は後の値で上書きされる。
 - TOML側に `${repeat.X}` が無く、かつ `--repeat-vars` も指定しない場合は
   従来通り1回だけ実行する（後方互換）。
 - TOML側に `${repeat.X}` があるのに `--repeat-vars` で `X` が与えられない
