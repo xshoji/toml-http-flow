@@ -6,6 +6,7 @@ import tempfile
 import textwrap
 import threading
 import unittest
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -119,6 +120,47 @@ class TestGenerator(unittest.TestCase):
             stdout2 = res2.stdout
             self.assertIn("* capture token = 'gen-tok'", stdout2)
             self.assertIn("    > Authorization: Bearer gen-tok", stdout2)
+
+    def test_generated_random_uuid(self):
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "http://127.0.0.1/${random.UUID}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        ns = {"__name__": "generated_uuid_test"}
+        exec(script, ns)
+        out = ns["render"]("${random.UUID}", {"vars": {}, "steps": {}})
+        self.assertEqual(str(uuid.UUID(out)), out)
+
+    def test_generated_random_uuid_hex(self):
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "http://127.0.0.1/${random.UUID_HEX}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        ns = {"__name__": "generated_uuid_hex_test"}
+        exec(script, ns)
+        out = ns["render"]("${random.UUID_HEX}", {"vars": {}, "steps": {}})
+        self.assertEqual(len(out), 32)
+        self.assertEqual(uuid.UUID(hex=out).hex, out)
 
     def test_generate_with_sleep_step(self):
         toml_text = textwrap.dedent("""

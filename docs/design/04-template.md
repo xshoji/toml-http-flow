@@ -64,7 +64,25 @@ python -m httpflow run -f workflow.toml \
 → `(id=1, label=a)` → `(id=2, label=b)` → `(id=3, label=c)` の3回、
 ワークフロー全体が実行される。
 
-## 5.4 リテラル `$` のエスケープ
+## 5.4 ランダム値の参照
+
+```
+${random.UUID}
+${random.UUID_HEX}
+```
+
+レンダリング時に UUID v4 を生成して文字列として展開する。
+`${random.UUID}` はハイフン付き、`${random.UUID_HEX}` はハイフンなしの32桁16進文字列を返す。
+同じテンプレート文字列内で複数回参照した場合も、参照ごとに新しい UUID を生成する。
+
+例:
+
+```toml
+body = '{"request_id":"${random.UUID}"}'
+headers = ["X-Request-Id: ${random.UUID_HEX}"]
+```
+
+## 5.5 リテラル `$` のエスケープ
 
 `string.Template` の慣例に倣い `$$` で `$` 1文字として扱う。
 
@@ -72,7 +90,7 @@ python -m httpflow run -f workflow.toml \
 body = '{"price":"$$100"}'   # → {"price":"$100"}
 ```
 
-## 5.5 パス要素で使える文字
+## 5.6 パス要素で使える文字
 
 `${...}` 内のパス要素には以下を許可する:
 
@@ -90,13 +108,14 @@ body = '{"price":"$$100"}'   # → {"price":"$100"}
 url = "https://api.example.com/x?args=${steps.httpbinorg-post.token}"
 ```
 
-## 5.6 実装方針
+## 5.7 実装方針
 
 `re.sub` のコールバックで置換する。
 ネームスペース（`steps` / `vars`）を区別せず、単一のルックアップ関数で解決する。
 
 ```python
 import re
+import uuid
 from typing import Any
 
 PATTERN = re.compile(r"\$(?:\$|\{([\w.\-]+)\})")
@@ -105,6 +124,10 @@ class TemplateError(KeyError):
     pass
 
 def _lookup(store: dict, parts: list[str]) -> Any:
+    if parts == ["random", "UUID"]:
+        return uuid.uuid4()
+    if parts == ["random", "UUID_HEX"]:
+        return uuid.uuid4().hex
     if len(parts) == 1 and parts[0] in store.get("vars", {}):
         return store["vars"][parts[0]]
     cur: Any = store

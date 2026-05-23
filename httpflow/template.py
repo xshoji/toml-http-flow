@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Any
 
 # Path segments inside ${...} may contain letters, digits, underscores and
@@ -19,6 +20,10 @@ class TemplateError(KeyError):
 
 
 def _lookup(store: dict, parts: list[str]) -> Any:
+    if parts == ["random", "UUID"]:
+        return uuid.uuid4()
+    if parts == ["random", "UUID_HEX"]:
+        return uuid.uuid4().hex
     if len(parts) == 1 and parts[0] in store.get("vars", {}):
         return store["vars"][parts[0]]
     cur: Any = store

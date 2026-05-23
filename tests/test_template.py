@@ -1,4 +1,5 @@
 import unittest
+import uuid
 
 from httpflow.template import TemplateError, render, render_mapping
 
@@ -60,6 +61,17 @@ class TestRender(unittest.TestCase):
     def test_hyphen_in_var_name(self):
         store = {"vars": {"my-key": "ok"}, "steps": {}}
         self.assertEqual(render("${vars.my-key}", store), "ok")
+
+    def test_random_uuid(self):
+        out = render("id=${random.UUID}", self.store)
+        value = out.removeprefix("id=")
+        self.assertEqual(str(uuid.UUID(value)), value)
+
+    def test_random_uuid_hex(self):
+        out = render("id=${random.UUID_HEX}", self.store)
+        value = out.removeprefix("id=")
+        self.assertEqual(len(value), 32)
+        self.assertEqual(uuid.UUID(hex=value).hex, value)
 
 
 if __name__ == "__main__":

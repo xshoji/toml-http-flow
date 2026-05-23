@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 
 # ─── runtime helpers (inlined; no httpflow dependency) ─────────────────
@@ -108,6 +109,10 @@ def render(text, store):
     def repl(m):
         if m.group(0) == "$$":
             return "$"
+        if m.group(1) == "random.UUID":
+            return str(uuid.uuid4())
+        if m.group(1) == "random.UUID_HEX":
+            return uuid.uuid4().hex
         if "." not in m.group(1) and m.group(1) in store.get("vars", {}):
             return str(store["vars"][m.group(1)])
         cur = store
