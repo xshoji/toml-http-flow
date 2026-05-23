@@ -64,7 +64,23 @@ python -m httpflow run -f workflow.toml \
 → `(id=1, label=a)` → `(id=2, label=b)` → `(id=3, label=c)` の3回、
 ワークフロー全体が実行される。
 
-## 5.4 ランダム値の参照
+## 5.4 環境変数の参照
+
+```
+${env.<environment_variable_name>}
+```
+
+実行プロセスの環境変数を参照して文字列として展開する。
+環境変数が未定義の場合はテンプレートエラーにする。
+
+例:
+
+```toml
+headers = ["Authorization: Bearer ${env.API_TOKEN}"]
+url = "https://api.example.com/users/${env.USER}"
+```
+
+## 5.5 ランダム値の参照
 
 ```
 ${random.UUID}
@@ -82,7 +98,7 @@ body = '{"request_id":"${random.UUID}"}'
 headers = ["X-Request-Id: ${random.UUID_HEX}"]
 ```
 
-## 5.5 リテラル `$` のエスケープ
+## 5.6 リテラル `$` のエスケープ
 
 `string.Template` の慣例に倣い `$$` で `$` 1文字として扱う。
 
@@ -90,7 +106,7 @@ headers = ["X-Request-Id: ${random.UUID_HEX}"]
 body = '{"price":"$$100"}'   # → {"price":"$100"}
 ```
 
-## 5.6 パス要素で使える文字
+## 5.7 パス要素で使える文字
 
 `${...}` 内のパス要素には以下を許可する:
 
@@ -108,13 +124,14 @@ body = '{"price":"$$100"}'   # → {"price":"$100"}
 url = "https://api.example.com/x?args=${steps.httpbinorg-post.token}"
 ```
 
-## 5.7 実装方針
+## 5.8 実装方針
 
 `re.sub` のコールバックで置換する。
 ネームスペース（`steps` / `vars`）を区別せず、単一のルックアップ関数で解決する。
 
 ```python
 import re
+import os
 import uuid
 from typing import Any
 
@@ -124,6 +141,11 @@ class TemplateError(KeyError):
     pass
 
 def _lookup(store: dict, parts: list[str]) -> Any:
+    if len(parts) == 2 and parts[0] == "env":
+        try:
+            return os.environ[parts[1]]
+        except KeyError as exc:
+            raise TemplateError(".".join(parts)) from exc
     if parts == ["random", "UUID"]:
         return uuid.uuid4()
     if parts == ["random", "UUID_HEX"]:

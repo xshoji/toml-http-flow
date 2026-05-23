@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -161,6 +162,34 @@ class TestGenerator(unittest.TestCase):
         out = ns["render"]("${random.UUID_HEX}", {"vars": {}, "steps": {}})
         self.assertEqual(len(out), 32)
         self.assertEqual(uuid.UUID(hex=out).hex, out)
+
+    def test_generated_env_var(self):
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "http://127.0.0.1/${env.HTTPFLOW_TEST_USER}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        ns = {"__name__": "generated_env_test"}
+        exec(script, ns)
+        old = os.environ.get("HTTPFLOW_TEST_USER")
+        os.environ["HTTPFLOW_TEST_USER"] = "bob"
+        try:
+            out = ns["render"]("${env.HTTPFLOW_TEST_USER}", {"vars": {}, "steps": {}})
+        finally:
+            if old is None:
+                os.environ.pop("HTTPFLOW_TEST_USER", None)
+            else:
+                os.environ["HTTPFLOW_TEST_USER"] = old
+        self.assertEqual(out, "bob")
 
     def test_generate_with_sleep_step(self):
         toml_text = textwrap.dedent("""

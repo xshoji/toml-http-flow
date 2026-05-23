@@ -109,6 +109,11 @@ def render(text, store):
     def repl(m):
         if m.group(0) == "$$":
             return "$"
+        if m.group(1).startswith("env.") and m.group(1).count(".") == 1:
+            key = m.group(1).split(".", 1)[1]
+            if key not in os.environ:
+                raise KeyError(m.group(1))
+            return os.environ[key]
         if m.group(1) == "random.UUID":
             return str(uuid.uuid4())
         if m.group(1) == "random.UUID_HEX":

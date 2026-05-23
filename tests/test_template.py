@@ -1,4 +1,5 @@
 import unittest
+import os
 import uuid
 
 from httpflow.template import TemplateError, render, render_mapping
@@ -72,6 +73,22 @@ class TestRender(unittest.TestCase):
         value = out.removeprefix("id=")
         self.assertEqual(len(value), 32)
         self.assertEqual(uuid.UUID(hex=value).hex, value)
+
+    def test_env_var(self):
+        old = os.environ.get("HTTPFLOW_TEST_USER")
+        os.environ["HTTPFLOW_TEST_USER"] = "bob"
+        try:
+            self.assertEqual(render("user=${env.HTTPFLOW_TEST_USER}", self.store), "user=bob")
+        finally:
+            if old is None:
+                os.environ.pop("HTTPFLOW_TEST_USER", None)
+            else:
+                os.environ["HTTPFLOW_TEST_USER"] = old
+
+    def test_missing_env_var(self):
+        os.environ.pop("HTTPFLOW_TEST_MISSING", None)
+        with self.assertRaises(TemplateError):
+            render("${env.HTTPFLOW_TEST_MISSING}", self.store)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 import uuid
 from typing import Any
 
@@ -20,6 +21,11 @@ class TemplateError(KeyError):
 
 
 def _lookup(store: dict, parts: list[str]) -> Any:
+    if len(parts) == 2 and parts[0] == "env":
+        try:
+            return os.environ[parts[1]]
+        except KeyError as exc:
+            raise TemplateError(".".join(parts)) from exc
     if parts == ["random", "UUID"]:
         return uuid.uuid4()
     if parts == ["random", "UUID_HEX"]:
