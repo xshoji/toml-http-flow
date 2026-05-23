@@ -47,7 +47,7 @@ class TestFindRepeatNames(unittest.TestCase):
         self.assertEqual(find_repeat_names(None), set())
 
     def test_no_match(self):
-        self.assertEqual(find_repeat_names("plain ${vars.x}"), set())
+        self.assertEqual(find_repeat_names("plain ${var.x}"), set())
 
 
 class TestCollectRepeatNames(unittest.TestCase):

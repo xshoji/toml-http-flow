@@ -19,7 +19,7 @@ name    = "updateProfile"
 method  = "PUT"
 url     = "https://api.example.com/profile"
 headers = [
-    "Authorization: Bearer ${steps.getToken.token}",
+    "Authorization: Bearer ${token}",
     "Content-Type: application/x-www-form-urlencoded",
 ]
 body_form = [

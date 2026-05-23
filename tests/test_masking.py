@@ -213,8 +213,8 @@ class TestWorkflowMasking(unittest.TestCase):
         output, store = self._run()
 
         # ---- store remains UNMASKED (only logging is affected) ----
-        self.assertEqual(store["steps"]["auth"]["token"], "tok-xyz")
-        self.assertEqual(store["steps"]["auth"]["user"], "alice")
+        self.assertEqual(store["vars"]["token"], "tok-xyz")
+        self.assertEqual(store["vars"]["user"], "alice")
 
         # ---- headers (request + response) masked in log ----
         self.assertNotIn("Bearer real-secret", output)

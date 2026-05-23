@@ -65,49 +65,49 @@ class _PollServerMixin:
 
 # ─── 1. Condition evaluator unit tests ─────────────────────────────────
 class TestEvaluateCondition(unittest.TestCase):
-    def _store(self, **steps):
-        return {"vars": {}, "steps": steps}
+    def _store(self, **vars_):
+        return {"vars": vars_}
 
     def test_eq_true(self):
-        store = self._store(s={"status": "Active"})
-        self.assertTrue(evaluate("${steps.s.status} == Active", store))
+        store = self._store(status="Active")
+        self.assertTrue(evaluate("${status} == Active", store))
 
     def test_eq_false(self):
-        store = self._store(s={"status": "Pending"})
-        self.assertFalse(evaluate("${steps.s.status} == Active", store))
+        store = self._store(status="Pending")
+        self.assertFalse(evaluate("${status} == Active", store))
 
     def test_eq_with_spaces_trimmed(self):
-        store = self._store(s={"status": "Active"})
-        self.assertTrue(evaluate("  ${steps.s.status}   ==   Active  ", store))
+        store = self._store(status="Active")
+        self.assertTrue(evaluate("  ${status}   ==   Active  ", store))
 
     def test_ne(self):
-        store = self._store(s={"status": "Pending"})
-        self.assertTrue(evaluate("${steps.s.status} != Active", store))
-        self.assertFalse(evaluate("${steps.s.status} != Pending", store))
+        store = self._store(status="Pending")
+        self.assertTrue(evaluate("${status} != Active", store))
+        self.assertFalse(evaluate("${status} != Pending", store))
 
     def test_regex_match(self):
-        store = self._store(s={"msg": "operation succeeded"})
-        self.assertTrue(evaluate("${steps.s.msg} ~ /succe.+/", store))
-        self.assertFalse(evaluate("${steps.s.msg} ~ /^fail/", store))
+        store = self._store(msg="operation succeeded")
+        self.assertTrue(evaluate("${msg} ~ /succe.+/", store))
+        self.assertFalse(evaluate("${msg} ~ /^fail/", store))
 
     def test_regex_case_insensitive_flag(self):
-        store = self._store(s={"msg": "OK"})
-        self.assertTrue(evaluate("${steps.s.msg} ~ /ok/i", store))
+        store = self._store(msg="OK")
+        self.assertTrue(evaluate("${msg} ~ /ok/i", store))
 
     def test_regex_invalid_rhs(self):
-        store = self._store(s={"msg": "x"})
+        store = self._store(msg="x")
         with self.assertRaises(ValueError):
-            evaluate("${steps.s.msg} ~ no-slashes", store)
+            evaluate("${msg} ~ no-slashes", store)
 
     def test_in_list(self):
-        store = self._store(s={"code": "201"})
-        self.assertTrue(evaluate("${steps.s.code} in [200, 201, 204]", store))
-        self.assertFalse(evaluate("${steps.s.code} in [400, 500]", store))
+        store = self._store(code="201")
+        self.assertTrue(evaluate("${code} in [200, 201, 204]", store))
+        self.assertFalse(evaluate("${code} in [400, 500]", store))
 
     def test_in_invalid_rhs(self):
-        store = self._store(s={"code": "200"})
+        store = self._store(code="200")
         with self.assertRaises(ValueError):
-            evaluate("${steps.s.code} in 200", store)
+            evaluate("${code} in 200", store)
 
     def test_no_operator(self):
         store = self._store(s={"x": "y"})
@@ -131,14 +131,14 @@ name = "poll"
 method = "GET"
 url = "http://example.com"
 until = [
-    "condition    = ${steps.poll.status} == Active",
+    "condition    = ${status} == Active",
     "interval     = 2.5",
     "max_attempts = 7",
 ]
 """)
         u = wf.requests[0].until
         self.assertIsNotNone(u)
-        self.assertEqual(u.condition, "${steps.poll.status} == Active")
+        self.assertEqual(u.condition, "${status} == Active")
         self.assertEqual(u.interval, 2.5)
         self.assertEqual(u.max_attempts, 7)
 
@@ -148,7 +148,7 @@ until = [
 name = "poll"
 method = "GET"
 url = "http://example.com"
-until = ["condition = ${steps.poll.s} == OK"]
+until = ["condition = ${s} == OK"]
 """)
         u = wf.requests[0].until
         self.assertEqual(u.interval, 1.0)
@@ -173,7 +173,7 @@ name = "poll"
 method = "GET"
 url = "http://example.com"
 until = [
-    "condition = ${steps.poll.s} == OK",
+    "condition = ${s} == OK",
     "bogus     = 1",
 ]
 """)
@@ -236,10 +236,10 @@ class TestWorkflowPolling(_PollServerMixin, unittest.TestCase):
                 RequestConfig(
                     name="pollStatus",
                     method="GET",
-                    url=f"{base}/jobs/${{steps.createJob.id}}",
+                    url=f"{base}/jobs/${{id}}",
                     capture={"status": "data.status"},
                     until=UntilConfig(
-                        condition="${steps.pollStatus.status} == Active",
+                        condition="${status} == Active",
                         interval=0.01,
                         max_attempts=max_attempts,
                     ),
@@ -252,7 +252,7 @@ class TestWorkflowPolling(_PollServerMixin, unittest.TestCase):
         cfg = self._make_poll_cfg(max_attempts=5)
         buf = io.StringIO()
         store = run(cfg, out=buf)
-        self.assertEqual(store["steps"]["pollStatus"]["status"], "Active")
+        self.assertEqual(store["vars"]["status"], "Active")
         output = buf.getvalue()
         # First two attempts are Pending, third is Active.
         self.assertIn("until satisfied on attempt 3", output)
@@ -264,7 +264,7 @@ class TestWorkflowPolling(_PollServerMixin, unittest.TestCase):
         cfg = self._make_poll_cfg(max_attempts=3)
         buf = io.StringIO()
         store = run(cfg, out=buf)
-        self.assertEqual(store["steps"]["pollStatus"]["status"], "Active")
+        self.assertEqual(store["vars"]["status"], "Active")
         self.assertIn("until satisfied on attempt 1", buf.getvalue())
 
     def test_polling_max_attempts_exceeded(self):
@@ -296,10 +296,10 @@ class TestGeneratorPolling(_PollServerMixin, unittest.TestCase):
             [[requests]]
             name = "pollStatus"
             method = "GET"
-            url = "{base}/jobs/${{steps.createJob.id}}"
+            url = "{base}/jobs/${{id}}"
             capture = ["status = data.status"]
             until = [
-                "condition    = ${{steps.pollStatus.status}} == Active",
+                "condition    = ${{status}} == Active",
                 "interval     = 0.01",
                 "max_attempts = 5",
             ]
@@ -336,7 +336,7 @@ class TestUntilEquivalence(unittest.TestCase):
                 method="GET",
                 url="http://example.com",
                 until=UntilConfig(
-                    condition="${steps.dummy.x} == 1",
+                    condition="${x} == 1",
                     interval=1.0,
                     max_attempts=1,
                 ),
@@ -347,15 +347,15 @@ class TestUntilEquivalence(unittest.TestCase):
         exec(compile(script, "<generated>", "exec"), ns)
         gen_eval = ns["eval_until"]
 
-        store = {"vars": {}, "steps": {"s": {"status": "Active", "code": "201"}}}
+        store = {"vars": {"status": "Active", "code": "201"}}
         cases = [
-            "${steps.s.status} == Active",
-            "${steps.s.status} == Pending",
-            "${steps.s.status} != Pending",
-            "${steps.s.code} in [200, 201, 204]",
-            "${steps.s.code} in [400, 500]",
-            "${steps.s.status} ~ /^Act/",
-            "${steps.s.status} ~ /pending/i",
+            "${status} == Active",
+            "${status} == Pending",
+            "${status} != Pending",
+            "${code} in [200, 201, 204]",
+            "${code} in [400, 500]",
+            "${status} ~ /^Act/",
+            "${status} ~ /pending/i",
         ]
         for cond in cases:
             with self.subTest(cond=cond):

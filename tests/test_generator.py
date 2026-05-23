@@ -65,7 +65,7 @@ class TestGenerator(unittest.TestCase):
             name = "getUser"
             method = "GET"
             url = "{base}/me"
-            headers = ["Authorization: Bearer ${{steps.getToken.token}}"]
+            headers = ["Authorization: Bearer ${{token}}"]
         """).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -282,7 +282,7 @@ class TestGenerator(unittest.TestCase):
             [[requests]]
             name = "ping"
             method = "GET"
-            url = "{base}/echo?env=${{vars.env}}&user=${{vars.user}}"
+            url = "{base}/echo?env=${{var.env}}&user=${{var.user}}"
         """).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -303,7 +303,7 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
             self.assertIn("  * DEFAULT_VARS (optional parameters)", help_res.stdout)
             self.assertIn("env=prod", help_res.stdout)
-            self.assertIn("  * Required parameters (referenced by ${vars.*} but not embedded)", help_res.stdout)
+            self.assertIn("  * Required parameters (referenced by ${var.*} but not embedded)", help_res.stdout)
             self.assertIn("    - user", help_res.stdout)
 
             # Runs without arguments because DEFAULT_VARS supplies env=prod
@@ -323,13 +323,13 @@ class TestGenerator(unittest.TestCase):
             self.assertIn("/echo?env=staging&user=bob", res2.stdout)
 
     def test_generated_help_omits_required_vars_block_when_none_required(self):
-        """Required parameters block appears only when missing ${vars.*} exist."""
+        """Required parameters block appears only when missing ${var.*} exist."""
         base = f"http://127.0.0.1:{self.port}"
         toml_text = textwrap.dedent(f"""
             [[requests]]
             name = "ping"
             method = "GET"
-            url = "{base}/echo?env=${{vars.env}}"
+            url = "{base}/echo?env=${{var.env}}"
         """).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as tmp:

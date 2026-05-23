@@ -62,13 +62,10 @@ class TestWorkflow(unittest.TestCase):
             body_form={
                 "nickname": "new_name",
                 "email": "test@email.com",
-                "args": "${steps.httpbinorg-post.argsAaa2}",
+                "args": "${argsAaa2}",
             },
         )
-        store = {
-            "vars": {},
-            "steps": {"httpbinorg-post": {"argsAaa2": "hello-world"}},
-        }
+        store = {"vars": {"argsAaa2": "hello-world"}}
         rendered = _render_request(req, store)
         self.assertEqual(rendered.body_form, {
             "nickname": "new_name",
@@ -100,9 +97,6 @@ class TestWorkflow(unittest.TestCase):
         buf = io.StringIO()
         store = run(cfg, {"env": "test"}, out=buf)
 
-        self.assertEqual(store["steps"]["getToken"]["token"], "tok-abc")
-        self.assertEqual(store["steps"]["getUser"]["uid"], 7)
-        self.assertEqual(store["steps"]["getUser"]["echoed_auth"], "Bearer tok-abc")
         self.assertEqual(store["vars"], {"env": "test", "token": "tok-abc", "uid": 7, "echoed_auth": "Bearer tok-abc"})
 
         # Each request and response summary line must include a local

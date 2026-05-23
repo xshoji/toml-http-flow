@@ -25,7 +25,7 @@ class TestSleepStep(unittest.TestCase):
         self.assertIn("[wait1] SLEEP 0.1", output)
         self.assertIn("[wait1] done", output)
         self.assertIn("    > sleep 0.1 seconds", output)
-        self.assertEqual(store["steps"]["wait1"], {})
+        self.assertNotIn("steps", store)
 
     def test_sleep_step_with_template(self):
         """SLEEP url can use template variables."""
@@ -33,7 +33,7 @@ class TestSleepStep(unittest.TestCase):
 
         cfg = WorkflowConfig(
             requests=[
-                RequestConfig(name="wait", method="SLEEP", url="${vars.delay}"),
+                RequestConfig(name="wait", method="SLEEP", url="${var.delay}"),
             ]
         )
         start = time.monotonic()
@@ -41,7 +41,7 @@ class TestSleepStep(unittest.TestCase):
         elapsed = time.monotonic() - start
 
         self.assertGreaterEqual(elapsed, 0.02)
-        self.assertEqual(store["steps"]["wait"], {})
+        self.assertNotIn("steps", store)
 
     def test_sleep_step_quiet(self):
         """SLEEP step in quiet mode prints no detail."""
