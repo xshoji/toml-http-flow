@@ -20,5 +20,5 @@
       2. `urllib.request.urlopen()` でHTTPリクエストを送信
       3. レスポンスを受信＆JSONとしてパース（`Content-Type` 判定）
       4. `capture` 定義に従い、指定パスから値を抽出
-      5. 抽出した値を `store["steps"][name][key]` に保存
+      5. 抽出した値を `store["steps"][name][key]` と `store["vars"][key]` に保存
 7. 全ステップ完了後、サマリを標準出力に表示

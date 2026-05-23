@@ -13,6 +13,9 @@ class TestRender(unittest.TestCase):
     def test_simple_var(self):
         self.assertEqual(render("env=${vars.env}", self.store), "env=production")
 
+    def test_top_level_var_alias(self):
+        self.assertEqual(render("env=${env}", self.store), "env=production")
+
     def test_nested_step(self):
         self.assertEqual(
             render("Bearer ${steps.getToken.token}", self.store),

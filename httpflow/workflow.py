@@ -204,6 +204,7 @@ def _execute_http_attempt(
         for var_name, path in rendered.capture.items():
             value = extract(resp.body_json, path)
             captured[var_name] = value
+            store["vars"][var_name] = value
             if not quiet:
                 shown = mask_value(var_name, value, disabled=no_mask)
                 print(f"    * capture {var_name} = {shown!r}", file=out)

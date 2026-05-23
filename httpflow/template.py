@@ -19,6 +19,8 @@ class TemplateError(KeyError):
 
 
 def _lookup(store: dict, parts: list[str]) -> Any:
+    if len(parts) == 1 and parts[0] in store.get("vars", {}):
+        return store["vars"][parts[0]]
     cur: Any = store
     for p in parts:
         if not isinstance(cur, dict) or p not in cur:

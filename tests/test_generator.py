@@ -212,7 +212,7 @@ class TestGenerator(unittest.TestCase):
             [[requests]]
             name = "ping"
             method = "GET"
-            url = "{base}/echo?env=${{vars.env}}"
+            url = "{base}/echo?env=${{vars.env}}&user=${{vars.user}}"
         """).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -226,21 +226,60 @@ class TestGenerator(unittest.TestCase):
             script_path = tmp_path / "workflow.py"
             script_path.write_text(script, encoding="utf-8")
 
+            help_res = subprocess.run(
+                [sys.executable, str(script_path), "--help"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
+            self.assertIn("  * DEFAULT_VARS (optional parameters)", help_res.stdout)
+            self.assertIn("env=prod", help_res.stdout)
+            self.assertIn("  * Required parameters (referenced by ${vars.*} but not embedded)", help_res.stdout)
+            self.assertIn("    - user", help_res.stdout)
+
             # Runs without arguments because DEFAULT_VARS supplies env=prod
             res = subprocess.run(
-                [sys.executable, str(script_path)],
+                [sys.executable, str(script_path), "-v", "user=alice"],
                 capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(res.returncode, 0, msg=res.stderr)
-            self.assertIn("/echo?env=prod", res.stdout)
+            self.assertIn("/echo?env=prod&user=alice", res.stdout)
 
             # Runtime -v overrides DEFAULT_VARS
             res2 = subprocess.run(
-                [sys.executable, str(script_path), "-v", "env=staging"],
+                [sys.executable, str(script_path), "-v", "env=staging", "-v", "user=bob"],
                 capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(res2.returncode, 0, msg=res2.stderr)
-            self.assertIn("/echo?env=staging", res2.stdout)
+            self.assertIn("/echo?env=staging&user=bob", res2.stdout)
+
+    def test_generated_help_omits_required_vars_block_when_none_required(self):
+        """Required parameters block appears only when missing ${vars.*} exist."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/echo?env=${{vars.env}}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf, default_vars={"env": "prod"})
+            compile(script, "<generated>", "exec")
+
+            script_path = tmp_path / "workflow.py"
+            script_path.write_text(script, encoding="utf-8")
+            help_res = subprocess.run(
+                [sys.executable, str(script_path), "--help"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+            self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
+            self.assertIn("  * DEFAULT_VARS (optional parameters)", help_res.stdout)
+            self.assertNotIn("  * Required parameters", help_res.stdout)
 
 
 if __name__ == "__main__":

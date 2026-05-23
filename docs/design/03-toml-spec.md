@@ -96,7 +96,9 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
 `capture` の各要素は `"<変数名> = <JSONパス>"` 形式で、
 **レスポンスJSONの「JSONパス」位置にある値を、「変数名」として変数ストアに保存する** という指示。
 
-保存先は `steps.<step_name>.<変数名>` で、後続ステップから `${steps.<step_name>.<変数名>}` で参照できる。
+保存先は `steps.<step_name>.<変数名>` とトップレベル変数 `<変数名>` の両方で、
+後続ステップから `${steps.<step_name>.<変数名>}` または `${<変数名>}` で参照できる。
+トップレベル変数が重複した場合は、後から capture した値で上書きする。
 
 ### 4.5.1 トップレベルフィールドの抽出
 
@@ -117,6 +119,8 @@ capture = [
 ```python
 steps.<step>.token   == "xxxx"
 steps.<step>.expires == 3600
+vars.token           == "xxxx"
+vars.expires         == 3600
 ```
 
 ### 4.5.2 ネストオブジェクトの抽出（ドット区切り）

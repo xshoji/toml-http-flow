@@ -92,7 +92,7 @@ class TestWorkflow(unittest.TestCase):
                     name="getUser",
                     method="GET",
                     url=f"{base}/me",
-                    headers={"Authorization": "Bearer ${steps.getToken.token}"},
+                    headers={"Authorization": "Bearer ${token}"},
                     capture={"uid": "user.id", "echoed_auth": "user.auth_seen"},
                 ),
             ]
@@ -103,7 +103,7 @@ class TestWorkflow(unittest.TestCase):
         self.assertEqual(store["steps"]["getToken"]["token"], "tok-abc")
         self.assertEqual(store["steps"]["getUser"]["uid"], 7)
         self.assertEqual(store["steps"]["getUser"]["echoed_auth"], "Bearer tok-abc")
-        self.assertEqual(store["vars"], {"env": "test"})
+        self.assertEqual(store["vars"], {"env": "test", "token": "tok-abc", "uid": 7, "echoed_auth": "Bearer tok-abc"})
 
         # Each request and response summary line must include a local
         # timestamp like "==> 2026-05-19 23:35:49.123 [getToken] ...".

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
+from .template import PATTERN
 
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
@@ -165,6 +166,36 @@ _MAIN_REPEAT_SETUP_NO_REPEAT = "    store['repeat'] = {}"
 # ---------------------------------------------------------------- literal helpers
 
 
+def _collect_required_var_names(cfg: WorkflowConfig, default_vars: dict[str, str]) -> list[str]:
+    """Return ``${vars.<name>}`` names not embedded in ``DEFAULT_VARS``."""
+    found: set[str] = set()
+
+    def scan(text: str | None) -> None:
+        if not text:
+            return
+        for match in PATTERN.finditer(text):
+            path = match.group(1)
+            if not path:
+                continue
+            parts = path.split(".")
+            if len(parts) == 2 and parts[0] == "vars":
+                found.add(parts[1])
+
+    for req in cfg.requests:
+        scan(req.url)
+        for k, v in req.headers.items():
+            scan(k)
+            scan(v)
+        scan(req.body)
+        if req.body_form:
+            for k, v in req.body_form.items():
+                scan(k)
+                scan(v)
+        if req.until is not None:
+            scan(req.until.condition)
+    return sorted(found - set(default_vars))
+
+
 def _str_literal(s: str) -> str:
     """Return a Python source literal for ``s`` preferring triple-quoted form
     for multi-line strings, falling back to ``repr`` otherwise."""
@@ -184,6 +215,18 @@ def _dict_literal(d: dict[str, str], indent: str = "    ") -> str:
     for k, v in d.items():
         lines.append(f"{inner}{k!r}: {_str_literal(v)},")
     lines.append(f"{indent}}}")
+    return "\n".join(lines)
+
+
+def _list_literal(items: list[str], indent: str = "") -> str:
+    """Return a Python list literal for strings."""
+    if not items:
+        return "[]"
+    inner = indent + "    "
+    lines = ["["]
+    for item in items:
+        lines.append(f"{inner}{item!r},")
+    lines.append(f"{indent}]")
     return "\n".join(lines)
 
 
@@ -305,6 +348,7 @@ def generate(
     """Return the source of a self-contained runner script."""
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     timestamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    default_vars = dict(default_vars or {})
 
     used: set[str] = set()
     step_blocks: list[str] = []
@@ -374,7 +418,8 @@ def generate(
         template
         .replace("{{VERSION}}", __version__)
         .replace("{{GENERATED_AT}}", timestamp)
-        .replace("{{DEFAULT_VARS}}", _dict_literal(dict(default_vars or {}), indent=""))
+        .replace("{{DEFAULT_VARS}}", _dict_literal(default_vars, indent=""))
+        .replace("{{REQUIRED_VARS}}", _list_literal(_collect_required_var_names(cfg, default_vars), indent=""))
         .replace("{{DEFAULT_REPEAT_VARS}}", _list_dict_literal(dict(default_repeat_vars or {}), indent=""))
         .replace("{{UNTIL_HELPERS}}", until_helpers)
         .replace("{{REPEAT_HELPERS}}", repeat_helpers)

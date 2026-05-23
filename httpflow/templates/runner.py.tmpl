@@ -108,6 +108,8 @@ def render(text, store):
     def repl(m):
         if m.group(0) == "$$":
             return "$"
+        if "." not in m.group(1) and m.group(1) in store.get("vars", {}):
+            return str(store["vars"][m.group(1)])
         cur = store
         for p in m.group(1).split("."):
             if not isinstance(cur, dict) or p not in cur:
@@ -243,6 +245,7 @@ def run_step(store, name, method, url, *,
             raise RuntimeError(f"step {name!r}: capture requested but response is not JSON")
         for var, path in capture.items():
             captured[var] = extract(body_json, path)
+            store["vars"][var] = captured[var]
             if not quiet:
                 shown = _mask_value(var, captured[var], disabled=no_mask)
                 print(f"    * capture {var} = {shown!r}")
@@ -254,6 +257,7 @@ def run_step(store, name, method, url, *,
 
 # ─── default variables (override with -v key=value at runtime) ──────
 DEFAULT_VARS = {{DEFAULT_VARS}}
+REQUIRED_VARS = {{REQUIRED_VARS}}
 
 # ─── default repeat variables (override with repeat argument at runtime) ─
 DEFAULT_REPEAT_VARS = {{DEFAULT_REPEAT_VARS}}
@@ -266,10 +270,27 @@ DEFAULT_REPEAT_VARS = {{DEFAULT_REPEAT_VARS}}
 
 
 # ─── main ───────────────────────────────────────────────────────────
+def _default_vars_help():
+    """Return help text listing optional and required -v parameters."""
+    lines = ["set runtime variable (key=value)"]
+    lines.append("  * DEFAULT_VARS (optional parameters)")
+    if DEFAULT_VARS:
+        lines.extend(f"    - {k}={v}" for k, v in DEFAULT_VARS.items())
+    else:
+        lines.append("    - none")
+    if REQUIRED_VARS:
+        lines.append("  * Required parameters (referenced by ${vars.*} but not embedded)")
+        lines.extend(f"    - {k}" for k in REQUIRED_VARS)
+    return "\n".join(lines)
+
+
 def main():
-    p = argparse.ArgumentParser(description="Generated API workflow runner")
+    p = argparse.ArgumentParser(
+        description="Generated API workflow runner",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
     p.add_argument("-v", "--var", action="append", default=[], metavar="K=V",
-                   help="override DEFAULT_VARS entries (key=value)")
+                   help=_default_vars_help())
     p.add_argument("-q", "--quiet", action="store_true",
                    help="suppress per-step request/response detail (detail is ON by default)")
     p.add_argument("--pretty-json", action="store_true",
