@@ -154,7 +154,6 @@ _MAIN_REPEAT_SETUP_REPEAT = '''    iterations = _build_repeat_iterations(args.re
     for _idx, _repeat_iter in enumerate(iterations, start=1):
         store["repeat"] = dict(_repeat_iter)
         if _repeat_iter:
-            store["steps"] = {}
             print(f"=== repeat iteration {_idx}/{total} {_repeat_iter} ===")
 '''
 
@@ -165,7 +164,7 @@ _MAIN_REPEAT_SETUP_NO_REPEAT = "    store['repeat'] = {}"
 
 
 def _collect_required_var_names(cfg: WorkflowConfig, default_vars: dict[str, str]) -> list[str]:
-    """Return ``${vars.<name>}`` names not embedded in ``DEFAULT_VARS``."""
+    """Return ``${var.<name>}`` names not embedded in ``DEFAULT_VARS``."""
     found: set[str] = set()
 
     def scan(text: str | None) -> None:
@@ -176,7 +175,7 @@ def _collect_required_var_names(cfg: WorkflowConfig, default_vars: dict[str, str
             if not path:
                 continue
             parts = path.split(".")
-            if len(parts) == 2 and parts[0] == "vars":
+            if len(parts) == 2 and parts[0] == "var":
                 found.add(parts[1])
 
     for req in cfg.requests:
@@ -264,7 +263,6 @@ def _emit_sleep_step(req: RequestConfig, func_name: str) -> str:
         '        print(f"    > sleep {seconds} seconds")',
         "    time.sleep(seconds)",
         '    print(f"<== {_now()} [{name}] done")',
-        '    store["steps"][name] = {}',
     ]
     return "\n".join(lines)
 

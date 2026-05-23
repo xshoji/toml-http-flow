@@ -1,7 +1,7 @@
 """Mask sensitive header / body / capture values for log output.
 
 Masking only affects what is *printed* to the log; it never changes the
-bytes sent over the wire nor values stored in ``store["steps"]``.
+bytes sent over the wire nor captured values stored in ``store["vars"]``.
 
 The only configurable environment variable (all optional):
 

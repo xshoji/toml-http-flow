@@ -178,7 +178,7 @@ def _execute_http_attempt(
 ) -> None:
     """Render, send, log, and capture a single HTTP attempt.
 
-    On return, ``store["steps"][req.name]`` is updated with captured values.
+    On return, ``store["vars"]`` is updated with captured values.
     """
     rendered = _render_request(req, store)
     print(
@@ -195,7 +195,6 @@ def _execute_http_attempt(
     if not quiet:
         _log_response(resp, out, pretty_json=pretty_json, no_mask=no_mask)
 
-    captured: dict[str, Any] = {}
     if rendered.capture:
         if resp.body_json is None:
             raise RuntimeError(
@@ -203,13 +202,10 @@ def _execute_http_attempt(
             )
         for var_name, path in rendered.capture.items():
             value = extract(resp.body_json, path)
-            captured[var_name] = value
             store["vars"][var_name] = value
             if not quiet:
                 shown = mask_value(var_name, value, disabled=no_mask)
                 print(f"    * capture {var_name} = {shown!r}", file=out)
-
-    store["steps"][rendered.name] = captured
 
 
 def run(
@@ -237,7 +233,6 @@ def run(
 
     store: dict[str, Any] = {
         "vars": dict(vars_ or {}),
-        "steps": {},
         "repeat": {},
     }
 
@@ -245,7 +240,6 @@ def run(
     for idx, repeat_iter in enumerate(iterations, start=1):
         store["repeat"] = dict(repeat_iter)
         if repeat_iter:
-            store["steps"] = {}
             print(
                 f"=== repeat iteration {idx}/{total} {repeat_iter} ===",
                 file=out,
@@ -288,7 +282,6 @@ def _run_once(
                     print(f"    > sleep {seconds} seconds", file=out)
                 time.sleep(seconds)
                 print(f"<== {_now()} [{req.name}] done", file=out)
-                store["steps"][req.name] = {}
                 continue
 
         # Plain HTTP step (no polling).

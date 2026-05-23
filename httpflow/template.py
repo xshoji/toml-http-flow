@@ -30,6 +30,11 @@ def _lookup(store: dict, parts: list[str]) -> Any:
         return uuid.uuid4()
     if parts == ["random", "UUID_HEX"]:
         return uuid.uuid4().hex
+    if len(parts) == 2 and parts[0] == "var":
+        try:
+            return store["vars"][parts[1]]
+        except KeyError as exc:
+            raise TemplateError(".".join(parts)) from exc
     if len(parts) == 1 and parts[0] in store.get("vars", {}):
         return store["vars"][parts[0]]
     cur: Any = store

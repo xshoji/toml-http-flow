@@ -118,6 +118,11 @@ def render(text, store):
             return str(uuid.uuid4())
         if m.group(1) == "random.UUID_HEX":
             return uuid.uuid4().hex
+        if m.group(1).startswith("var.") and m.group(1).count(".") == 1:
+            key = m.group(1).split(".", 1)[1]
+            if key not in store.get("vars", {}):
+                raise KeyError(m.group(1))
+            return str(store["vars"][key])
         if "." not in m.group(1) and m.group(1) in store.get("vars", {}):
             return str(store["vars"][m.group(1)])
         cur = store
@@ -249,17 +254,15 @@ def run_step(store, name, method, url, *,
     if not quiet:
         _log_response(status, reason, resp_headers, text, pretty_json, no_mask=no_mask)
 
-    captured = {}
     if capture:
         if body_json is None:
             raise RuntimeError(f"step {name!r}: capture requested but response is not JSON")
         for var, path in capture.items():
-            captured[var] = extract(body_json, path)
-            store["vars"][var] = captured[var]
+            captured = extract(body_json, path)
+            store["vars"][var] = captured
             if not quiet:
-                shown = _mask_value(var, captured[var], disabled=no_mask)
+                shown = _mask_value(var, captured, disabled=no_mask)
                 print(f"    * capture {var} = {shown!r}")
-    store["steps"][name] = captured
 
 
 # ─── until / polling helpers (mirror httpflow/until.py) ────────────────
@@ -289,7 +292,7 @@ def _default_vars_help():
     else:
         lines.append("    - none")
     if REQUIRED_VARS:
-        lines.append("  * Required parameters (referenced by ${vars.*} but not embedded)")
+        lines.append("  * Required parameters (referenced by ${var.*} but not embedded)")
         lines.extend(f"    - {k}" for k in REQUIRED_VARS)
     return "\n".join(lines)
 
@@ -330,7 +333,7 @@ def main():
 {{ARGPARSE_REPEAT}}
     args = p.parse_args()
 
-    store = {"vars": dict(DEFAULT_VARS), "steps": {}, "repeat": {}}
+    store = {"vars": dict(DEFAULT_VARS), "repeat": {}}
     for kv in args.var:
         if "=" not in kv:
             print(f"error: -v/--var requires key=value, got: {kv!r}", file=sys.stderr)
