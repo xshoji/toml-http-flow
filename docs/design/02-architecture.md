@@ -1,36 +1,36 @@
 # 3. アーキテクチャ
 
 ```
-api-workflow-cli/
-├── pyproject.toml          # メタデータのみ（依存なし）
-├── README.md
-├── httpflow/
-│   ├── __init__.py
-│   ├── __main__.py         # `python -m httpflow` のエントリポイント
-│   ├── cli.py              # CLI引数パース・ディスパッチ
-│   ├── config.py           # TOMLパース＋データクラス定義
-│   ├── template.py         # テンプレート展開エンジン
-│   ├── httpclient.py       # urllib ベースのHTTPクライアント
-│   ├── workflow.py         # ステップ実行エンジン＋変数ストア
-│   ├── generator.py        # ワークフロー → 単一 .py スクリプト生成
-│   └── templates/
-│       └── runner.py.tmpl  # 生成スクリプトのベーステンプレート
+httpflow/
+├── __init__.py
+├── __main__.py          # `python -m httpflow` のエントリポイント
+├── cli.py               # 引数パース・ディスパッチ・例外境界
+├── config.py            # TOML読込み・バリデーション（出力は WorkflowConfig）
+├── model.py             # WorkflowSpec / HttpStep / SleepStep / UntilSpec
+├── runner.py            # ステップ実行エンジン＋変数ストア
+├── embedded_runtime.py  # 生成スクリプトにも埋め込む helper の source-of-truth
+├── generator.py         # WorkflowSpec → standalone .py emitter
+├── httpclient.py        # urllib ベースの HTTP クライアント（embedded_runtime ラッパー）
+├── template.py          # テンプレート展開エンジン（embedded_runtime ラッパー）
+├── masking.py           # ログ出力用マスキング（embedded_runtime ラッパー）
+├── until.py             # until 条件評価（embedded_runtime ラッパー）
+├── workflow.py          # backward-compatible shim → runner
+├── templates/
+│   └── runner.py.tmpl   # 生成スクリプトの枠（placeholder のみ）
 └── tests/
     ├── test_template.py
     ├── test_config.py
-    └── test_workflow.py
+    ├── test_workflow.py
+    ├── test_generator.py
+    └── …
 ```
 
 ## 3.1 httpflow/config.py
 
-- `RequestConfig` を `@dataclass` で定義
-- `tomllib.load()` でTOMLをパース
-- `dict → dataclass` への変換ヘルパを提供
-- 不正なフィールド（`body` と `body_form` の同時指定など）をバリデーション
-
-TOMLでは1リクエストの可読性を最優先するため、`headers` / `body_form` / `capture` は
-`"Key: Value"` / `"key = value"` 形式の **文字列リスト** として受け取り、
-データクラスへ変換する段階で dict にパースする（詳細は [03-toml-spec.md](03-toml-spec.md) §4.4）。
+- TOML を `tomllib.load()` でパース
+- `dict → WorkflowConfig` への変換ヘルパを提供
+- 不正なフィールド（`body` と `body_form` の同時指定、`SLEEP` に無関係なフィールドが付いている等）をバリデーション
+- 出力は **正規化されていない** 生の `WorkflowConfig`
 
 ```python
 @dataclass
@@ -38,84 +38,100 @@ class RequestConfig:
     name: str
     method: str
     url: str
+    description: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     body: str | None = None
     body_form: dict[str, str] | None = None
     capture: dict[str, str] = field(default_factory=dict)
-
-@dataclass
-class WorkflowConfig:
-    requests: list[RequestConfig]
-
-
-def load(path: str) -> WorkflowConfig:
-    with open(path, "rb") as f:
-        raw = tomllib.load(f)
-    return WorkflowConfig(
-        requests=[_build_request(r) for r in raw.get("requests", [])]
-    )
-
-
-def _build_request(d: dict) -> RequestConfig:
-    return RequestConfig(
-        name      = d["name"],
-        method    = d["method"],
-        url       = d["url"],
-        headers   = parse_kv_list(d.get("headers", []), ":"),
-        body      = d.get("body"),
-        body_form = parse_kv_list(d["body_form"], "=") if "body_form" in d else None,
-        capture   = parse_kv_list(d.get("capture", []), "="),
-    )
+    until: UntilConfig | None = None
 ```
 
-## 3.2 httpflow/template.py
+## 3.2 httpflow/model.py
 
-- 正規表現 `r"\$(?:\$|\{([\w.\-]+)\})"` で `${...}` 形式の変数参照を検知（パス要素にハイフンも許可）
-- 実行時変数ストア（`dict[str, Any]`）から値を解決
-- ヘッダー値・URL・ボディ文字列・form値の各文字列に対して再帰的に適用
-- 未定義変数参照時は例外を送出（厳格モード）
-
-```python
-def render(text: str, store: dict) -> str: ...
-def render_mapping(mapping: dict[str, str], store: dict) -> dict[str, str]: ...
-```
-
-## 3.3 httpflow/httpclient.py
-
-- `urllib.request.Request` でリクエストを構築
-- `Content-Type` に応じて Body のエンコードを切り替え:
-  - `application/json` または body が文字列 → そのまま bytes 化
-  - `application/x-www-form-urlencoded` → `urllib.parse.urlencode()`
-- `urllib.request.urlopen()` でリクエスト送信
-- レスポンスを JSON として `json.loads()` でデコード
-- `capture` 定義に従い、ドット区切りパスから値を抽出（再帰的辞書探索）
-- HTTPエラー（`urllib.error.HTTPError`）はステータスコードと本文を含めて送出
+- TOML 読込直後の `WorkflowConfig` を **正規化済みモデル** `WorkflowSpec` に変換
+- `SLEEP` を `method` の特殊値から独立した `SleepStep` として扱う
+- `HttpStep` と `SleepStep` の Union を `Step` として定義
+- `runner` と `generator` の共通入力として機能
 
 ```python
 @dataclass
-class Response:
-    status: int
-    reason: str
-    headers: dict[str, str]
-    body_text: str
-    body_json: Any | None
+class HttpStep:
+    name: str
+    method: str
+    url: str
+    description: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    body: str | None = None          # body と body_form は排他
+    body_form: dict[str, str] | None = None
+    capture: dict[str, str] = field(default_factory=dict)
+    until: UntilSpec | None = None
 
-def prepare_request(req: RequestConfig) -> tuple[urllib.request.Request, bytes | None]: ...
-def execute(req: RequestConfig) -> Response: ...
-def extract(body: Any, path: str) -> Any: ...
+@dataclass
+class SleepStep:
+    name: str
+    seconds: str                     # テンプレート式、実行時に評価
+    description: str | None = None
+
+type Step = HttpStep | SleepStep
+
+@dataclass
+class WorkflowSpec:
+    steps: list[Step] = field(default_factory=list)
 ```
 
-## 3.4 httpflow/workflow.py
+## 3.3 httpflow/embedded_runtime.py
 
-- ステップを順次ループで実行
-- 各ステップ実行前にテンプレート展開
+**設計上最重要**: 本体実行と生成スクリプトの両方で必要な helper の **source-of-truth**。
+
+含む関数:
+
+- `render` / `render_mapping`: テンプレート `${...}` 展開
+- `extract`: JSON path 抽出
+- `do_request`: HTTP 送受信（`urllib`）
+- `eval_until`: until 条件評価
+- `mask` / `mask_url` / `mask_value`: ログ出力用マスキング
+- `build_repeat_iterations` / `parse_repeat_args`: repeat 展開
+- `run_step`: 単一 HTTP/SLEEP ステップを render → send → log → capture まで一括実行
+- `_now` / `_pretty` / `_log_request` / `_log_response`: 出力整形
+
+**ルール**:
+
+- `httpflow` 内の相対 import をしない
+- 標準ライブラリ以外を import しない
+- CLI / TOML parser / generator 固有処理を入れない
+- モジュール単体のソースを生成スクリプトへ貼っても動く形にする
+
+本体では `from .embedded_runtime import render, extract, run_step` として import して使う。
+生成時は `embedded_runtime.py` のソーステキストをそのまま埋め込む。
+
+## 3.4 httpflow/runner.py
+
+- `WorkflowSpec` を受け取り、ステップを順次実行
+- 各ステップ実行前にテンプレート展開 (`run_step` 内で実施)
 - 実行後に `capture` の結果を変数ストアの `<key>` に保存
 - 後続ステップで参照可能にする
-- ステップ毎にリクエスト/レスポンスの要約を標準出力に出力
+- `repeat_vars` による反復実行
+- `until` 条件付きポーリング対応
+- **責務は「実行順序と store 更新」のみ**。出力整形はすべて `embedded_runtime.run_step` に委譲
 
-## 3.5 httpflow/cli.py
+## 3.5 httpflow/generator.py
 
-- `argparse` で `-f`, `-v` をパース
+薄い **emitter**。
+
+- `WorkflowConfig` を受け取り内部で `from_config()` → `WorkflowSpec` に変換
+- `WorkflowSpec` から step 関数を生成する
+- `embedded_runtime.py` のソースをテンプレートへ埋め込む
+- 生成後に `compile()` で構文検証
+- **長いランタイム実装文字列を持たない**（すべて `embedded_runtime.py` から読み込む）
+
+## 3.6 httpflow/workflow.py
+
+後方互換シム。`from .runner import collect_repeat_names, run` のみエクスポート。
+既存テストや外部コードからの `from httpflow.workflow import run` 等を維持する。
+
+## 3.7 httpflow/cli.py
+
+- `argparse` で `-f`, `-v`, `--repeat-vars` をパース
 - `-v key=value` を複数回受け取り `vars` 名前空間に格納
-- `workflow.run(config, vars_)` を呼び出す
+- `config.load()` → `from_config()` → `runner.run()` を呼び出す
 - 例外をキャッチして非ゼロ終了コードで終了

@@ -1,22 +1,31 @@
-# 8. スクリプト生成機能（`generate` サブコマンド）
+# 8. スクリプト生成機能 (`generate` サブコマンド)
 
-ワークフローTOMLから、本ツールに**一切依存しない単一の Python スクリプト**を生成する。
-証跡保存・他人への共有・CI/CD 組み込み等を想定し、生成スクリプトも **標準ライブラリのみ**で動作する。
+ワークフロー TOML から、本ツールに**一切依存しない単一の Python スクリプト**を生成する。
+証跡保存・他人への共有・CI/CD 組み込み等を想定し、生成スクリプトも **標準ライブラリのみ** で動作する。
 
 ## 8.1 設計方針
 
-| 項目                  | 方針                                                                       |
-|-----------------------|----------------------------------------------------------------------------|
-| 依存関係              | 生成スクリプトは Python 3.11+ 標準ライブラリのみ（本ツール本体は不要）     |
-| 自己完結性            | 1ファイルで完結。インポート可能なヘルパも全て同ファイル内にインライン化    |
-| 可読性                | "監査用" のため、人間が読んで何をしているか追える構造にする                |
-| 入力との対応          | コメントで「どの `[[requests]]` ブロック由来か」を明示                     |
-| 変数注入              | `argparse` で `-v key=value` を受け付ける（本ツールと同じ）                |
-| 再実行性              | 何度実行しても同じ振る舞い（副作用は対象APIに依存）                        |
+| 項目           | 方針                                                                     |
+|----------------|--------------------------------------------------------------------------|
+| 依存関係       | 生成スクリプトは Python 3.11+ 標準ライブラリのみ（本ツール本体は不要）   |
+| 自己完結性     | 1ファイルで完結。ランタイム helper は `embedded_runtime.py` のソースを埋め込む |
+| 可読性         | "監査用" のため、人間が読んで何をしているか追える構造にする                |
+| 入力との対応   | コメントで「どの `[[requests]]` ブロック由来か」を明示                     |
+| 変数注入       | `argparse` で `-v key=value` を受け付ける（本ツールと同じ）                |
+| 再実行性       | 何度実行しても同じ振る舞い（副作用は対象 API に依存）                      |
 
 ## 8.2 生成スクリプトの構造
 
-**設計方針: 人間の可読性とアドホック編集のしやすさを最優先**。
+```
+generated_script.py
+  ├── import / argparse
+  ├── {{EMBEDDED_RUNTIME}}  ← embedded_runtime.py のソース全文を貼り付け
+  ├── step 関数群            ← 各 step を run_step(...) 呼び出しとして展開
+  ├── main()                 ← argparse + ループ + step 呼び出し
+  └── __main__ エントリポイント
+```
+
+設計方針: **人間の可読性とアドホック編集のしやすさを最優先**。
 データテーブル `+ for` ループ形式ではなく、**1 `[[requests]]` ブロック = 1 関数**として
 展開する。これにより:
 
@@ -25,65 +34,71 @@
 - ステップを並べ替えたい → `main()` 内の呼び出し順を入れ替えればよい
 - 1ステップのURLやペイロードだけを少し変えて再実行 → そのステップ関数だけを編集
 
-```python
-# ─── default variables (override with -v at runtime) ────────
-DEFAULT_VARS = {
-    "env": "production",
-}
-REQUIRED_VARS = [
-    "user",
-]
+## 8.3 埋め込みランタイム方式
 
-# ─── default repeat variables (override with --repeat-vars at runtime) ─
-DEFAULT_REPEAT_VARS = {}
+`generator.py` は **長いランタイム実装文字列を持たない**。
+代わりに `embedded_runtime.py` のソーステキストを読み込み、テンプレートの `{{EMBEDDED_RUNTIME}}` に埋め込む。
+
+```text
+runner.py.tmpl
+  {{EMBEDDED_RUNTIME}}
+  {{STEP_FUNCTIONS}}
+  {{STEP_CALLS}}
 ```
 
-生成スクリプトの `--help` では、`-v/--var` の説明にインデント付きで以下を表示する。
+**ルール**:
 
-- `DEFAULT_VARS`: 生成時に埋め込まれた任意指定パラメータ（`key=value`）
-- `REQUIRED_VARS`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に埋め込まれていない必須パラメータ（`key`）。該当する変数がある場合のみ表示する。
+- `embedded_runtime.py` 内で `httpflow` の相対 import をしない
+- 標準ライブラリ以外を import しない
+- CLI / TOML parser / generator 固有処理を入れない
+- 生成スクリプト側でも必要な import は `embedded_runtime.py` 内に閉じる
+- ソース埋め込みのために AST 変換等の複雑な処理を導入しない
 
-`${repeat.*}` を使う生成スクリプトの `--help` では、`--repeat-vars` の説明に、
-`DEFAULT_REPEAT_VARS` がある場合のみ埋め込み済み repeat 変数（`key=v1,v2,...`）を表示する。
-また、`${repeat.<key>}` で参照されているが `DEFAULT_REPEAT_VARS` に埋め込まれていない
-必須 repeat 変数（`key`）がある場合は、その名前も表示する。
-
-## 8.3 生成アルゴリズム
+## 8.4 生成アルゴリズム
 
 `httpflow/generator.py` の責務:
 
-1. `config.load()` で TOML を読み込み、`WorkflowConfig` を得る
+1. `config.load()` で TOML を読み込み :class:`WorkflowSpec` を得る
 2. `templates/runner.py.tmpl` をベーステンプレートとして読み込む
-3. 各 `RequestConfig` から `step_<sanitized_name>` 関数の本体を組み立てる
+3. `embedded_runtime.py` のソーステキストを `{{EMBEDDED_RUNTIME}}` に埋め込む
+4. 各 `Step` から `step_<sanitized_name>` 関数の本体を組み立てる
    - 関数名はステップ名を `[A-Za-z0-9_]` のみに正規化し、衝突時は数字サフィックスで一意化
-   - HTTP ステップは `run_step(store, name, method, url, headers=..., body=..., body_form=..., capture=..., ...)` の呼び出し1つに集約
+   - HTTP ステップは `run_step(store, name, method, url, headers=..., body=..., capture=..., ...)` の呼び出し1つに集約
      （URL/ヘッダー/ボディは Python リテラルとしてインライン化。複数行ボディは `"""..."""`、ヘッダー/form は複数行 dict）
    - `until` 指定ありの HTTP ステップは内部関数 `attempt()` に `run_step` を包み、`poll_until(...)` で実行する
-   - `SLEEP` ステップは `do_request` も `headers` も使わないインライン形（`time.sleep` のみ）で展開する
-4. 以下のプレースホルダを置換:
+   - `SLEEP` ステップも `run_step(method="SLEEP", url=seconds, ...)` として統一
+5. 以下のプレースホルダを置換:
    - `{{STEP_FUNCTIONS}}`: 各ステップ関数の定義（空行2つで区切り）
-   - `{{STEP_CALLS}}`: `main()` 内に並べる `step_xxx(store, quiet=args.quiet, pretty_json=args.pretty_json)` の列
-    - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数
-    - `{{REQUIRED_VARS}}`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に無い変数名
-    - `{{DEFAULT_REPEAT_VARS}}`: `--repeat-vars` で渡されたデフォルト repeat 変数（辞書形式、値はリスト）
-    - `{{GENERATED_AT}}`: 生成タイムスタンプ
-    - `{{VERSION}}`: 本ツールのバージョン
-   - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `eval_until` / `poll_until` を含むヘルパ群（未使用時は省略）
-   - `{{REPEAT_HELPERS}}`: `${repeat.*}` 参照時のみ `_build_repeat_iterations` を含むヘルパ群（未使用時は省略）
+   - `{{STEP_CALLS}}`: `main()` 内に並べる `step_xxx(store, ...)` の列
+   - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数
+   - `{{REQUIRED_VARS}}`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に無い変数名
+   - `{{DEFAULT_REPEAT_VARS}}`: `--repeat-vars` で渡されたデフォルト repeat 変数（辞書形式、値はリスト）
+   - `{{GENERATED_AT}}`: 生成タイムスタンプ
+   - `{{VERSION}}`: 本ツールのバージョン
+   - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `poll_until` を含むヘルパ群（未使用時は省略）
+   - `{{REPEAT_HELPERS}}`: `${repeat.*}` 参照時のみヘルパ群（未使用時は省略）
    - `{{ARGPARSE_REPEAT}}`: `--repeat-vars` 引数の定義（未使用時は空文字）
-   - `{{MAIN_REPEAT_SETUP}}`: `repeat` 使用時の反復処理、未使用時は `store['repeat'] = {}
-5. 出力先（`-o` または stdout）に書き出す
-6. `--shebang` 指定時は先頭に `#!/usr/bin/env python3` を付け、`chmod +x` 相当を実施
+   - `{{MAIN_REPEAT_SETUP}}`: repeat 使用時の反復処理、未使用時は `store['repeat'] = {}`
+6. 出力先（`-o` または stdout）に書き出す
+7. `--shebang` 指定時は先頭に `#!/usr/bin/env python3` を付け、`chmod +x` 相当を実施
 
-## 8.4 ヘルパ関数のインライン化方針
+## 8.5 ヘルパ関数の二重実装と parity 担保
 
-`render` / `extract` / `do_request` などのランタイム関数は、
-**本ツールの実装をそのままコピー**して生成スクリプトに埋め込む（DRY より自己完結性を優先）。
+`embedded_runtime.py` の helper は以下の通り、**本体コードからも import して使い、生成スクリプトにも同じソースを埋め込む**。
 
-これらの関数は `httpflow/template.py` `httpflow/httpclient.py` の実装と
-**ロジック同等性をテストで担保する**（[09-testing.md](09-testing.md) §10 参照）。
+| function        | 本体側 import 元   | 生成スクリプト提供元      |
+|-----------------|-------------------|--------------------------|
+| `render`        | `embedded_runtime`| ソース埋め込み            |
+| `extract`       | `embedded_runtime`| ソース埋め込み            |
+| `do_request`    | `embedded_runtime`| ソース埋め込み            |
+| `run_step`      | `embedded_runtime`| ソース埋め込み            |
+| `eval_until`    | `embedded_runtime`| ソース埋め込み            |
+| `mask` / `mask_url` / `mask_value` | `embedded_runtime` | ソース埋め込み |
 
-## 8.5 生成スクリプトの使い方（生成後）
+本体側の `template.py` / `httpclient.py` / `masking.py` / `until.py` は、
+原則として `embedded_runtime` へ thin wrapper として delegate する。
+
+## 8.6 生成スクリプトの使い方（生成後）
 
 ```bash
 # 生成
@@ -95,10 +110,10 @@ python3 audit/workflow_2026-05-19.py -v env=staging -v token=abc
 python3 audit/workflow_2026-05-19.py --quiet     # 詳細出力を抑制（デフォルトは詳細ON）
 ```
 
-## 8.6 セキュリティ・運用上の注意
+## 8.7 セキュリティ・運用上の注意
 
-- TOML中にハードコードされた認証情報はそのまま埋め込まれるので、
+- TOML 中にハードコードされた認証情報はそのまま埋め込まれるので、
   必要に応じて `-v` で上書きする運用を推奨（埋め込み値はあくまでデフォルト）
-- 生成スクリプトはヘッダーに `DO NOT EDIT — regenerate with: ...` を明記し、
+- 生成スクリプトは先頭に生成元コメント（`Generated by toml-http-flow ...`）を明記し、
   手で書き換えてしまった場合でも再生成方法が分かるようにする
 - 機密値は生成スクリプトから除外するオプション（`--strip-secrets=KEY,KEY` 等）を将来追加検討
