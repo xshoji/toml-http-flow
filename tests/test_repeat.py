@@ -14,11 +14,8 @@ from pathlib import Path
 from httpflow import generator
 from httpflow.config import RequestConfig, WorkflowConfig
 from httpflow.template import find_repeat_names
-from httpflow.workflow import (
-    build_repeat_iterations,
-    collect_repeat_names,
-    run,
-)
+from httpflow.runner import build_repeat_iterations, collect_repeat_names, run
+from httpflow.workflow import run as _compat_run
 
 
 class _EchoHandler(BaseHTTPRequestHandler):

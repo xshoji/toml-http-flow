@@ -136,7 +136,8 @@ until = [
     "max_attempts = 7",
 ]
 """)
-        u = wf.requests[0].until
+        step = wf.steps[0]
+        u = step.until
         self.assertIsNotNone(u)
         self.assertEqual(u.condition, "${status} == Active")
         self.assertEqual(u.interval, 2.5)
@@ -150,7 +151,7 @@ method = "GET"
 url = "http://example.com"
 until = ["condition = ${s} == OK"]
 """)
-        u = wf.requests[0].until
+        u = wf.steps[0].until
         self.assertEqual(u.interval, 1.0)
         self.assertEqual(u.max_attempts, 10)
 

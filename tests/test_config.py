@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from httpflow import config as cfg_mod
+from httpflow.model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
 
 
 SAMPLE = b"""
@@ -58,18 +59,24 @@ class TestLoad(unittest.TestCase):
     def test_basic_load(self):
         path = self._write(SAMPLE)
         wf = cfg_mod.load(path)
-        self.assertEqual(len(wf.requests), 2)
+        self.assertIsInstance(wf, WorkflowSpec)
+        self.assertEqual(len(wf.steps), 2)
 
-        r0 = wf.requests[0]
+        r0 = wf.steps[0]
+        self.assertIsInstance(r0, HttpStep)
         self.assertEqual(r0.name, "getToken")
         self.assertEqual(r0.method, "POST")
         self.assertEqual(r0.headers, {"Content-Type": "application/json"})
-        self.assertIn('"user":"test"', r0.body)
+        self.assertIsInstance(r0.body, TextBody)
+        assert isinstance(r0.body, TextBody)
+        self.assertIn('"user":"test"', r0.body.text)
         self.assertEqual(r0.capture, {"token": "access_token"})
 
-        r1 = wf.requests[1]
-        self.assertEqual(r1.body_form, {"nickname": "new_name", "email": "test@example.com"})
-        self.assertIsNone(r1.body)
+        r1 = wf.steps[1]
+        self.assertIsInstance(r1, HttpStep)
+        self.assertIsInstance(r1.body, FormBody)
+        assert isinstance(r1.body, FormBody)
+        self.assertEqual(r1.body.fields, {"nickname": "new_name", "email": "test@example.com"})
 
     def test_body_and_body_form_exclusive(self):
         bad = b"""

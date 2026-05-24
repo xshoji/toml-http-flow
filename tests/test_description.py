@@ -61,7 +61,7 @@ method      = "GET"
 url         = "http://example.com"
 """)
         self.assertEqual(
-            wf.requests[0].description,
+            wf.steps[0].description,
             "Verify that the API is reachable",
         )
 
@@ -72,7 +72,7 @@ name   = "ping"
 method = "GET"
 url    = "http://example.com"
 """)
-        self.assertIsNone(wf.requests[0].description)
+        self.assertIsNone(wf.steps[0].description)
 
     def test_description_multiline(self):
         wf = self._load(b"""
@@ -85,8 +85,8 @@ Step 2: warm any caches.
 method      = "GET"
 url         = "http://example.com"
 """)
-        self.assertIn("Step 1", wf.requests[0].description)
-        self.assertIn("Step 2", wf.requests[0].description)
+        self.assertIn("Step 1", wf.steps[0].description)
+        self.assertIn("Step 2", wf.steps[0].description)
 
     def test_description_must_be_string(self):
         with self.assertRaises(ValueError):
@@ -107,7 +107,7 @@ method      = "SLEEP"
 url         = "0.01"
 """)
         self.assertEqual(
-            wf.requests[0].description,
+            wf.steps[0].description,
             "Wait for downstream to settle",
         )
 

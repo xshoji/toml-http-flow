@@ -5,7 +5,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from httpflow.config import RequestConfig, WorkflowConfig
-from httpflow.workflow import _maybe_pretty_json, run
+from httpflow.embedded_runtime import _pretty as _maybe_pretty_json
+from httpflow.workflow import run
 
 
 class TestMaybePrettyJson(unittest.TestCase):

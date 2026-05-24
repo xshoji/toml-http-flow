@@ -13,6 +13,8 @@ from pathlib import Path
 
 from httpflow import config as cfg_mod
 from httpflow import generator
+from httpflow.httpclient import extract
+from httpflow.template import TemplateError, render
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -191,6 +193,67 @@ class TestGenerator(unittest.TestCase):
                 os.environ["HTTPFLOW_TEST_USER"] = old
         self.assertEqual(out, "bob")
 
+    def test_generated_render_matches_package_render(self):
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "http://127.0.0.1/${var.env}"
+        """).encode("utf-8")
+        store = {
+            "vars": {"env": "prod", "token": "abc", "my-key": "ok"},
+            "steps": {"login": {"body": {"user": {"id": 7}}}},
+        }
+        cases = [
+            "env=${var.env}",
+            "alias=${token}",
+            "hyphen=${var.my-key}",
+            "nested=${steps.login.body.user.id}",
+            "price=$$100",
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        ns = {"__name__": "generated_render_parity_test"}
+        exec(script, ns)
+        for text in cases:
+            self.assertEqual(ns["render"](text, store), render(text, store))
+        with self.assertRaises(TemplateError):
+            render("${var.missing}", store)
+        with self.assertRaises(ns["TemplateError"]):
+            ns["render"]("${var.missing}", store)
+
+    def test_generated_extract_matches_package_extract(self):
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "http://127.0.0.1/"
+        """).encode("utf-8")
+        body = {"data": {"user": {"id": 42}}, "items": [{"id": "a1"}, {"id": "a2"}]}
+        cases = ["data.user.id", "items[1].id"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        ns = {"__name__": "generated_extract_parity_test"}
+        exec(script, ns)
+        for path in cases:
+            self.assertEqual(ns["extract"](body, path), extract(body, path))
+        with self.assertRaises(KeyError):
+            ns["extract"](body, "data.missing")
+        with self.assertRaises(IndexError):
+            ns["extract"](body, "items[9].id")
+
     def test_generate_with_sleep_step(self):
         toml_text = textwrap.dedent("""
             [[requests]]
@@ -234,7 +297,7 @@ class TestGenerator(unittest.TestCase):
             self.assertNotIn("headers", step_src)
 
     def test_unused_until_helpers_omitted(self):
-        """When no request has until, eval_until / poll_until must not appear."""
+        """When no request has until, polling helpers must not appear."""
         toml_text = textwrap.dedent(f"""
             [[requests]]
             name = "ping"
@@ -250,7 +313,6 @@ class TestGenerator(unittest.TestCase):
             script = generator.generate(wf)
             compile(script, "<generated>", "exec")
 
-            self.assertNotIn("def eval_until(", script)
             self.assertNotIn("def poll_until(", script)
             self.assertIn("(no until blocks", script)
 
@@ -412,6 +474,102 @@ class TestGenerator(unittest.TestCase):
             self.assertIn("    - id=1,2", help_res.stdout)
             self.assertIn("  * Required parameters (referenced by ${repeat.*} but not embedded)", help_res.stdout)
             self.assertIn("    - label", help_res.stdout)
+
+    def test_generated_parity_pretty_json_and_masking(self):
+        """Generated script must produce identical log output for --pretty-json / --no-mask."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "getToken"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"user":"u","pass":"p"}}'
+            capture = ["token = access_token"]
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+            headers = ["Authorization: Bearer ${{token}}"]
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf, default_vars={"env": "test"})
+            script_path = tmp_path / "workflow.py"
+            script_path.write_text(script, encoding="utf-8")
+
+            # Must NOT contain any httpflow import
+            self.assertNotIn("import httpflow", script)
+            self.assertNotIn("from httpflow", script)
+
+            # --- Run #1: default (masking ON) ---
+            res = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            stdout1 = res.stdout
+            self.assertIn("    > POST /auth HTTP/1.1", stdout1)
+            self.assertIn("    > GET /me HTTP/1.1", stdout1)
+            self.assertIn("* capture token = '***'", stdout1)
+            self.assertIn("    > Authorization: ***", stdout1)
+
+            # --- Run #2: --no-mask ---
+            res2 = subprocess.run(
+                [sys.executable, str(script_path), "--no-mask"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res2.returncode, 0, msg=res2.stderr)
+            stdout2 = res2.stdout
+            self.assertIn("* capture token = 'gen-tok'", stdout2)
+            self.assertIn("    > Authorization: Bearer gen-tok", stdout2)
+
+            # --- Run #3: --pretty-json ---
+            res3 = subprocess.run(
+                [sys.executable, str(script_path), "--pretty-json"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res3.returncode, 0, msg=res3.stderr)
+            stdout3 = res3.stdout
+            # request body pretty-printed with 2-space indent
+            self.assertIn('  "user": "u"', stdout3)
+            # response body pretty-printed
+            self.assertIn('  "user":', stdout3)
+
+            # --- Run #4: --quiet ---
+            res4 = subprocess.run(
+                [sys.executable, str(script_path), "--quiet"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res4.returncode, 0, msg=res4.stderr)
+            stdout4 = res4.stdout
+            # Must NOT contain detailed request/response lines
+            self.assertNotIn("    > POST", stdout4)
+            self.assertNotIn("    < HTTP/1.1", stdout4)
+            # But summary lines should still be present
+            self.assertIn("[getToken] POST ", stdout4)
+            self.assertIn("[getToken] status=200", stdout4)
+
+            # --- Run outside repo directory (self-containment) ---
+            import os
+            repo_top = os.getcwd()
+            env = dict(os.environ)
+            # Ensure PYTHONPATH does NOT include repo top (prevent incidental import)
+            if "PYTHONPATH" in env:
+                env["PYTHONPATH"] = env["PYTHONPATH"].replace(repo_top, "").strip(":")
+            res5 = subprocess.run(
+                [sys.executable, str(script_path), "--quiet"],
+                capture_output=True, text=True, timeout=10,
+                # Run from root /tmp to be outside the repo checkout
+                cwd="/tmp",
+                env=env,
+            )
+            self.assertEqual(res5.returncode, 0, msg=res5.stderr)
 
 
 if __name__ == "__main__":
