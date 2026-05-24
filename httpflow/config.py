@@ -1,4 +1,4 @@
-"""TOML loader and dataclass definitions for the workflow config."""
+"""TOML loader that returns a normalized WorkflowSpec."""
 
 from __future__ import annotations
 
@@ -6,6 +6,10 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import Any
 
+from .model import FormBody, HttpStep, SleepStep, TextBody, UntilSpec, WorkflowSpec
+
+
+# ------------------------------------------------------------------ Legacy dataclasses (backward compatible)
 
 @dataclass
 class UntilConfig:
@@ -18,6 +22,8 @@ class UntilConfig:
 
 @dataclass
 class RequestConfig:
+    """Legacy intermediate representation.  Kept for test compatibility."""
+
     name: str
     method: str
     url: str
@@ -31,11 +37,15 @@ class RequestConfig:
 
 @dataclass
 class WorkflowConfig:
+    """Legacy intermediate representation.  Kept for test compatibility."""
+
     requests: list[RequestConfig]
 
 
-SPECIAL_METHODS = {"SLEEP"}
+# ------------------------------------------------------------------ internal parsing helpers
 
+
+SPECIAL_METHODS = {"SLEEP"}
 _UNTIL_KEYS = {"condition", "interval", "max_attempts"}
 
 
@@ -60,23 +70,34 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
     return result
 
 
-def _build_request(d: dict[str, Any]) -> RequestConfig:
+# ------------------------------------------------------------------ internal intermediate
+
+@dataclass
+class _IntermediateRequest:
+    """Temporary representation used while parsing raw TOML dicts."""
+
+    name: str
+    method: str
+    url: str
+    description: str | None = None
+    headers: list[str] = field(default_factory=list)
+    body: str | None = None
+    body_form: list[str] = field(default_factory=list)
+    capture: list[str] = field(default_factory=list)
+    until: list[str] | None = None
+
+
+def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
+    """Parse a raw TOML request dict into an intermediate representation."""
     for required in ("name", "method", "url"):
         if required not in d:
             raise ValueError(f"missing required field {required!r} in request: {d!r}")
-
-    if "body" in d and "body_form" in d:
-        raise ValueError(
-            f"request {d.get('name')!r}: 'body' and 'body_form' are mutually exclusive"
-        )
 
     method = str(d["method"]).upper()
 
     description = d.get("description")
     if description is not None and not isinstance(description, str):
-        raise ValueError(
-            f"request {d['name']!r}: 'description' must be a string"
-        )
+        raise ValueError(f"request {d['name']!r}: 'description' must be a string")
 
     # --- SLEEP step validation ---
     if method == "SLEEP":
@@ -98,37 +119,41 @@ def _build_request(d: dict[str, Any]) -> RequestConfig:
                 f"request {d['name']!r}: 'SLEEP' step requires a numeric 'url' "
                 f"(seconds), got: {d['url']!r}"
             ) from exc
-        return RequestConfig(
+        return _IntermediateRequest(
             name=str(d["name"]),
             method=method,
             url=str(d["url"]),
             description=description,
         )
 
-    headers = parse_kv_list(d.get("headers", []), ":")
     body = d.get("body")
-    body_form = parse_kv_list(d["body_form"], "=") if "body_form" in d else None
-    capture = parse_kv_list(d.get("capture", []), "=")
-    until = _build_until(d["until"], d["name"]) if "until" in d else None
+    body_form = d.get("body_form", [])
+    if body is not None and body_form:
+        raise ValueError(
+            f"request {d.get('name')!r}: 'body' and 'body_form' are mutually exclusive"
+        )
 
     if body is not None and not isinstance(body, str):
         raise ValueError(f"request {d['name']!r}: 'body' must be a string")
 
-    return RequestConfig(
+    if not isinstance(body_form, list):
+        body_form = [body_form]
+
+    return _IntermediateRequest(
         name=str(d["name"]),
         method=method,
         url=str(d["url"]),
         description=description,
-        headers=headers,
+        headers=d.get("headers", []),
         body=body,
         body_form=body_form,
-        capture=capture,
-        until=until,
+        capture=d.get("capture", []),
+        until=d["until"] if "until" in d else None,
     )
 
 
-def _build_until(raw: Any, request_name: str) -> UntilConfig:
-    """Parse the ``until = [...]`` array into a :class:`UntilConfig`."""
+def _build_until_spec(raw: Any, request_name: str) -> UntilSpec:
+    """Parse the ``until = [...]`` array into an :class:`UntilSpec`."""
     if not isinstance(raw, list):
         raise ValueError(
             f"request {request_name!r}: 'until' must be an array of strings"
@@ -176,18 +201,94 @@ def _build_until(raw: Any, request_name: str) -> UntilConfig:
                 f"got {max_attempts}"
             )
 
-    return UntilConfig(
+    return UntilSpec(
         condition=parsed["condition"],
         interval=interval,
         max_attempts=max_attempts,
     )
 
 
-def load(path: str) -> WorkflowConfig:
-    """Load a workflow TOML file and return a WorkflowConfig."""
+def _intermediate_to_step(inter: _IntermediateRequest) -> HttpStep | SleepStep:
+    """Convert an intermediate request into a model step."""
+    if inter.method == "SLEEP":
+        return SleepStep(
+            name=inter.name,
+            seconds=inter.url,
+            description=inter.description,
+        )
+
+    body: TextBody | FormBody | None = None
+    if inter.body is not None:
+        body = TextBody(text=inter.body)
+    elif inter.body_form:
+        body = FormBody(fields=parse_kv_list(inter.body_form, "="))
+
+    until = None
+    if inter.until is not None:
+        until = _build_until_spec(inter.until, inter.name)
+
+    return HttpStep(
+        name=inter.name,
+        method=inter.method,
+        url=inter.url,
+        description=inter.description,
+        headers=parse_kv_list(inter.headers, ":"),
+        body=body,
+        capture=parse_kv_list(inter.capture, "="),
+        until=until,
+    )
+
+
+# ------------------------------------------------------------------ public API
+
+
+def load(path: str) -> WorkflowSpec:
+    """Load a workflow TOML file and return a :class:`WorkflowSpec`."""
     with open(path, "rb") as f:
         raw = tomllib.load(f)
     requests_raw = raw.get("requests", [])
     if not isinstance(requests_raw, list):
         raise ValueError("top-level 'requests' must be an array of tables")
-    return WorkflowConfig(requests=[_build_request(r) for r in requests_raw])
+    return WorkflowSpec(
+        steps=[_intermediate_to_step(_build_intermediate(r)) for r in requests_raw]
+    )
+
+
+def to_model(cfg: WorkflowConfig) -> WorkflowSpec:
+    """Convert a legacy :class:`WorkflowConfig` into a :class:`WorkflowSpec`."""
+    steps: list[HttpStep | SleepStep] = []
+    for req in cfg.requests:
+        if req.method == "SLEEP":
+            steps.append(
+                SleepStep(
+                    name=req.name,
+                    seconds=req.url,
+                    description=req.description,
+                )
+            )
+        else:
+            body: TextBody | FormBody | None = None
+            if req.body is not None:
+                body = TextBody(text=req.body)
+            elif req.body_form is not None:
+                body = FormBody(fields=req.body_form)
+            until = None
+            if req.until is not None:
+                until = UntilSpec(
+                    condition=req.until.condition,
+                    interval=req.until.interval,
+                    max_attempts=req.until.max_attempts,
+                )
+            steps.append(
+                HttpStep(
+                    name=req.name,
+                    method=req.method,
+                    url=req.url,
+                    description=req.description,
+                    headers=req.headers,
+                    body=body,
+                    capture=req.capture,
+                    until=until,
+                )
+            )
+    return WorkflowSpec(steps=steps)

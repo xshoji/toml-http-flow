@@ -8,7 +8,8 @@ from typing import Sequence
 
 from . import __version__
 from . import config as config_mod
-from . import generator, workflow
+from . import generator, runner
+from .embedded_runtime import parse_repeat_args
 
 
 def _parse_vars(items: list[str]) -> dict[str, str]:
@@ -30,25 +31,10 @@ def _parse_repeat_vars(items: list[str]) -> dict[str, list[str]]:
     The same key supplied twice is rejected; whitespace around the key and
     each comma-separated value is trimmed.
     """
-    out: dict[str, list[str]] = {}
-    for kv in items:
-        if "=" not in kv:
-            raise SystemExit(
-                f"--repeat-vars requires name=v1,v2,..., got: {kv!r}"
-            )
-        k, _, v = kv.partition("=")
-        k = k.strip()
-        if not k:
-            raise SystemExit(f"--repeat-vars has empty key: {kv!r}")
-        if k in out:
-            raise SystemExit(f"--repeat-vars duplicated key: {k!r}")
-        values = [x.strip() for x in v.split(",")]
-        if not values or any(x == "" for x in values):
-            raise SystemExit(
-                f"--repeat-vars must supply non-empty comma-separated values: {kv!r}"
-            )
-        out[k] = values
-    return out
+    try:
+        return parse_repeat_args(items)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -115,8 +101,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         vars_ = _parse_vars(args.var)
         repeat_vars = _parse_repeat_vars(args.repeat_vars)
         try:
-            workflow.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json,
-                         no_mask=args.no_mask, repeat_vars=repeat_vars)
+            runner.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json,
+                       no_mask=args.no_mask, repeat_vars=repeat_vars)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
