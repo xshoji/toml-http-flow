@@ -55,6 +55,12 @@ python3 -m httpflow run -f workflow.toml -v env=production -v user_id=123
 # By default, request/response details are shown.
 # Use --quiet (-q) when you only need the summary lines.
 python3 -m httpflow run -f workflow.toml -q
+
+# Pretty-print JSON bodies with 2-space indent
+python3 -m httpflow run -f workflow.toml --pretty-json
+
+# Disable masking of sensitive fields
+python3 -m httpflow run -f workflow.toml --no-mask
 ```
 
 ### Output format
@@ -64,7 +70,7 @@ curl `-vvv`-style `>` (request) and `<` (response) prefixes, including
 headers and body.
 
 ```
-==> 2026-05-19 23:35:49.123 [getToken]
+==> 2026-05-19 23:35:49.123 [getToken] POST https://api.example.com/auth
     > POST /auth HTTP/1.1
     > Host: api.example.com
     > Content-Length: 31
@@ -79,7 +85,7 @@ headers and body.
     < Content-Length: 27
     <
     < {"access_token":"tok-xyz"}
-    * capture token = 'tok-xyz'
+    * capture token = '***'
 ```
 
 Each step prints local time (millisecond precision) on the `==>` (right
@@ -115,28 +121,27 @@ python3 workflow.py -v env=staging --quiet
 
 The generated script is laid out to prioritize **readability and ease of
 ad-hoc editing**. Each `[[requests]]` block expands to an independent
-`step_<name>` function.
+`step_<name>` function that calls the shared `run_step` helper.
 
 ```python
-def step_getToken(store, quiet=False):
+def step_getToken(store, quiet=False, pretty_json=False, no_mask=False):
     """[[requests]] name = 'getToken' — POST https://api.example.com/auth"""
-    name = 'getToken'
-    method = 'POST'
-    url = render('https://api.example.com/auth', store)
-    headers = render_mapping({
-        'Content-Type': 'application/json',
-    }, store)
-    body_form = None
-    body_bytes = render('{"user":"test","pass":"secret"}', store).encode("utf-8")
-    ...
+    run_step(
+        store, 'getToken', 'POST', 'https://api.example.com/auth',
+        headers={
+            'Content-Type': 'application/json',
+        },
+        body='{"user":"test","pass":"secret"}',
+        capture={'token': 'access_token'},
+        quiet=quiet, pretty_json=pretty_json, no_mask=no_mask,
+    )
 
 def main():
     ...
     # === Workflow ===
     # Comment out a line to skip that step. Reorder lines to change execution order.
-    step_getToken(store, quiet=args.quiet)
-    step_getUser(store, quiet=args.quiet)
-    step_updateProfile(store, quiet=args.quiet)
+    step_getToken(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)
+    step_getUser(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)
 ```
 
 Common editing use cases:
@@ -146,9 +151,9 @@ Common editing use cases:
 - **Slightly tweak URL/headers/body and re-run** → edit the corresponding `step_*` function directly
 - **Add a brand-new step** → copy an existing function, rename it, change the contents, and add one line to `main()`
 
-The runtime helpers (`render` / `extract` / `do_request` / `log_*`) are
-inlined at the top of the generated script and do not depend on this tool's
-codebase.
+The runtime helpers (`render` / `extract` / `do_request` / `run_step` / `mask_*`) are
+inlined at the top of the generated script from `embedded_runtime.py` and do not
+depend on this tool's codebase.
 
 ## TOML specification
 
@@ -345,26 +350,60 @@ toml-http-flow/
 ├── README.md
 ├── AGENTS.md
 ├── docs/
-│   └── design.md
+│   └── design/
+│       ├── 01-overview.md
+│       ├── 02-architecture.md
+│       ├── 03-toml-spec.md
+│       ├── 04-template.md
+│       ├── 05-cli.md
+│       ├── 06-workflow-flow.md
+│       ├── 07-script-generation.md
+│       ├── 08-error-handling.md
+│       ├── 09-testing.md
+│       ├── 10-go-python-diff.md
+│       └── 11-extension-points.md
 ├── httpflow/
 │   ├── __init__.py
-│   ├── __main__.py         # entry point for `python -m httpflow`
-│   ├── cli.py              # CLI argument parsing and dispatch
-│   ├── config.py           # TOML parsing and dataclasses
-│   ├── template.py         # ${...} expansion engine
-│   ├── httpclient.py       # urllib HTTP client and JSON path extraction
-│   ├── workflow.py         # step execution and variable store
-│   ├── generator.py        # workflow → single .py generator
+│   ├── __main__.py          # entry point for `python -m httpflow`
+│   ├── cli.py               # CLI argument parsing and dispatch
+│   ├── config.py            # TOML → WorkflowSpec loader / validation
+│   ├── model.py             # WorkflowSpec / HttpStep / SleepStep / Body union
+│   ├── runner.py            # step execution engine and variable store
+│   ├── embedded_runtime.py  # source-of-truth helpers shared with generated scripts
+│   ├── generator.py         # WorkflowSpec → standalone .py emitter
+│   ├── httpclient.py        # urllib HTTP client (embedded_runtime wrapper)
+│   ├── template.py          # ${...} expansion engine (embedded_runtime wrapper)
+│   ├── masking.py           # log output masking (embedded_runtime wrapper)
+│   ├── until.py             # until condition evaluator (embedded_runtime wrapper)
+│   ├── workflow.py          # backward-compatible shim → runner
 │   └── templates/
-│       └── runner.py.tmpl  # template for the generated script
+│       └── runner.py.tmpl   # frame template for generated scripts (placeholders only)
 └── tests/
-    ├── test_template.py
+    ├── __init__.py
+    ├── test_cli.py
     ├── test_config.py
-    ├── test_httpclient.py
-    ├── test_workflow.py
+    ├── test_description.py
     ├── test_generator.py
-    └── test_sleep.py
+    ├── test_httpclient.py
+    ├── test_masking.py
+    ├── test_pretty_json.py
+    ├── test_repeat.py
+    ├── test_sleep.py
+    ├── test_template.py
+    ├── test_until.py
+    └── test_workflow.py
 ```
+
+### Key modules
+
+| Module | Responsibility |
+|---|---|
+| `config.py` | TOML parsing → normalized `WorkflowSpec`. No longer returns raw `WorkflowConfig` for `load()`. |
+| `model.py` | `WorkflowSpec`, `HttpStep`, `SleepStep`, `Body` union (`TextBody` / `FormBody`). |
+| `runner.py` | Execution engine: iteration order, store updates, step branching. |
+| `embedded_runtime.py` | Source-of-truth helpers (`render`, `extract`, `do_request`, `run_step`, `mask_*`, `eval_until`) used by both the package and the generated script. |
+| `generator.py` | Thin emitter: `WorkflowSpec` → Python source. No long runtime strings. |
+| `workflow.py` | Backward-compatible shim that re-exports from `runner`. |
 
 ## Development
 
@@ -376,10 +415,15 @@ python3 -m unittest discover -s tests -v
 python3 -m httpflow --help
 python3 -m httpflow run --help
 python3 -m httpflow generate --help
+
+# Verify generated script compiles
+python3 -m httpflow generate -f workflow.toml -o /tmp/g.py
+python3 -c "import py_compile; py_compile.compile('/tmp/g.py', doraise=True)"
 ```
 
 Tests spin up a local mock with the standard-library `http.server` so even
-the HTTP round-trip is exercised end-to-end.
+the HTTP round-trip is exercised end-to-end. Parity tests verify that the
+generated script behaves identically to the package runtime.
 
 ## Exit codes
 
