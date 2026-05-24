@@ -20,6 +20,8 @@ import os
 import urllib.parse
 from typing import Any
 
+from .embedded_runtime import mask, mask_url, mask_value
+
 _PLACEHOLDER = "***"
 
 DEFAULT_SENSITIVE_HEADERS: frozenset[str] = frozenset({
@@ -97,51 +99,3 @@ def _mask_obj(obj: Any, targets: set[str]) -> Any:
         return [_mask_obj(item, targets) for item in obj]
     return obj
 
-
-def mask(text: str, disabled: bool = False) -> str:
-    """Best-effort masking for a raw string.
-
-    Tries JSON first, then form-urlencoded; if neither, returns ``text``
-    unchanged (plain text bodies are not auto-redacted).
-    """
-    if disabled or not text:
-        return text
-    targets = _all_targets()
-    try:
-        parsed = json.loads(text)
-        return json.dumps(_mask_obj(parsed, targets), ensure_ascii=False)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    if "=" in text and "\n" not in text and " " not in text:
-        try:
-            pairs = urllib.parse.parse_qsl(
-                text, keep_blank_values=True, strict_parsing=True
-            )
-        except ValueError:
-            return text
-        masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
-        return urllib.parse.urlencode(masked, safe="*")
-    return text
-
-
-def mask_url(url: str, disabled: bool = False) -> str:
-    """Replace query-parameter values for sensitive keys in ``url``."""
-    if disabled:
-        return url
-    parsed = urllib.parse.urlsplit(url)
-    if not parsed.query:
-        return url
-    targets = _all_targets()
-    pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    masked = [(k, _PLACEHOLDER if _norm(k) in targets else v) for k, v in pairs]
-    new_query = urllib.parse.urlencode(masked, safe="*")
-    return urllib.parse.urlunsplit(parsed._replace(query=new_query))
-
-
-def mask_value(name: str, value: Any, disabled: bool = False) -> Any:
-    """Return ``value`` masked when ``name`` matches a sensitive key."""
-    if disabled:
-        return value
-    if _norm(name) in _all_targets():
-        return _PLACEHOLDER
-    return value
