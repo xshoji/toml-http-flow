@@ -568,6 +568,106 @@ class TestGenerator(unittest.TestCase):
             )
             self.assertEqual(res5.returncode, 0, msg=res5.stderr)
 
+    def test_generated_script_omits_until_when_not_used(self):
+        """Workflow without until must not contain until-specific helpers."""
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://127.0.0.1:1/ping"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        compile(script, "<generated>", "exec")
+        self.assertNotIn("def eval_until", script)
+        self.assertNotIn("def poll_until", script)
+        self.assertNotIn("_UNTIL_OPS", script)
+
+    def test_generated_script_includes_until_when_used(self):
+        """Workflow with until must include until helpers."""
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "poll"
+            method = "GET"
+            url = "http://127.0.0.1:1/poll"
+            until = ["condition = ${status} == Active", "interval = 0", "max_attempts = 1"]
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        compile(script, "<generated>", "exec")
+        self.assertIn("def eval_until", script)
+        self.assertIn("def poll_until", script)
+        self.assertIn("_UNTIL_OPS", script)
+        # until-only workflow should not include argparse --repeat-vars
+        self.assertNotIn('p.add_argument("--repeat-vars"', script)
+
+    def test_generated_script_includes_repeat_when_used(self):
+        """Workflow with ${repeat.*} must include repeat helpers and CLI option."""
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://127.0.0.1:1/ping?id=${repeat.id}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        compile(script, "<generated>", "exec")
+        self.assertIn("def parse_repeat_args", script)
+        self.assertIn("def build_repeat_iterations_from_args", script)
+        self.assertIn("--repeat-vars", script)
+
+    def test_generated_script_never_contains_httpflow_imports(self):
+        """Generated script must be free of any httpflow or relative package imports."""
+        toml_text = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://127.0.0.1:1/ping?id=${repeat.id}"
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        compile(script, "<generated>", "exec")
+        self.assertNotIn("import httpflow", script)
+        self.assertNotIn("from httpflow", script)
+        self.assertNotRegex(script, r"^from \.")
+
+    def test_empty_workflow_compiles(self):
+        """A workflow with no steps still produces valid Python."""
+        toml_text = b""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+
+        compile(script, "<generated>", "exec")
+
 
 if __name__ == "__main__":
     unittest.main()

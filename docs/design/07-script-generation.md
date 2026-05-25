@@ -8,7 +8,7 @@
 | 項目           | 方針                                                                     |
 |----------------|--------------------------------------------------------------------------|
 | 依存関係       | 生成スクリプトは Python 3.11+ 標準ライブラリのみ（本ツール本体は不要）   |
-| 自己完結性     | 1ファイルで完結。ランタイム helper は `embedded_runtime.py` のソースを埋め込む |
+| 自己完結性     | 1ファイルで完結。必要なランタイム helper だけを httpflow/runtime/*.py から flatten して埋め込む |
 | 可読性         | "監査用" のため、人間が読んで何をしているか追える構造にする                |
 | 入力との対応   | コメントで「どの `[[requests]]` ブロック由来か」を明示                     |
 | 変数注入       | `argparse` で `-v key=value` を受け付ける（本ツールと同じ）                |
@@ -19,7 +19,7 @@
 ```
 generated_script.py
   ├── import / argparse
-  ├── {{EMBEDDED_RUNTIME}}  ← embedded_runtime.py のソース全文を貼り付け
+  ├── {{RUNTIME_HELPERS}}  ← 必要な httpflow/runtime/*.py ソースを flatten して貼り付け
   ├── step 関数群            ← 各 step を run_step(...) 呼び出しとして展開
   ├── main()                 ← argparse + ループ + step 呼び出し
   └── __main__ エントリポイント
@@ -34,25 +34,41 @@ generated_script.py
 - ステップを並べ替えたい → `main()` 内の呼び出し順を入れ替えればよい
 - 1ステップのURLやペイロードだけを少し変えて再実行 → そのステップ関数だけを編集
 
-## 8.3 埋め込みランタイム方式
+## 8.3 ランタイム flatten 方式
 
 `generator.py` は **長いランタイム実装文字列を持たない**。
-代わりに `embedded_runtime.py` のソーステキストを読み込み、テンプレートの `{{EMBEDDED_RUNTIME}}` に埋め込む。
+代わりに `httpflow/runtime/*.py` のソーステキストを読み込み、必要な機能だけを選んで
+テンプレートの `{{RUNTIME_HELPERS}}` にフラット化して埋め込む。
 
 ```text
 runner.py.tmpl
-  {{EMBEDDED_RUNTIME}}
+  {{RUNTIME_HELPERS}}
   {{STEP_FUNCTIONS}}
   {{STEP_CALLS}}
 ```
 
-**ルール**:
+**flatten のルール**:
 
-- `embedded_runtime.py` 内で `httpflow` の相対 import をしない
+- ワークフローに `until` を使う step があれば `runtime/until.py` を含める
+- `${repeat.*}` 参照があれば `runtime/repeat.py` を含める
+- step が存在すれば `runtime/http.py`（これは `core` と `mask` に依存する）を含める
+- `from __future__ import annotations` と `httpflow/runtime/` 内の相対 import は除去する
+- `import httpflow` や `from httpflow ...` は絶対に残さない
 - 標準ライブラリ以外を import しない
 - CLI / TOML parser / generator 固有処理を入れない
-- 生成スクリプト側でも必要な import は `embedded_runtime.py` 内に閉じる
-- ソース埋め込みのために AST 変換等の複雑な処理を導入しない
+- 重複する stdlib import は許容する（AST 変換等の複雑な処理を避けるため）
+
+**依存関係マニフェスト**:
+
+| モジュール | 依存       |
+|-----------|-----------|
+| `core`    | --        |
+| `mask`    | --        |
+| `http`    | `core`, `mask` |
+| `until`   | `core`    |
+| `repeat`  | --        |
+
+解決順は常に `core → mask → http → until → repeat` とする。
 
 ## 8.4 生成アルゴリズム
 
@@ -60,7 +76,8 @@ runner.py.tmpl
 
 1. `config.load()` で TOML を読み込み :class:`WorkflowSpec` を得る
 2. `templates/runner.py.tmpl` をベーステンプレートとして読み込む
-3. `embedded_runtime.py` のソーステキストを `{{EMBEDDED_RUNTIME}}` に埋め込む
+3. `WorkflowSpec` から必要なランタイム機能を検出し、`httpflow/runtime/*.py` を選んで flatten し
+   `{{RUNTIME_HELPERS}}` に埋め込む
 4. 各 `Step` から `step_<sanitized_name>` 関数の本体を組み立てる
    - 関数名はステップ名を `[A-Za-z0-9_]` のみに正規化し、衝突時は数字サフィックスで一意化
    - HTTP ステップは `run_step(store, name, method, url, headers=..., body=..., capture=..., ...)` の呼び出し1つに集約
@@ -84,19 +101,21 @@ runner.py.tmpl
 
 ## 8.5 ヘルパ関数の二重実装と parity 担保
 
-`embedded_runtime.py` の helper は以下の通り、**本体コードからも import して使い、生成スクリプトにも同じソースを埋め込む**。
+`httpflow/runtime/*.py` の helper は以下の通り、**本体コードからも import して使い、
+生成スクリプトには必要なモジュールだけ flatten して埋め込む**。
 
-| function        | 本体側 import 元   | 生成スクリプト提供元      |
-|-----------------|-------------------|--------------------------|
-| `render`        | `embedded_runtime`| ソース埋め込み            |
-| `extract`       | `embedded_runtime`| ソース埋め込み            |
-| `do_request`    | `embedded_runtime`| ソース埋め込み            |
-| `run_step`      | `embedded_runtime`| ソース埋め込み            |
-| `eval_until`    | `embedded_runtime`| ソース埋め込み            |
-| `mask` / `mask_url` / `mask_value` | `embedded_runtime` | ソース埋め込み |
+| function        | パッケージ側 import 元                  | 生成スクリプト提供元      |
+|-----------------|----------------------------------------|--------------------------|
+| `render`        | `runtime.core`                         | `runtime/core.py` 平滑化  |
+| `extract`       | `runtime.http`                         | `runtime/http.py` 平滑化  |
+| `do_request`    | `runtime.http`                         | `runtime/http.py` 平滑化  |
+| `run_step`      | `runtime.http`                         | `runtime/http.py` 平滑化  |
+| `eval_until`    | `runtime.until`                        | `runtime/until.py` 平滑化 |
+| `mask` / `mask_url` / `mask_value` | `runtime.mask`         | `runtime/mask.py` 平滑化  |
+| `parse_repeat_args` / `build_repeat_iterations` | `runtime.repeat` | `runtime/repeat.py` 平滑化 |
 
 本体側の `template.py` / `httpclient.py` / `masking.py` / `until.py` は、
-原則として `embedded_runtime` へ thin wrapper として delegate する。
+原則として `httpflow.runtime.*` へ thin wrapper として delegate する。
 
 ## 8.6 生成スクリプトの使い方（生成後）
 

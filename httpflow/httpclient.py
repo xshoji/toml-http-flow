@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import RequestConfig
-from .embedded_runtime import do_request, extract
+from .runtime.http import do_request, extract
 
 
 @dataclass

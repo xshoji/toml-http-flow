@@ -9,7 +9,7 @@ from typing import Sequence
 from . import __version__
 from . import config as config_mod
 from . import generator, runner
-from .embedded_runtime import parse_repeat_args
+from .runtime.repeat import parse_repeat_args
 
 
 def _parse_vars(items: list[str]) -> dict[str, str]:

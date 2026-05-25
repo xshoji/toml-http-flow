@@ -8,13 +8,20 @@ httpflow/
 ├── config.py            # TOML読込み・バリデーション（出力は WorkflowSpec）
 ├── model.py             # WorkflowSpec / HttpStep / SleepStep / UntilSpec
 ├── runner.py            # ステップ実行エンジン＋変数ストア
-├── embedded_runtime.py  # 生成スクリプトにも埋め込む helper の source-of-truth
+├── embedded_runtime.py  # 旧 monolithic runtime の互換 shim（非推奨）
 ├── generator.py         # WorkflowSpec → standalone .py emitter
-├── httpclient.py        # urllib ベースの HTTP クライアント（embedded_runtime ラッパー）
-├── template.py          # テンプレート展開エンジン（embedded_runtime ラッパー）
-├── masking.py           # ログ出力用マスキング（embedded_runtime ラッパー）
-├── until.py             # until 条件評価（embedded_runtime ラッパー）
+├── httpclient.py        # urllib ベースの HTTP クライアント（runtime.http ラッパー）
+├── template.py          # テンプレート展開エンジン（runtime.core ラッパー）
+├── masking.py           # ログ出力用マスキング（runtime.mask ラッパー）
+├── until.py             # until 条件評価（runtime.until ラッパー）
 ├── workflow.py          # backward-compatible shim → runner
+├── runtime/             # 本体と生成スクリプトの両方で使う helper
+│   ├── __init__.py
+│   ├── core.py          # render / render_mapping / TemplateError
+│   ├── mask.py          # mask / mask_url / mask_value
+│   ├── http.py          # do_request / extract / run_step / ログ出力
+│   ├── until.py         # eval_until / poll_until
+│   └── repeat.py        # parse_repeat_args / build_repeat_iterations
 ├── templates/
 │   └── runner.py.tmpl   # 生成スクリプトの枠（placeholder のみ）
 └── tests/
@@ -69,32 +76,35 @@ class WorkflowSpec:
     steps: list[Step] = field(default_factory=list)
 ```
 
-## 3.3 httpflow/embedded_runtime.py
+## 3.3 httpflow/runtime/（本体＋生成スクリプトの共通 helper）
 
-**設計上最重要**: 本体実行と生成スクリプトの両方で必要な helper の **source-of-truth**。
+本体実行と生成スクリプトの両方で必要な helper を、機能別にファイル分割して保持する。
+`generator.py` はワークフローに応じて必要なファイルだけ選び、フラット化して生成スクリプトに埋め込む。
 
-含む関数:
-
-- `render` / `render_mapping`: テンプレート `${...}` 展開
-- `extract`: JSON path 抽出
-- `do_request`: HTTP 送受信（`urllib`）
-- `eval_until`: until 条件評価
-- `mask` / `mask_url` / `mask_value`: ログ出力用マスキング
-- `build_repeat_iterations` / `parse_repeat_args`: repeat 展開
-- `run_step`: 単一 HTTP/SLEEP ステップを render → send → log → capture まで一括実行
-- `_now` / `_pretty` / `_log_request` / `_log_response`: 出力整形
+| ファイル | 提供する機能 | 依存 |
+|---------|------------|------|
+| `runtime/core.py` | `render` / `render_mapping` / `TemplateError` | -- |
+| `runtime/mask.py` | `mask` / `mask_url` / `mask_value` | -- |
+| `runtime/http.py` | `do_request` / `extract` / `run_step` / ログ出力 | `core`, `mask` |
+| `runtime/until.py` | `eval_until` / `poll_until` | `core` |
+| `runtime/repeat.py` | `parse_repeat_args` / `build_repeat_iterations` | -- |
 
 **ルール**:
 
-- `httpflow` 内の相対 import をしない
+- 各モジュールは対応する `runtime/*.py` 同士の相対 import のみを行う
 - 標準ライブラリ以外を import しない
 - CLI / TOML parser / generator 固有処理を入れない
-- モジュール単体のソースを生成スクリプトへ貼っても動く形にする
+- フラット化時に `from __future__ import annotations` と相対 import 行は除去される
 
-本体では `from .embedded_runtime import render, extract, run_step` として import して使う。
-生成時は `embedded_runtime.py` のソーステキストをそのまま埋め込む。
+本体では `from .runtime.core import render` や `from .runtime.http import run_step` として import して使う。
+生成時は `runtime/*.py` のソーステキストを選んでフラット化し、`{{RUNTIME_HELPERS}}` に埋め込む。
 
-## 3.4 httpflow/runner.py
+## 3.4 httpflow/embedded_runtime.py（互換 shim）
+
+旧 monolithic runtime。現在は `httpflow.runtime.*` への re-export shim として残しており、
+外部コードからの `from httpflow.embedded_runtime import render` 等を維持している。
+
+## 3.5 httpflow/runner.py
 
 - `WorkflowSpec` を受け取り、ステップを順次実行
 - 各ステップ実行前にテンプレート展開 (`run_step` 内で実施)
@@ -109,9 +119,9 @@ class WorkflowSpec:
 薄い **emitter**。
 
 - `WorkflowSpec` から step 関数を生成する
-- `embedded_runtime.py` のソースをテンプレートへ埋め込む
+- `WorkflowSpec` を解析して必要な `runtime/*.py` を選び、テンプレートへ flatten して埋め込む
 - 生成後に `compile()` で構文検証
-- **主要な** ランタイム実装文字列を持たない（共通 helper は `embedded_runtime.py` を source-of-truth とする）
+- **主要な** ランタイム実装文字列を持たない（共通 helper は `httpflow/runtime/*.py` を source-of-truth とする）
 
 ## 3.6 httpflow/workflow.py
 

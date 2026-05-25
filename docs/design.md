@@ -13,7 +13,7 @@
 | 4 | テンプレート記法 | [design/04-template.md](design/04-template.md) | `${...}` 変数参照、`$$` エスケープ、実装方針 |
 | 5 | CLIインターフェース | [design/05-cli.md](design/05-cli.md) | `run` / `generate` サブコマンド、出力フォーマット、マスキング |
 | 6 | 処理フロー | [design/06-workflow-flow.md](design/06-workflow-flow.md) | 実行時の6ステップフロー |
-| 7 | スクリプト生成 | [design/07-script-generation.md](design/07-script-generation.md) | `generate` の設計、生成スクリプト構造、セキュリティ注意 |
+| 7 | スクリプト生成 | [design/07-script-generation.md](design/07-script-generation.md) | `generate` の設計、ランタイム flatten 方式、生成スクリプト構造、セキュリティ注意 |
 | 8 | エラーハンドリング | [design/08-error-handling.md](design/08-error-handling.md) | 各種エラーと対応方針 |
 | 9 | テスト方針 | [design/09-testing.md](design/09-testing.md) | `unittest` のカバレージ方針 |
 | 10 | Go版との相違 | [design/10-go-python-diff.md](design/10-go-python-diff.md) | 言語間の設計比較 |

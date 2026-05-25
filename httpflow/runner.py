@@ -1,4 +1,4 @@
-"""Workflow step execution engine backed by embedded_runtime helpers."""
+"""Workflow step execution engine backed by runtime helpers."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ import time
 from typing import Any
 
 from .config import WorkflowConfig, to_model
-from .embedded_runtime import build_repeat_iterations, eval_until, run_step
 from .model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
+from .runtime.http import run_step
+from .runtime.repeat import build_repeat_iterations
+from .runtime.until import eval_until
 from .template import find_repeat_names
 
 

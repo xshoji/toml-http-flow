@@ -1,0 +1,218 @@
+"""HTTP request helpers and JSON path extraction."""
+
+from __future__ import annotations
+
+import datetime
+import json
+import re
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+from .core import render, render_mapping
+from .mask import mask, mask_url, mask_value
+
+# Matches dotted or indexed path segments (e.g. data.items[0].id)
+PATH_TOKEN = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
+
+
+def extract(body: Any, path: str) -> Any:
+    """Extract a value from a parsed JSON body using a dotted/indexed path."""
+    cur: Any = body
+    for name, idx in PATH_TOKEN.findall(path):
+        if name:
+            if not isinstance(cur, dict) or name not in cur:
+                raise KeyError(f"path not found: {path}")
+            cur = cur[name]
+        else:
+            i = int(idx)
+            if not isinstance(cur, list) or i >= len(cur):
+                raise IndexError(f"index out of range: {path}")
+            cur = cur[i]
+    return cur
+
+
+def do_request(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body_bytes: bytes | None,
+    timeout: float | None = None,
+) -> tuple[int, str, dict[str, str], str, Any | None]:
+    """Send an HTTP request and return status, reason, headers, text, and JSON body."""
+    req = urllib.request.Request(url=url, data=body_bytes, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            status, reason = resp.status, resp.reason
+            resp_headers = dict(resp.headers.items())
+    except urllib.error.HTTPError as e:
+        body = e.read() if e.fp is not None else b""
+        raise RuntimeError(
+            f"HTTP {e.code} from {method} {url}: {body.decode('utf-8', errors='replace')}"
+        ) from e
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        body_json = json.loads(text) if text else None
+    except json.JSONDecodeError:
+        body_json = None
+    return status, reason, resp_headers, text, body_json
+
+
+def _now() -> str:
+    """Local time stamp with millisecond precision, e.g. ``2026-05-19 23:35:49.123``."""
+    now = datetime.datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+
+
+def _pretty(text: str, enabled: bool) -> str:
+    """Re-format ``text`` as 2-space-indent JSON if it parses; else return as-is."""
+    if not enabled or not text:
+        return text
+    try:
+        return json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+    except (json.JSONDecodeError, ValueError):
+        return text
+
+
+def _print_lines(prefix: str, text: str, *, out=sys.stdout) -> None:
+    """Print ``text`` line-by-line with ``prefix`` (e.g. '    > ' or '    < ')."""
+    print(f"    {prefix}", file=out)
+    for line in text.splitlines() or [""]:
+        print(f"    {prefix} {line}", file=out)
+
+
+def _log_request(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body_bytes: bytes | None,
+    body_form: dict[str, str] | None,
+    pretty_json: bool,
+    no_mask: bool = False,
+    *,
+    out=sys.stdout,
+) -> None:
+    """Print the request line and headers that urllib will actually send."""
+    parsed = urllib.parse.urlparse(mask_url(url, disabled=no_mask))
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    print(f"    > {method.upper()} {path} HTTP/1.1", file=out)
+    print(f"    > Host: {parsed.netloc}", file=out)
+    for k, v in headers.items():
+        print(f"    > {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
+    lower = {h.lower() for h in headers}
+    if body_bytes is not None:
+        print(f"    > Content-Length: {len(body_bytes)}", file=out)
+    if "user-agent" not in lower:
+        print(
+            f"    > User-Agent: Python-urllib/{sys.version_info.major}.{sys.version_info.minor}",
+            file=out,
+        )
+    if "accept-encoding" not in lower:
+        print("    > Accept-Encoding: identity", file=out)
+    if body_form is not None:
+        print("    > (form)", file=out)
+        for k, v in body_form.items():
+            print(f"    >   {k} = {mask_value(k, v, disabled=no_mask)}", file=out)
+    elif body_bytes is not None:
+        try:
+            body_text = body_bytes.decode("utf-8", errors="replace")
+            _print_lines(">", _pretty(mask(body_text, disabled=no_mask), pretty_json), out=out)
+        except UnicodeDecodeError:
+            print(f"    > <{len(body_bytes)} bytes>", file=out)
+
+
+def _log_response(
+    status: int,
+    reason: str,
+    resp_headers: dict[str, str],
+    text: str,
+    pretty_json: bool,
+    no_mask: bool = False,
+    *,
+    out=sys.stdout,
+) -> None:
+    """Print the HTTP status line and response headers/body."""
+    print(f"    < HTTP/1.1 {status} {reason}", file=out)
+    for k, v in resp_headers.items():
+        print(f"    < {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
+    if text:
+        _print_lines("<", _pretty(mask(text, disabled=no_mask), pretty_json), out=out)
+
+
+def run_step(
+    store: dict,
+    name: str,
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: str | None = None,
+    body_form: dict[str, str] | None = None,
+    capture: dict[str, str] | None = None,
+    description: str | None = None,
+    quiet: bool = False,
+    pretty_json: bool = False,
+    no_mask: bool = False,
+    out=sys.stdout,
+) -> None:
+    """Render, send, log, and capture a single HTTP (or SLEEP) attempt.
+
+    On return, ``store["vars"]`` is updated with captured values.
+    """
+    url = render(url, store)
+
+    if method == "SLEEP":
+        try:
+            seconds = float(url)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"step {name!r}: 'SLEEP' url must be numeric, got: {url!r}"
+            ) from exc
+        print(f"==> {_now()} [{name}] SLEEP {url}", file=out)
+        if description:
+            for line in description.splitlines() or [""]:
+                print(f"    # {line}", file=out)
+        if not quiet:
+            print(f"    > sleep {seconds} seconds", file=out)
+        time.sleep(seconds)
+        print(f"<== {_now()} [{name}] done", file=out)
+        return
+
+    headers = render_mapping(headers or {}, store)
+    if body is not None:
+        body_bytes = render(body, store).encode("utf-8")
+    elif body_form is not None:
+        body_form = render_mapping(body_form, store)
+        body_bytes = urllib.parse.urlencode(body_form).encode("utf-8")
+        if not any(h.lower() == "content-type" for h in headers):
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+    else:
+        body_bytes = None
+
+    print(f"==> {_now()} [{name}] {method.upper()} {mask_url(url, disabled=no_mask)}", file=out)
+    if description:
+        for line in description.splitlines() or [""]:
+            print(f"    # {line}", file=out)
+    if not quiet:
+        _log_request(method, url, headers, body_bytes, body_form, pretty_json, no_mask=no_mask, out=out)
+
+    status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
+    print(f"<== {_now()} [{name}] status={status}", file=out)
+    if not quiet:
+        _log_response(status, reason, resp_headers, text, pretty_json, no_mask=no_mask, out=out)
+
+    if capture:
+        if body_json is None:
+            raise RuntimeError(f"step {name!r}: capture requested but response is not JSON")
+        for var, path in capture.items():
+            captured = extract(body_json, path)
+            store["vars"][var] = captured
+            if not quiet:
+                shown = mask_value(var, captured, disabled=no_mask)
+                print(f"    * capture {var} = {shown!r}", file=out)

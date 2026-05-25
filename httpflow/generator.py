@@ -20,7 +20,15 @@ from .template import PATTERN
 
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
-_EMBEDDED_RUNTIME_PATH = Path(__file__).parent / "embedded_runtime.py"
+_RUNTIME_DIR = Path(__file__).parent / "runtime"
+
+_RUNTIME_DEPS: dict[str, tuple[str, ...]] = {
+    "core": (),
+    "mask": (),
+    "http": ("core", "mask"),
+    "until": ("core",),
+    "repeat": (),
+}
 
 _NO_REPEAT_HELPERS = '''\
 # (no ${repeat.*} references — helpers omitted)
@@ -42,6 +50,46 @@ _MAIN_REPEAT_SETUP = '''    try:
             print(f"=== repeat iteration {_idx}/{total} {_repeat_iter} ===")'''
 
 _MAIN_NO_REPEAT_SETUP = "    store['repeat'] = {}"
+
+
+# ---------------------------------------------------------------- runtime flattening
+
+
+def _resolve_runtime_modules(features: set[str]) -> list[str]:
+    """Return runtime module names in deterministic dependency order."""
+    resolved: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: str) -> None:
+        if name in seen:
+            return
+        for dep in _RUNTIME_DEPS.get(name, ()):
+            add(dep)
+        seen.add(name)
+        resolved.append(name)
+
+    for name in ("core", "mask", "http", "until", "repeat"):
+        if name in features:
+            add(name)
+    return resolved
+
+
+def _flatten_modules(features: set[str]) -> str:
+    """Read selected runtime modules, strip package-only lines, and concatenate."""
+    modules = _resolve_runtime_modules(features)
+    chunks: list[str] = []
+    for name in modules:
+        src = (_RUNTIME_DIR / f"{name}.py").read_text(encoding="utf-8")
+        lines = []
+        for line in src.splitlines():
+            # Strip controlled package-only lines
+            if line == "from __future__ import annotations":
+                continue
+            if line.strip().startswith("from ."):
+                continue
+            lines.append(line)
+        chunks.append("\n".join(lines))
+    return "\n\n".join(chunks)
 
 
 # ---------------------------------------------------------------- literal helpers
@@ -272,10 +320,6 @@ def generate(
         spec = from_config(spec)
 
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    embedded_runtime = "\n".join(
-        line for line in _EMBEDDED_RUNTIME_PATH.read_text(encoding="utf-8").splitlines()
-        if line != "from __future__ import annotations"
-    )
     timestamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     default_vars = dict(default_vars or {})
 
@@ -297,18 +341,28 @@ def generate(
         step_functions_src = "\n\n\n".join(step_blocks)
         step_calls_src = "\n".join(step_calls)
 
+    # Feature detection for runtime flattening
+    features: set[str] = set()
+    if spec.steps:
+        features.add("http")
+    if any(isinstance(step, HttpStep) and step.until is not None for step in spec.steps):
+        features.add("until")
+
     # Required ${repeat.<name>} variables
     from .runner import collect_repeat_names
     required_repeat = sorted(collect_repeat_names(spec))
     needs_repeat = bool(required_repeat)
+    if needs_repeat:
+        features.add("repeat")
+
     if required_repeat:
         repeat_lit = "{" + ", ".join(repr(n) for n in required_repeat) + "}"
     else:
         repeat_lit = "set()"
 
-    has_until = any(isinstance(step, HttpStep) and step.until is not None for step in spec.steps)
+    has_until = "until" in features
     until_helpers = (
-        "# (poll_until is provided by embedded_runtime)"
+        "# (poll_until is provided by runtime helpers)"
         if has_until else "# (no until blocks — helpers omitted)"
     )
     repeat_helpers = (
@@ -341,11 +395,13 @@ def generate(
             )
         )
 
+    runtime_helpers = _flatten_modules(features)
+
     rendered = (
         template
         .replace("{{VERSION}}", __version__)
         .replace("{{GENERATED_AT}}", timestamp)
-        .replace("{{EMBEDDED_RUNTIME}}", embedded_runtime)
+        .replace("{{RUNTIME_HELPERS}}", runtime_helpers)
         .replace("{{DEFAULT_VARS}}", _dict_literal(default_vars, indent=""))
         .replace("{{REQUIRED_VARS}}", _list_literal(_collect_required_var_names(spec, default_vars), indent=""))
         .replace("{{DEFAULT_REPEAT_VARS}}", _list_dict_literal(dict(default_repeat_vars or {}), indent=""))

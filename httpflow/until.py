@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .embedded_runtime import eval_until
+from .runtime.until import eval_until
 
 
 def evaluate(condition: str, store: dict[str, Any]) -> bool:

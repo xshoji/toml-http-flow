@@ -13,12 +13,12 @@
 
 ## 10.2 Parity Test（本体実行 vs 生成スクリプト実行）
 
-`embedded_runtime.py` を修正した場合、**本体実行と生成スクリプト実行で結果が一致することを担保する**。
+`httpflow/runtime/*.py` を修正した場合、**本体実行と生成スクリプト実行で結果が一致することを担保する**。
 
 ### 実施方法
 
 `test_generator.py` で `exec(script, ns)` として生成スクリプトの `render` / `extract` / `run_step` を ns 経由で取得し、
-本体側 `embedded_runtime` の同名関数と `assertEqual` する。
+本体側 `runtime` モジュールの同名関数と `assertEqual` する。
 
 ```python
 ns = {"__name__": "generated_parity_test"}

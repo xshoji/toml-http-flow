@@ -53,7 +53,7 @@ class TestWorkflow(unittest.TestCase):
         """body_form values must have ${...} expanded, including when the
         referenced step name contains a hyphen (regression: the template
         regex used to reject hyphens)."""
-        from httpflow.embedded_runtime import render_mapping
+        from httpflow.runtime.core import render_mapping
 
         req = RequestConfig(
             name="next",

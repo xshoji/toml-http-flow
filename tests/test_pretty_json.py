@@ -5,7 +5,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from httpflow.config import RequestConfig, WorkflowConfig
-from httpflow.embedded_runtime import _pretty as _maybe_pretty_json
+from httpflow.runtime.http import _pretty as _maybe_pretty_json
 from httpflow.workflow import run
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .embedded_runtime import PATTERN, TemplateError, render, render_mapping
+from .runtime.core import PATTERN, TemplateError, render, render_mapping
 
 # Matches ``${repeat.<name>}`` references, used by the workflow runner to
 # decide which repeat variables must be supplied via ``--repeat-vars``.

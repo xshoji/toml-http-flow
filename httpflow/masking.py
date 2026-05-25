@@ -20,7 +20,7 @@ import os
 import urllib.parse
 from typing import Any
 
-from .embedded_runtime import mask, mask_url, mask_value
+from .runtime.mask import mask, mask_url, mask_value
 
 _PLACEHOLDER = "***"
 
