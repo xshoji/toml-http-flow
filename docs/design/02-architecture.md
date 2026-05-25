@@ -5,7 +5,7 @@ httpflow/
 ├── __init__.py
 ├── __main__.py          # `python -m httpflow` のエントリポイント
 ├── cli.py               # 引数パース・ディスパッチ・例外境界
-├── config.py            # TOML読込み・バリデーション（出力は WorkflowConfig）
+├── config.py            # TOML読込み・バリデーション（出力は WorkflowSpec）
 ├── model.py             # WorkflowSpec / HttpStep / SleepStep / UntilSpec
 ├── runner.py            # ステップ実行エンジン＋変数ストア
 ├── embedded_runtime.py  # 生成スクリプトにも埋め込む helper の source-of-truth
@@ -28,27 +28,18 @@ httpflow/
 ## 3.1 httpflow/config.py
 
 - TOML を `tomllib.load()` でパース
-- `dict → WorkflowConfig` への変換ヘルパを提供
+- `dict → WorkflowSpec` への変換ヘルパを提供
 - 不正なフィールド（`body` と `body_form` の同時指定、`SLEEP` に無関係なフィールドが付いている等）をバリデーション
-- 出力は **正規化されていない** 生の `WorkflowConfig`
+- 出力は **正規化済み** の `WorkflowSpec`
 
 ```python
-@dataclass
-class RequestConfig:
-    name: str
-    method: str
-    url: str
-    description: str | None = None
-    headers: dict[str, str] = field(default_factory=dict)
-    body: str | None = None
-    body_form: dict[str, str] | None = None
-    capture: dict[str, str] = field(default_factory=dict)
-    until: UntilConfig | None = None
+def load(path: str | Path) -> WorkflowSpec:
+    """TOML を読み込み、検証済み WorkflowSpec を返す。"""
 ```
 
 ## 3.2 httpflow/model.py
 
-- TOML 読込直後の `WorkflowConfig` を **正規化済みモデル** `WorkflowSpec` に変換
+- `config.py` が返す **正規化済みモデル** `WorkflowSpec` を定義する
 - `SLEEP` を `method` の特殊値から独立した `SleepStep` として扱う
 - `HttpStep` と `SleepStep` の Union を `Step` として定義
 - `runner` と `generator` の共通入力として機能
@@ -61,8 +52,7 @@ class HttpStep:
     url: str
     description: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
-    body: str | None = None          # body と body_form は排他
-    body_form: dict[str, str] | None = None
+    body: TextBody | FormBody | None = None
     capture: dict[str, str] = field(default_factory=dict)
     until: UntilSpec | None = None
 
@@ -118,11 +108,10 @@ class WorkflowSpec:
 
 薄い **emitter**。
 
-- `WorkflowConfig` を受け取り内部で `from_config()` → `WorkflowSpec` に変換
 - `WorkflowSpec` から step 関数を生成する
 - `embedded_runtime.py` のソースをテンプレートへ埋め込む
 - 生成後に `compile()` で構文検証
-- **長いランタイム実装文字列を持たない**（すべて `embedded_runtime.py` から読み込む）
+- **主要な** ランタイム実装文字列を持たない（共通 helper は `embedded_runtime.py` を source-of-truth とする）
 
 ## 3.6 httpflow/workflow.py
 
@@ -133,5 +122,5 @@ class WorkflowSpec:
 
 - `argparse` で `-f`, `-v`, `--repeat-vars` をパース
 - `-v key=value` を複数回受け取り `vars` 名前空間に格納
-- `config.load()` → `from_config()` → `runner.run()` を呼び出す
+- `config.load()` で `WorkflowSpec` を読み込み、`runner.run()` / `generator.generate()` に渡す
 - 例外をキャッチして非ゼロ終了コードで終了

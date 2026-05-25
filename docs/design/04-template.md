@@ -16,6 +16,7 @@ Pythonの `string.Template` / シェル / Make などで広く使われている
 
 ```
 ${<capture_key>}
+${var.<capture_key>}
 ```
 
 例:
@@ -127,7 +128,7 @@ url = "https://api.example.com/x?args=${token}"
 ## 5.8 実装方針
 
 `re.sub` のコールバックで置換する。
-ネームスペース（`steps` / `vars`）を区別せず、単一のルックアップ関数で解決する。
+値は `store["vars"]` / `store["repeat"]` / `env.*` / `random.*` を単一のルックアップ関数で解決する。
 
 ```python
 import re
@@ -141,6 +142,11 @@ class TemplateError(KeyError):
     pass
 
 def _lookup(store: dict, parts: list[str]) -> Any:
+    if len(parts) == 2 and parts[0] == "var":
+        try:
+            return store["vars"][parts[1]]
+        except KeyError as exc:
+            raise TemplateError(".".join(parts)) from exc
     if len(parts) == 2 and parts[0] == "env":
         try:
             return os.environ[parts[1]]
@@ -173,8 +179,8 @@ def render(text: str, store: dict) -> str:
 
 ```python
 store = {
-    "vars": {"env": "production"},
-    "steps": {"getToken": {"token": "abc123"}},
+    "vars": {"env": "production", "token": "abc123"},
+    "repeat": {},
 }
 render("Bearer ${token}", store)
 # → "Bearer abc123"

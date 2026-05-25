@@ -11,8 +11,8 @@ and embedding into CI/CD pipelines without this tool installed.
 ## Features
 
 - Describe a workflow as one request per block (`[[requests]]`) in TOML
-- Reference previous responses from later steps via `${steps.<name>.<key>}`
-- Inject external variables with `-v key=value` (referenced as `${vars.<name>}`)
+- Reference captured values from later steps via `${name}` or `${var.name}`
+- Inject external variables with `-v key=value` (referenced as `${var.<name>}`)
 - Extract values from JSON responses using `data.user.id` / `items[0].id` style paths
 - **Special step `SLEEP`** lets you insert a wait of N seconds
 - Implemented purely on the standard library (`tomllib`, `urllib`, `json`, `argparse`)
@@ -194,7 +194,7 @@ name    = "getUser"
 method  = "GET"
 url     = "https://api.example.com/me"
 headers = [
-    "Authorization: Bearer ${steps.getToken.token}",
+    "Authorization: Bearer ${token}",
     "Accept: application/json",
 ]
 capture = ["user_id = data.user.id"]
@@ -205,7 +205,7 @@ name    = "updateProfile"
 method  = "PUT"
 url     = "https://api.example.com/profile"
 headers = [
-    "Authorization: Bearer ${steps.getToken.token}",
+    "Authorization: Bearer ${token}",
     "Content-Type: application/x-www-form-urlencoded",
 ]
 body_form = [
@@ -242,7 +242,7 @@ body_form = [
 ### Path notation for `capture`
 
 Extract a value from a JSON response and store it under
-`steps.<step_name>.<var_name>` in the variable store.
+`store["vars"][<var_name>]` in the variable store.
 
 ```jsonc
 // Response
@@ -261,6 +261,7 @@ capture = [
 - Dots descend through the hierarchy
 - `[N]` selects a list index
 - A missing path stops execution with an error
+- Captured values can be referenced later as `${uid}` or `${var.uid}`
 
 ### SLEEP special step
 
@@ -273,7 +274,7 @@ method = "SLEEP"
 url    = "2"
 ```
 
-- Specify the wait in seconds via `url` (template variables such as `${vars.delay}` are also allowed).
+- Specify the wait in seconds via `url` (template variables such as `${var.delay}` are also allowed).
 - `headers` / `body` / `body_form` / `capture` cannot be set (validation error).
 - Runtime output:
   ```
@@ -290,10 +291,10 @@ Use the optional `until` field to repeatedly send the same request until a condi
 [[requests]]
 name    = "pollStatus"
 method  = "GET"
-url     = "https://api.example.com/jobs/${steps.createJob.id}"
+url     = "https://api.example.com/jobs/${id}"
 capture = ["status = data.status"]
 until   = [
-    "condition    = ${steps.pollStatus.status} == active",
+    "condition    = ${status} == active",
     "interval     = 2.0",
     "max_attempts = 30",
 ]
@@ -317,10 +318,10 @@ Supported operators in `condition`:
 
 | Operator | Example                              | Meaning                     |
 |----------|--------------------------------------|-----------------------------|
-| `==`     | `${steps.x.status} == active`        | String equality             |
-| `!=`     | `${steps.x.status} != pending`       | String inequality           |
-| `~`      | `${steps.x.message} ~ /success/i`    | Regular expression match (`/pattern/flags`) |
-| `in`     | `${steps.x.code} in [200, 201, 204]` | Included in a comma-separated list |
+| `==`     | `${status} == active`                | String equality             |
+| `!=`     | `${status} != pending`               | String inequality           |
+| `~`      | `${message} ~ /success/i`            | Regular expression match (`/pattern/flags`) |
+| `in`     | `${code} in [200, 201, 204]`         | Included in a comma-separated list |
 
 - Both operands are evaluated as strings after template expansion.
 - HTTP errors (4xx/5xx) during polling fail immediately without retry.
@@ -330,15 +331,18 @@ Supported operators in `condition`:
 Variable references use the `${...}` form. Escape `$` with `$$`.
 
 ```toml
-url     = "https://api.${vars.env}.example.com/me"
-headers = ["Authorization: Bearer ${steps.getToken.token}"]
+url     = "https://api.${var.env}.example.com/me"
+headers = ["Authorization: Bearer ${token}"]
 body    = '{"price":"$$100"}'   # → {"price":"$100"}
 ```
 
 Available namespaces:
 
-- `vars.<name>` — variables injected via the CLI's `-v key=value`
-- `steps.<step_name>.<capture_key>` — values captured by previous steps
+- `<name>` — shorthand for a captured value or injected variable in `store["vars"]`
+- `var.<name>` — variables in `store["vars"]` (including CLI `-v key=value` and captured values)
+- `repeat.<name>` — variables provided by `--repeat-vars`
+- `env.<name>` — environment variables
+- `random.UUID` / `random.UUID_HEX` — generated UUID values
 
 Referencing an undefined variable raises `TemplateError` and stops execution.
 

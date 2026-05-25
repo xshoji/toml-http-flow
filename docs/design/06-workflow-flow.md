@@ -2,10 +2,9 @@
 
 1. CLI 引数のパース (`argparse` で `-f`, `-v`, `--repeat-vars`)
 2. TOML ファイルの読み込み (`tomllib.load()` はバイナリモードで開く必要あり)
-3. dict を `WorkflowConfig` に変換＋バリデーション (`config.py`)
-4. `WorkflowConfig` → `WorkflowSpec` へ正規化 (`model.from_config()`)
+3. dict を検証しつつ `WorkflowSpec` に変換 (`config.py`)
    - `method = "SLEEP"` を `SleepStep` へ変換
-   - `body` と `body_form` の相互排他はモデル型で表現
+   - `body` と form body の相互排他をモデル型で表現
 5. 変数ストアの初期化:
    ```python
    store = {"vars": {...}, "repeat": {}}
