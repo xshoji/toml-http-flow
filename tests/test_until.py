@@ -324,6 +324,52 @@ class TestGeneratorPolling(_PollServerMixin, unittest.TestCase):
             self.assertEqual(res.returncode, 0, msg=res.stderr)
             self.assertIn("until satisfied on attempt 3", res.stdout)
 
+    def test_generated_script_parity_with_runner_for_until(self):
+        _PollHandler.pending_remaining = 2
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "createJob"
+            method = "POST"
+            url = "{base}/jobs"
+            headers = ["Content-Type: application/json"]
+            body = '''{{"name":"x"}}'''
+            capture = ["id = data.id"]
+
+            [[requests]]
+            name = "pollStatus"
+            method = "GET"
+            url = "{base}/jobs/${{id}}"
+            capture = ["status = data.status"]
+            until = [
+                "condition    = ${{status}} == Active",
+                "interval     = 0.01",
+                "max_attempts = 5",
+            ]
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+
+            buf = io.StringIO()
+            store = run(wf, out=buf)
+
+            _PollHandler.pending_remaining = 2
+            script_path = tmp_path / "workflow.py"
+            script_path.write_text(generator.generate(wf), encoding="utf-8")
+            res = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            self.assertIn("until satisfied on attempt 3", buf.getvalue())
+            self.assertIn("until satisfied on attempt 3", res.stdout)
+            self.assertEqual(store["vars"]["status"], "Active")
+
 
 # ─── 5. Logical equivalence: package vs generated runner ──────────────
 class TestUntilEquivalence(unittest.TestCase):

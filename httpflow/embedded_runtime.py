@@ -82,8 +82,39 @@ def render(text: str, store: dict) -> str:
 
 
 def render_mapping(mapping: dict[str, str], store: dict) -> dict[str, str]:
-    """Render every value in a string-to-string mapping."""
-    return {k: render(v, store) for k, v in mapping.items()}
+    """Render every key and value in a string-to-string mapping."""
+    return {render(k, store): render(v, store) for k, v in mapping.items()}
+
+
+def poll_until(
+    name: str,
+    attempt_fn,
+    condition: str,
+    interval: float,
+    max_attempts: int,
+    store: dict[str, Any],
+    quiet: bool,
+    out=sys.stdout,
+) -> None:
+    """Re-run ``attempt_fn`` until ``eval_until(condition, store)`` becomes true."""
+    for attempt in range(1, max_attempts + 1):
+        attempt_fn()
+        if eval_until(condition, store):
+            if not quiet:
+                print(f"    * until satisfied on attempt {attempt}", file=out)
+            return
+        if attempt < max_attempts:
+            if not quiet:
+                print(
+                    f"    * until not satisfied (attempt {attempt}/{max_attempts}), "
+                    f"retrying in {interval}s",
+                    file=out,
+                )
+            time.sleep(interval)
+    raise RuntimeError(
+        f"step {name!r}: until condition not satisfied "
+        f"after {max_attempts} attempts: {condition!r}"
+    )
 
 
 def extract(body: Any, path: str) -> Any:
@@ -263,6 +294,28 @@ def build_repeat_iterations(
     return [{k: repeat_vars[k][i] for k in repeat_vars} for i in range(n)]
 
 
+def merge_default_repeat_vars(
+    repeat_vars: dict[str, list[str]] | None,
+    default_repeat_vars: dict[str, list[str]] | None,
+) -> dict[str, list[str]]:
+    """Merge runtime repeat vars on top of embedded defaults."""
+    merged = dict(default_repeat_vars or {})
+    merged.update(repeat_vars or {})
+    return merged
+
+
+def build_repeat_iterations_from_args(
+    raw_items: list[str],
+    default_repeat_vars: dict[str, list[str]] | None,
+    required: set[str],
+) -> list[dict[str, str]]:
+    """Parse raw CLI repeat args, merge defaults, and expand iterations."""
+    return build_repeat_iterations(
+        merge_default_repeat_vars(parse_repeat_args(raw_items), default_repeat_vars),
+        required,
+    )
+
+
 def parse_repeat_args(repeat_args: list[str]) -> dict[str, list[str]]:
     """Parse ``name=v1,v2`` repeat CLI entries into a mapping."""
     parsed: dict[str, list[str]] = {}
@@ -280,17 +333,6 @@ def parse_repeat_args(repeat_args: list[str]) -> dict[str, list[str]]:
             raise ValueError(f"--repeat-vars must supply non-empty comma-separated values: {kv!r}")
         parsed[k] = values
     return parsed
-
-
-def build_repeat_iterations_from_args(
-    repeat_args: list[str],
-    default_repeat_vars: dict[str, list[str]] | None,
-    required: set[str],
-) -> list[dict[str, str]]:
-    """Parse repeat CLI entries, merge defaults, and build iterations."""
-    merged = dict(default_repeat_vars or {})
-    merged.update(parse_repeat_args(repeat_args))
-    return build_repeat_iterations(merged, required)
 
 
 def _now() -> str:

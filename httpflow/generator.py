@@ -22,41 +22,15 @@ from .template import PATTERN
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
 _EMBEDDED_RUNTIME_PATH = Path(__file__).parent / "embedded_runtime.py"
 
-# ------------------------------------------------------------------ inlined sources
-
-_UNTIL_SRC = '''\
-def poll_until(name, attempt_fn, condition, interval, max_attempts, store, quiet):
-    """Re-invoke ``attempt_fn()`` until ``eval_until(condition, store)`` is true."""
-    for attempt in range(1, max_attempts + 1):
-        attempt_fn()
-        if eval_until(condition, store):
-            if not quiet:
-                print(f"    * until satisfied on attempt {attempt}")
-            return
-        if attempt < max_attempts:
-            if not quiet:
-                print(
-                    f"    * until not satisfied (attempt {attempt}/{max_attempts}),"
-                    f" retrying in {interval}s"
-                )
-            time.sleep(interval)
-    raise RuntimeError(
-        f"step {name!r}: until condition not satisfied "
-        f"after {max_attempts} attempts: {condition!r}"
-    )
+_NO_REPEAT_HELPERS = '''\
+# (no ${repeat.*} references — helpers omitted)
+REQUIRED_REPEAT_VARS = set()
 '''
 
-_REPEAT_SRC = '''\
-# Names referenced by ${repeat.<name>} in the source TOML. Each one MUST be
-# supplied at runtime via --repeat-vars NAME=v1,v2,... unless it is embedded
-# in DEFAULT_REPEAT_VARS below.
-REQUIRED_REPEAT_VARS = {{REQUIRED_REPEAT_VARS}}
-'''
-
-_ARGPARSE_REPEAT_SRC = '''    p.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
+_ARGPARSE_REPEAT = '''    p.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
                    help=_default_repeat_vars_help())'''
 
-_MAIN_REPEAT_SETUP_REPEAT = '''    try:
+_MAIN_REPEAT_SETUP = '''    try:
         iterations = build_repeat_iterations_from_args(args.repeat_vars, DEFAULT_REPEAT_VARS, REQUIRED_REPEAT_VARS)
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
@@ -65,10 +39,9 @@ _MAIN_REPEAT_SETUP_REPEAT = '''    try:
     for _idx, _repeat_iter in enumerate(iterations, start=1):
         store["repeat"] = dict(_repeat_iter)
         if _repeat_iter:
-            print(f"=== repeat iteration {_idx}/{total} {_repeat_iter} ===")
-'''
+            print(f"=== repeat iteration {_idx}/{total} {_repeat_iter} ===")'''
 
-_MAIN_REPEAT_SETUP_NO_REPEAT = "    store['repeat'] = {}"
+_MAIN_NO_REPEAT_SETUP = "    store['repeat'] = {}"
 
 
 # ---------------------------------------------------------------- literal helpers
@@ -310,10 +283,7 @@ def generate(
     step_blocks: list[str] = []
     step_calls: list[str] = []
 
-    needs_until = False
     for step in spec.steps:
-        if isinstance(step, HttpStep) and step.until is not None:
-            needs_until = True
         fn = _sanitize_ident(step.name, used)
         step_blocks.append(_emit_step(step, fn))
         step_calls.append(
@@ -336,24 +306,25 @@ def generate(
     else:
         repeat_lit = "set()"
 
-    # Conditional sections
-    until_helpers = _UNTIL_SRC if needs_until else "# (no until blocks — helpers omitted)"
+    has_until = any(isinstance(step, HttpStep) and step.until is not None for step in spec.steps)
+    until_helpers = (
+        "# (poll_until is provided by embedded_runtime)"
+        if has_until else "# (no until blocks — helpers omitted)"
+    )
     repeat_helpers = (
-        _REPEAT_SRC.replace("{{REQUIRED_REPEAT_VARS}}", repeat_lit)
-        if needs_repeat
-        else "# (no ${repeat.*} references — helpers omitted)"
+        "# Names referenced by ${repeat.<name>} in the source TOML. Each one MUST be\n"
+        "# supplied at runtime via --repeat-vars NAME=v1,v2,... unless it is embedded\n"
+        f"# in DEFAULT_REPEAT_VARS below.\nREQUIRED_REPEAT_VARS = {repeat_lit}"
+        if needs_repeat else _NO_REPEAT_HELPERS
     )
-    argparse_repeat = _ARGPARSE_REPEAT_SRC if needs_repeat else ""
-    main_repeat_setup = (
-        _MAIN_REPEAT_SETUP_REPEAT if needs_repeat else _MAIN_REPEAT_SETUP_NO_REPEAT
-    )
+    argparse_repeat = _ARGPARSE_REPEAT if needs_repeat else ""
+    main_repeat_setup = _MAIN_REPEAT_SETUP if needs_repeat else _MAIN_NO_REPEAT_SETUP
 
     # Indent step calls for repeat loop nesting
     if needs_repeat:
         step_calls_src = "\n".join(
             f"        {line}" for line in step_calls_src.splitlines()
         )
-        # Move the workflow comment into the loop body so indentation is uniform
         step_calls_src = (
             "        # === Workflow ===\n"
             "        # Comment out a line to skip that step. "

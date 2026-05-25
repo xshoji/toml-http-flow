@@ -62,6 +62,19 @@ class TestCollectRepeatNames(unittest.TestCase):
         )
         self.assertEqual(collect_repeat_names(cfg), {"a", "b", "c"})
 
+    def test_collects_from_mapping_keys(self):
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="r1",
+                    method="POST",
+                    url="http://x",
+                    headers={"X-${repeat.key}": "v"},
+                ),
+            ]
+        )
+        self.assertEqual(collect_repeat_names(cfg), {"key"})
+
 
 class TestBuildRepeatIterations(unittest.TestCase):
     def test_empty(self):
@@ -253,6 +266,48 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
             self.assertIn("[ping]", res.stdout)
             # No iteration banner expected for the no-repeat path.
             self.assertNotIn("=== repeat iteration", res.stdout)
+
+    def test_generated_script_parity_with_runner_for_repeat(self):
+        from httpflow import config as cfg_mod
+
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "{base}/echo?id=${{repeat.id}}&label=${{repeat.label}}"
+            capture = ["got = path"]
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "wf.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+
+            buf = io.StringIO()
+            store = run(
+                wf,
+                repeat_vars={"id": ["1", "2"], "label": ["a", "b"]},
+                out=buf,
+            )
+
+            script_path = tmp_path / "wf.py"
+            script_path.write_text(generator.generate(wf), encoding="utf-8")
+            res = subprocess.run(
+                [sys.executable, str(script_path),
+                 "--repeat-vars", "id=1,2",
+                 "--repeat-vars", "label=a,b"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            self.assertIn("=== repeat iteration 1/2", buf.getvalue())
+            self.assertIn("=== repeat iteration 1/2", res.stdout)
+            self.assertIn("/echo?id=1&label=a", buf.getvalue())
+            self.assertIn("/echo?id=1&label=a", res.stdout)
+            self.assertEqual(store["vars"]["got"], "/echo?id=2&label=b")
+            self.assertIn("/echo?id=2&label=b", res.stdout)
 
     def test_embed_repeat_vars(self):
         """--repeat-vars embeds defaults so the script runs without args."""
