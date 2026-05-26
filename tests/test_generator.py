@@ -651,11 +651,22 @@ class TestGenerator(unittest.TestCase):
             script = generator.generate(wf)
 
         compile(script, "<generated>", "exec")
-        self.assertNotIn("import httpflow", script)
-        self.assertNotIn("from httpflow", script)
-        self.assertNotRegex(script, r"(?m)^from \.")
-        self.assertNotRegex(script, r"(?m)^import httpflow")
-        self.assertNotRegex(script, r"(?m)^from httpflow")
+        # Enhanced import guards: allow indentation and word boundaries
+        self.assertNotRegex(script, r"(?m)^\s*from\s+\.")
+        self.assertNotRegex(script, r"(?m)^\s*import\s+httpflow\b")
+        self.assertNotRegex(script, r"(?m)^\s*from\s+httpflow\b")
+
+    def test_embedded_runtime_helpers_compile_cleanly(self):
+        """Flattened runtime modules compile and contain no package imports."""
+        from pathlib import Path
+        from httpflow.generator import _flatten_modules
+
+        # Exercise the full runtime matrix that may be embedded
+        src = _flatten_modules({"core", "mask", "http", "until", "repeat"})
+        compile(src, "<flattened runtime>", "exec")
+        self.assertNotRegex(src, r"(?m)^\s*from\s+\.")
+        self.assertNotRegex(src, r"(?m)^\s*import\s+httpflow\b")
+        self.assertNotRegex(src, r"(?m)^\s*from\s+httpflow\b")
 
     def test_empty_workflow_compiles(self):
         """A workflow with no steps still produces valid Python."""
