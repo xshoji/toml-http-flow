@@ -653,7 +653,9 @@ class TestGenerator(unittest.TestCase):
         compile(script, "<generated>", "exec")
         self.assertNotIn("import httpflow", script)
         self.assertNotIn("from httpflow", script)
-        self.assertNotRegex(script, r"^from \.")
+        self.assertNotRegex(script, r"(?m)^from \.")
+        self.assertNotRegex(script, r"(?m)^import httpflow")
+        self.assertNotRegex(script, r"(?m)^from httpflow")
 
     def test_empty_workflow_compiles(self):
         """A workflow with no steps still produces valid Python."""
