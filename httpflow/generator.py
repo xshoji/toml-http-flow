@@ -111,6 +111,9 @@ def _collect_required_var_names(spec: WorkflowSpec, default_vars: dict[str, str]
                 found.add(parts[1])
 
     for step in spec.steps:
+        if isinstance(step, SleepStep):
+            scan(step.seconds)
+            continue
         if isinstance(step, HttpStep):
             scan(step.url)
             for k, v in step.headers.items():

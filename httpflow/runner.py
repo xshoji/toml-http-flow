@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import sys
-import time
 from typing import Any
 
 from .config import WorkflowConfig, to_model
 from .model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
 from .runtime.http import run_step
 from .runtime.repeat import build_repeat_iterations
-from .runtime.until import eval_until
+from .runtime.until import poll_until
 from .template import find_repeat_names
 
 
@@ -20,6 +19,9 @@ def collect_repeat_names(spec: WorkflowSpec | WorkflowConfig) -> set[str]:
         spec = to_model(spec)
     found: set[str] = set()
     for step in spec.steps:
+        if isinstance(step, SleepStep):
+            found.update(find_repeat_names(step.seconds))
+            continue
         if isinstance(step, HttpStep):
             found.update(find_repeat_names(step.url))
             for k, v in step.headers.items():
@@ -129,7 +131,7 @@ def _run_once(
             continue
 
         # HTTP step with `until` polling.
-        for attempt in range(1, until.max_attempts + 1):
+        def attempt() -> None:
             run_step(
                 store,
                 step.name,
@@ -145,24 +147,14 @@ def _run_once(
                 no_mask=no_mask,
                 out=out,
             )
-            if eval_until(until.condition, store):
-                if not quiet:
-                    print(
-                        f"    * until satisfied on attempt {attempt}",
-                        file=out,
-                    )
-                break
-            if attempt < until.max_attempts:
-                if not quiet:
-                    print(
-                        f"    * until not satisfied "
-                        f"(attempt {attempt}/{until.max_attempts}), "
-                        f"retrying in {until.interval}s",
-                        file=out,
-                    )
-                time.sleep(until.interval)
-        else:
-            raise RuntimeError(
-                f"step {step.name!r}: until condition not satisfied "
-                f"after {until.max_attempts} attempts: {until.condition!r}"
-            )
+
+        poll_until(
+            step.name,
+            attempt,
+            until.condition,
+            until.interval,
+            until.max_attempts,
+            store,
+            quiet,
+            out=out,
+        )
