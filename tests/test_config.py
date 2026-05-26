@@ -116,7 +116,35 @@ body = "hi"
         with self.assertRaises(ValueError):
             cfg_mod.load(path)
 
-    def test_sleep_rejects_non_numeric_url(self):
+    def test_sleep_accepts_template_url(self):
+        path = self._write(b"""
+[[requests]]
+name = "wait"
+method = "SLEEP"
+url = "${var.delay}"
+""")
+        wf = cfg_mod.load(path)
+        self.assertEqual(len(wf.steps), 1)
+        step = wf.steps[0]
+        self.assertIsInstance(step, SleepStep)
+        assert isinstance(step, SleepStep)
+        self.assertEqual(step.seconds, "${var.delay}")
+
+    def test_sleep_accepts_repeat_template_url(self):
+        path = self._write(b"""
+[[requests]]
+name = "wait"
+method = "SLEEP"
+url = "${repeat.delay}"
+""")
+        wf = cfg_mod.load(path)
+        self.assertEqual(len(wf.steps), 1)
+        step = wf.steps[0]
+        self.assertIsInstance(step, SleepStep)
+        assert isinstance(step, SleepStep)
+        self.assertEqual(step.seconds, "${repeat.delay}")
+
+    def test_sleep_rejects_non_numeric_literal_url(self):
         bad = b"""
 [[requests]]
 name = "bad"

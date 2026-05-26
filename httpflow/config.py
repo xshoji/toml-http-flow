@@ -99,7 +99,7 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
     if description is not None and not isinstance(description, str):
         raise ValueError(f"request {d['name']!r}: 'description' must be a string")
 
-    # --- SLEEP step validation ---
+            # --- SLEEP step validation ---
     if method == "SLEEP":
         if (
             d.get("headers")
@@ -112,17 +112,20 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
                 f"request {d['name']!r}: 'SLEEP' step must not specify "
                 f"headers, body, body_form, capture, or until"
             )
-        try:
-            float(d["url"])
-        except ValueError as exc:
-            raise ValueError(
-                f"request {d['name']!r}: 'SLEEP' step requires a numeric 'url' "
-                f"(seconds), got: {d['url']!r}"
-            ) from exc
+        url_val = str(d["url"])
+        # Defer numeric validation to runtime when the value contains a template.
+        if "${" not in url_val:
+            try:
+                float(url_val)
+            except ValueError as exc:
+                raise ValueError(
+                    f"request {d['name']!r}: 'SLEEP' step requires a numeric 'url' "
+                    f"(seconds), got: {url_val!r}"
+                ) from exc
         return _IntermediateRequest(
             name=str(d["name"]),
             method=method,
-            url=str(d["url"]),
+            url=url_val,
             description=description,
         )
 

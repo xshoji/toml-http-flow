@@ -1,7 +1,10 @@
 import io
+import os
+import tempfile
 import unittest
 
-from httpflow.config import SPECIAL_METHODS, RequestConfig, WorkflowConfig
+from httpflow.config import SPECIAL_METHODS, RequestConfig, WorkflowConfig, load as toml_load
+from httpflow.model import SleepStep
 from httpflow.workflow import run
 
 
@@ -60,6 +63,45 @@ class TestSleepStep(unittest.TestCase):
 class TestSpecialMethodsSet(unittest.TestCase):
     def test_special_methods_contains_sleep(self):
         self.assertIn("SLEEP", SPECIAL_METHODS)
+
+
+class TestSleepTOMLLoad(unittest.TestCase):
+    def _write(self, content: bytes) -> str:
+        fd, path = tempfile.mkstemp(suffix=".toml")
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def test_toml_sleep_accepts_template_var(self):
+        toml = b"""
+[[requests]]
+name = "wait"
+method = "SLEEP"
+url = "${var.delay}"
+"""
+        path = self._write(toml)
+        wf = toml_load(path)
+        self.assertEqual(len(wf.steps), 1)
+        step = wf.steps[0]
+        self.assertIsInstance(step, SleepStep)
+        assert isinstance(step, SleepStep)
+        self.assertEqual(step.seconds, "${var.delay}")
+
+    def test_toml_sleep_accepts_template_repeat(self):
+        toml = b"""
+[[requests]]
+name = "wait"
+method = "SLEEP"
+url = "${repeat.delay}"
+"""
+        path = self._write(toml)
+        wf = toml_load(path)
+        self.assertEqual(len(wf.steps), 1)
+        step = wf.steps[0]
+        self.assertIsInstance(step, SleepStep)
+        assert isinstance(step, SleepStep)
+        self.assertEqual(step.seconds, "${repeat.delay}")
 
 
 if __name__ == "__main__":
