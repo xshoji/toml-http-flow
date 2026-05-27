@@ -52,6 +52,207 @@ _MAIN_REPEAT_SETUP = '''    try:
 _MAIN_NO_REPEAT_SETUP = "    store['repeat'] = {}"
 
 
+# ---------------------------------------------------------------- generated-script cleanup
+
+
+def _deduplicate_imports(src: str) -> str:
+    """Collect all top-level import statements, deduplicate, sort, and move to the top."""
+    import_re = re.compile(r'^(?:import\s+\S+|from\s+\S+\s+import\s+\S.*)$')
+    imports: list[str] = []
+    others: list[str] = []
+    for line in src.splitlines(keepends=True):
+        if import_re.match(line.strip()):
+            imports.append(line.strip())
+        else:
+            others.append(line)
+
+    unique: set[str] = set()
+    for line in imports:
+        if line.startswith('from '):
+            m = re.match(r'from\s+([\w.]+)\s+import\s+(.+)', line)
+            if m:
+                mod = m.group(1)
+                for name in (x.strip() for x in m.group(2).split(',')):
+                    if name:
+                        unique.add(f"from {mod} import {name}")
+                continue
+        unique.add(line)
+
+    header = ''.join(f"{line}\n" for line in sorted(unique))
+    return header + '\n' + ''.join(others)
+
+
+def _remove_docstrings(src: str) -> str:
+    """Remove docstrings that appear immediately after a def/class definition."""
+    lines = src.splitlines(keepends=True)
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        result.append(line)
+        if re.match(r'^(class|def)\s', line):
+            # Skip blank lines after def/class
+            blanks: list[str] = []
+            while i + 1 < len(lines) and lines[i + 1].strip() == '':
+                blanks.append(lines[i + 1])
+                i += 1
+            if i + 1 < len(lines) and lines[i + 1].strip().startswith('"""'):
+                doc = lines[i + 1].strip()
+                if doc.endswith('"""') and len(doc) >= 6:
+                    i += 1
+                else:
+                    i += 1
+                    while i + 1 < len(lines) and '"""' not in lines[i + 1]:
+                        i += 1
+                    i += 1
+            else:
+                result.extend(blanks)
+        i += 1
+    return ''.join(result)
+
+
+def _flatten_mask_defaults(src: str) -> str:
+    """Collapse _MASK_DEFAULTS frozenset literal to a single line."""
+    pattern = re.compile(r'(_MASK_DEFAULTS\s*=\s*frozenset\()\s*\{\s*(.*?)\s*\}\s*(\))', re.DOTALL)
+
+    def repl(m: re.Match) -> str:
+        inner = re.sub(r'\s+', ' ', m.group(2)).strip()
+        return m.group(1) + '{' + inner + '}' + m.group(3)
+
+    return pattern.sub(repl, src)
+
+
+def _flatten_def_signatures(src: str) -> str:
+    """Collapse multi-line function signatures into a single line."""
+    lines = src.splitlines(keepends=True)
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r'^def\s+\w+\s*\(', line) and not line.rstrip().endswith(':'):
+            sig_parts = [line]
+            i += 1
+            while i < len(lines):
+                sig_parts.append(lines[i])
+                stripped = lines[i].strip()
+                # End of signature is the first line ending with ':'
+                if stripped.endswith(':'):
+                    break
+                i += 1
+            sig = ''.join(sig_parts)
+            sig = re.sub(r'\n\s*', ' ', sig)
+            sig = re.sub(r'\s+', ' ', sig).strip()
+            result.append(sig + '\n')
+            i += 1
+        else:
+            result.append(line)
+            i += 1
+    return ''.join(result)
+
+
+def _fix_empty_bodies(src: str) -> str:
+    """Insert `pass` into class/function bodies that became empty after docstring removal."""
+    lines = src.splitlines(keepends=True)
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r'^(class|def)\s', line):
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == '':
+                j += 1
+            if j < len(lines) and not re.match(r'^\s', lines[j]):
+                result.append(line)
+                result.append('    pass\n')
+                i += 1
+                continue
+        result.append(line)
+        i += 1
+    return ''.join(result)
+
+
+def _cleanup_generated(src: str) -> str:
+    """Apply formatting passes to make the generated script compact."""
+    src = _deduplicate_imports(src)
+    src = _remove_docstrings(src)
+    src = _fix_empty_bodies(src)
+    src = _flatten_mask_defaults(src)
+    src = _flatten_def_signatures(src)
+    return src
+
+
+def _strip_module_docstring(src: str) -> str:
+    """Remove module-level docstring from the start of a source string."""
+    lines = src.splitlines(keepends=True)
+    result: list[str] = []
+    in_docstring = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            result.append(line)
+            continue
+        if not in_docstring:
+            if stripped.startswith('"""'):
+                if stripped.endswith('"""') and len(stripped) >= 6:
+                    continue
+                in_docstring = True
+                continue
+        else:
+            if '"""' in stripped:
+                in_docstring = False
+            continue
+        result.append(line)
+    return ''.join(result)
+
+
+def _strip_runtime_docstrings(src: str) -> str:
+    """Remove module-level and function/class-level docstrings from runtime source."""
+    lines = src.splitlines(keepends=True)
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Module-level docstring at the very beginning (before anything else)
+        if not result:
+            if not stripped:
+                i += 1
+                continue
+            if stripped.startswith('"""'):
+                if stripped.endswith('"""') and len(stripped) >= 6:
+                    i += 1
+                    continue
+                i += 1
+                while i < len(lines) and '"""' not in lines[i]:
+                    i += 1
+                i += 1
+                continue
+
+        result.append(line)
+        i += 1
+
+        # After a def/class line, skip blank lines and discard a following docstring
+        if re.match(r'^(class|def)\s', line):
+            blanks: list[str] = []
+            while i < len(lines) and lines[i].strip() == '':
+                blanks.append(lines[i])
+                i += 1
+            if i < len(lines) and lines[i].strip().startswith('"""'):
+                doc = lines[i].strip()
+                if doc.endswith('"""') and len(doc) >= 6:
+                    i += 1
+                else:
+                    i += 1
+                    while i < len(lines) and '"""' not in lines[i]:
+                        i += 1
+                    i += 1
+            else:
+                result.extend(blanks)
+
+    return ''.join(result)
+
+
 # ---------------------------------------------------------------- runtime flattening
 
 
@@ -75,7 +276,7 @@ def _resolve_runtime_modules(features: set[str]) -> list[str]:
 
 
 def _flatten_modules(features: set[str]) -> str:
-    """Read selected runtime modules, strip package-only lines, and concatenate."""
+    """Read selected runtime modules, strip package-only lines and docstrings, and concatenate."""
     modules = _resolve_runtime_modules(features)
     chunks: list[str] = []
     for name in modules:
@@ -88,8 +289,9 @@ def _flatten_modules(features: set[str]) -> str:
             if line.strip().startswith("from ."):
                 continue
             lines.append(line)
-        chunks.append("\n".join(lines))
-    return "\n\n".join(chunks)
+        cleaned = _strip_runtime_docstrings("\n".join(lines))
+        chunks.append(cleaned)
+    return _fix_empty_bodies("\n\n".join(chunks))
 
 
 # ---------------------------------------------------------------- literal helpers
@@ -415,6 +617,8 @@ def generate(
         .replace("{{STEP_FUNCTIONS}}", step_functions_src)
         .replace("{{STEP_CALLS}}", step_calls_src)
     )
+
+    rendered = _cleanup_generated(rendered)
 
     if shebang:
         rendered = "#!/usr/bin/env python3\n" + rendered
