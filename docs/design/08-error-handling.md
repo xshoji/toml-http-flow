@@ -5,7 +5,7 @@
 | TOML パースエラー | `tomllib.TOMLDecodeError` を捕捉し、ファイル名と行番号を表示        |
 | バリデーション   | `ValueError` を送出（`body` と `body_form` 同時指定など）           |
 | 未定義変数参照   | `KeyError` を `TemplateError` に変換し、参照キーと位置を表示        |
-| HTTPエラー       | `urllib.error.HTTPError` を捕捉し、ステータス＋本文を表示して終了   |
+| HTTP 4xx/5xx      | エラー扱いせず、ステータス・ヘッダー・本文を通常レスポンスとして処理 |
 | JSONデコード失敗 | `capture` 指定があれば失敗、なければ警告のみで継続                  |
 
 異常終了時は非ゼロの終了コードを返す（例: `sys.exit(1)`）。

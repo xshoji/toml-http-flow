@@ -324,7 +324,7 @@ Supported operators in `condition`:
 | `in`     | `${code} in [200, 201, 204]`         | Included in a comma-separated list |
 
 - Both operands are evaluated as strings after template expansion.
-- HTTP errors (4xx/5xx) during polling fail immediately without retry.
+- HTTP 4xx/5xx responses are treated like normal responses during polling; capture and `until` evaluation still run. Transport errors still fail.
 
 ## Template notation
 

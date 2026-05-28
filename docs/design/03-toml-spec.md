@@ -237,7 +237,7 @@ until = [
 4. 真なら次のステップへ。偽なら `interval` 秒待ってから 1. に戻る
 5. `max_attempts` を超えても真にならなければ `RuntimeError` で失敗
 
-- HTTP エラー（4xx/5xx）が発生した場合は **即失敗** とする（リトライしない）。
+- HTTP 4xx/5xx は特別扱いせず、通常レスポンスと同じくステータス・ヘッダー・本文を処理して `until` 判定へ進む。
 - 各試行ごとに通常の request/response ログを出力し、最後に
   `* until satisfied on attempt N` または
   `* until not satisfied (attempt N/M), retrying in Xs` を出力する。
