@@ -17,6 +17,7 @@ from .mask import mask, mask_url, mask_value
 
 # Matches dotted or indexed path segments (e.g. data.items[0].id)
 PATH_TOKEN = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
+LOG_INDENT = ""
 
 
 def extract(body: Any, path: str) -> Any:
@@ -82,9 +83,9 @@ def _pretty(text: str, enabled: bool) -> str:
 
 def _print_lines(prefix: str, text: str, *, out=sys.stdout) -> None:
     """Print ``text`` line-by-line with ``prefix`` (e.g. '    > ' or '    < ')."""
-    print(f"    {prefix}", file=out)
+    print(f"{LOG_INDENT}{prefix}", file=out)
     for line in text.splitlines() or [""]:
-        print(f"    {prefix} {line}", file=out)
+        print(f"{LOG_INDENT}{prefix} {line}", file=out)
 
 
 def _log_request(
@@ -103,30 +104,30 @@ def _log_request(
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
-    print(f"    > {method.upper()} {path} HTTP/1.1", file=out)
-    print(f"    > Host: {parsed.netloc}", file=out)
+    print(f"{LOG_INDENT}> {method.upper()} {path} HTTP/1.1", file=out)
+    print(f"{LOG_INDENT}> Host: {parsed.netloc}", file=out)
     for k, v in headers.items():
-        print(f"    > {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
+        print(f"{LOG_INDENT}> {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
     lower = {h.lower() for h in headers}
     if body_bytes is not None:
-        print(f"    > Content-Length: {len(body_bytes)}", file=out)
+        print(f"{LOG_INDENT}> Content-Length: {len(body_bytes)}", file=out)
     if "user-agent" not in lower:
         print(
-            f"    > User-Agent: Python-urllib/{sys.version_info.major}.{sys.version_info.minor}",
+            f"{LOG_INDENT}> User-Agent: Python-urllib/{sys.version_info.major}.{sys.version_info.minor}",
             file=out,
         )
     if "accept-encoding" not in lower:
-        print("    > Accept-Encoding: identity", file=out)
+        print(f"{LOG_INDENT}> Accept-Encoding: identity", file=out)
     if body_form is not None:
-        print("    > (form)", file=out)
+        print(f"{LOG_INDENT}> (form)", file=out)
         for k, v in body_form.items():
-            print(f"    >   {k} = {mask_value(k, v, disabled=no_mask)}", file=out)
+            print(f"{LOG_INDENT}>   {k} = {mask_value(k, v, disabled=no_mask)}", file=out)
     elif body_bytes is not None:
         try:
             body_text = body_bytes.decode("utf-8", errors="replace")
             _print_lines(">", _pretty(mask(body_text, disabled=no_mask), pretty_json), out=out)
         except UnicodeDecodeError:
-            print(f"    > <{len(body_bytes)} bytes>", file=out)
+            print(f"{LOG_INDENT}> <{len(body_bytes)} bytes>", file=out)
 
 
 def _log_response(
@@ -140,9 +141,9 @@ def _log_response(
     out=sys.stdout,
 ) -> None:
     """Print the HTTP status line and response headers/body."""
-    print(f"    < HTTP/1.1 {status} {reason}", file=out)
+    print(f"{LOG_INDENT}< HTTP/1.1 {status} {reason}", file=out)
     for k, v in resp_headers.items():
-        print(f"    < {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
+        print(f"{LOG_INDENT}< {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
     if text:
         _print_lines("<", _pretty(mask(text, disabled=no_mask), pretty_json), out=out)
 
@@ -179,9 +180,9 @@ def run_step(
         print(f"==> {_now()} [{name}] SLEEP {url}", file=out)
         if description:
             for line in description.splitlines() or [""]:
-                print(f"    # {line}", file=out)
+                print(f"{LOG_INDENT}# {line}", file=out)
         if not quiet:
-            print(f"    > sleep {seconds} seconds", file=out)
+            print(f"{LOG_INDENT}> sleep {seconds} seconds", file=out)
         time.sleep(seconds)
         print(f"<== {_now()} [{name}] done", file=out)
         return
@@ -200,7 +201,7 @@ def run_step(
     print(f"==> {_now()} [{name}] {method.upper()} {mask_url(url, disabled=no_mask)}", file=out)
     if description:
         for line in description.splitlines() or [""]:
-            print(f"    # {line}", file=out)
+            print(f"{LOG_INDENT}# {line}", file=out)
     if not quiet:
         _log_request(method, url, headers, body_bytes, body_form, pretty_json, no_mask=no_mask, out=out)
 
@@ -217,4 +218,4 @@ def run_step(
             store["vars"][var] = captured
             if not quiet:
                 shown = mask_value(var, captured, disabled=no_mask)
-                print(f"    * capture {var} = {shown!r}", file=out)
+                print(f"{LOG_INDENT}* capture {var} = {shown!r}", file=out)
