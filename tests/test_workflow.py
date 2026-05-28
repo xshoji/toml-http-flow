@@ -149,6 +149,32 @@ class TestWorkflow(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn("    < HTTP/1.1 200 OK", output)
 
+    def test_http_error_response_continues_and_can_be_captured(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="missing",
+                    method="GET",
+                    url=f"{base}/missing",
+                    capture={"message": "error"},
+                ),
+                RequestConfig(
+                    name="getUser",
+                    method="GET",
+                    url=f"{base}/me",
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        store = run(cfg, out=buf)
+        output = buf.getvalue()
+        self.assertEqual(store["vars"]["message"], "not found")
+        self.assertIn("<== ", output)
+        self.assertIn("[missing] status=404", output)
+        self.assertIn('"error": "not found"', output)
+        self.assertIn("[getUser] status=200", output)
+
 
 if __name__ == "__main__":
     unittest.main()

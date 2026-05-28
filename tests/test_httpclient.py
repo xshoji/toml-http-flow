@@ -21,7 +21,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         _Handler.received.append(("GET", self.path, dict(self.headers), b""))
-        self._send_json(200, {"ok": True, "path": self.path})
+        if self.path == "/missing":
+            self._send_json(404, {"error": "not found"})
+        else:
+            self._send_json(200, {"ok": True, "path": self.path})
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -63,6 +66,14 @@ class TestHTTPClient(unittest.TestCase):
         resp = execute(req)
         self.assertEqual(resp.status, 200)
         self.assertEqual(resp.body_json, {"ok": True, "path": "/x"})
+
+    def test_http_error_response_is_returned(self):
+        req = RequestConfig(name="g", method="GET", url=self._url("/missing"))
+        resp = execute(req)
+        self.assertEqual(resp.status, 404)
+        self.assertEqual(resp.reason, "Not Found")
+        self.assertEqual(resp.body_json, {"error": "not found"})
+        self.assertIn('"error": "not found"', resp.body_text)
 
     def test_post_json_body(self):
         req = RequestConfig(

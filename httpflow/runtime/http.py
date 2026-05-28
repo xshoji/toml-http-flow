@@ -50,10 +50,12 @@ def do_request(
             status, reason = resp.status, resp.reason
             resp_headers = dict(resp.headers.items())
     except urllib.error.HTTPError as e:
-        body = e.read() if e.fp is not None else b""
-        raise RuntimeError(
-            f"HTTP {e.code} from {method} {url}: {body.decode('utf-8', errors='replace')}"
-        ) from e
+        try:
+            raw = e.read() if e.fp is not None else b""
+            status, reason = e.code, e.reason
+            resp_headers = dict(e.headers.items()) if e.headers is not None else {}
+        finally:
+            e.close()
     text = raw.decode("utf-8", errors="replace")
     try:
         body_json = json.loads(text) if text else None

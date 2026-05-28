@@ -39,6 +39,28 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
 
+class _HttpErrorThenOkHandler(BaseHTTPRequestHandler):
+    count = 0
+
+    def _send(self, code, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        _HttpErrorThenOkHandler.count += 1
+        if _HttpErrorThenOkHandler.count == 1:
+            self._send(404, {"data": {"status": "Pending"}})
+        else:
+            self._send(200, {"data": {"status": "Active"}})
+
+    def log_message(self, format, *args):
+        return
+
+
 class TestGenerator(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -123,6 +145,47 @@ class TestGenerator(unittest.TestCase):
             stdout2 = res2.stdout
             self.assertIn("* capture token = 'gen-tok'", stdout2)
             self.assertIn("    > Authorization: Bearer gen-tok", stdout2)
+
+    def test_generated_script_treats_http_error_response_as_normal(self):
+        srv = HTTPServer(("127.0.0.1", 0), _HttpErrorThenOkHandler)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        _HttpErrorThenOkHandler.count = 0
+        try:
+            toml_text = textwrap.dedent(f"""
+                [[requests]]
+                name = "poll"
+                method = "GET"
+                url = "http://127.0.0.1:{port}/status"
+                capture = ["status = data.status"]
+                until = [
+                    "condition = ${{status}} == Active",
+                    "interval = 0",
+                    "max_attempts = 2",
+                ]
+            """).encode("utf-8")
+
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                toml_path = tmp_path / "workflow.toml"
+                toml_path.write_bytes(toml_text)
+                wf = cfg_mod.load(str(toml_path))
+                script_path = tmp_path / "workflow.py"
+                script_path.write_text(generator.generate(wf), encoding="utf-8")
+
+                res = subprocess.run(
+                    [sys.executable, str(script_path)],
+                    capture_output=True, text=True, timeout=10,
+                )
+
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            self.assertIn("[poll] status=404", res.stdout)
+            self.assertIn("[poll] status=200", res.stdout)
+            self.assertIn("* until satisfied on attempt 2", res.stdout)
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
     def test_generated_random_uuid(self):
         toml_text = textwrap.dedent("""
