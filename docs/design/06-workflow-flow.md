@@ -9,6 +9,10 @@
    ```python
    store = {"vars": {...}, "repeat": {}}
    ```
+6. `${var.<name>}` 参照の検出と `-v/--var` の検証:
+   1. `WorkflowSpec` 中の明示的な `${var.X}` を全て列挙
+   2. 必要な name が `store["vars"]` に揃っているか確認（不足はエラー）
+   3. この検証は最初の step 実行前に行い、不足時は HTTP リクエストを送らない
 6. `${repeat.<name>}` 参照の検出と `--repeat-vars` の検証:
    1. `WorkflowSpec` 中の `${repeat.X}` を全て列挙
    2. 必要な name が `--repeat-vars` で揃っているか確認（不足はエラー）

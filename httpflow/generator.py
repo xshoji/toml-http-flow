@@ -16,7 +16,6 @@ from pathlib import Path
 from . import __version__
 from .config import WorkflowConfig
 from .model import HttpStep, SleepStep, Step, WorkflowSpec, from_config
-from .template import PATTERN
 
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
@@ -299,38 +298,8 @@ def _flatten_modules(features: set[str]) -> str:
 
 def _collect_required_var_names(spec: WorkflowSpec, default_vars: dict[str, str]) -> list[str]:
     """Return ``${var.<name>}`` names not embedded in ``DEFAULT_VARS``."""
-    found: set[str] = set()
-
-    def scan(text: str | None) -> None:
-        if not text:
-            return
-        for match in PATTERN.finditer(text):
-            path = match.group(1)
-            if not path:
-                continue
-            parts = path.split(".")
-            if len(parts) == 2 and parts[0] == "var":
-                found.add(parts[1])
-
-    for step in spec.steps:
-        if isinstance(step, SleepStep):
-            scan(step.seconds)
-            continue
-        if isinstance(step, HttpStep):
-            scan(step.url)
-            for k, v in step.headers.items():
-                scan(k)
-                scan(v)
-            if step.body is not None:
-                if hasattr(step.body, "text"):
-                    scan(step.body.text)
-                elif hasattr(step.body, "fields"):
-                    for k, v in step.body.fields.items():
-                        scan(k)
-                        scan(v)
-            if step.until is not None:
-                scan(step.until.condition)
-    return sorted(found - set(default_vars))
+    from .runner import collect_var_names
+    return sorted(collect_var_names(spec) - set(default_vars))
 
 
 def _str_literal(s: str) -> str:

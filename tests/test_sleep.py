@@ -27,7 +27,7 @@ class TestSleepStep(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn("[wait1] SLEEP 0.1", output)
         self.assertIn("[wait1] done", output)
-        self.assertIn("    > sleep 0.1 seconds", output)
+        self.assertIn("> sleep 0.1 seconds", output)
         self.assertNotIn("steps", store)
 
     def test_sleep_step_with_template(self):

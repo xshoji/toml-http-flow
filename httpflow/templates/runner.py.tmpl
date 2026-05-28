@@ -61,6 +61,14 @@ def _default_repeat_vars_help():
     return "\n".join(lines)
 
 
+def validate_required_vars(store):
+    """Return an error message if required -v parameters are missing."""
+    missing = [k for k in REQUIRED_VARS if k not in store["vars"]]
+    if missing:
+        return f"missing required -v/--var for: {missing}"
+    return None
+
+
 def main():
     p = argparse.ArgumentParser(
         description="Generated API workflow runner",
@@ -84,6 +92,11 @@ def main():
             return 1
         k, _, v = kv.partition("=")
         store["vars"][k.strip()] = v
+
+    error = validate_required_vars(store)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 {{MAIN_REPEAT_SETUP}}
 {{STEP_CALLS}}

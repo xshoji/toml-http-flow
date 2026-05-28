@@ -96,6 +96,7 @@ runner.py.tmpl
    - `{{REPEAT_HELPERS}}`: `${repeat.*}` 参照時のみヘルパ群（未使用時は省略）
    - `{{ARGPARSE_REPEAT}}`: `--repeat-vars` 引数の定義（未使用時は空文字）
    - `{{MAIN_REPEAT_SETUP}}`: repeat 使用時の反復処理、未使用時は `store['repeat'] = {}`
+   - 生成スクリプトの `main()` は `-v` を `store["vars"]` に反映した直後、step 呼び出し前に `REQUIRED_VARS` の不足を検証する
 6. 出力先（`-o` または stdout）に書き出す
 7. `--shebang` 指定時は先頭に `#!/usr/bin/env python3` を付け、`chmod +x` 相当を実施
 

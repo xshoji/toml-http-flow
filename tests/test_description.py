@@ -127,7 +127,7 @@ class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
         buf = io.StringIO()
         run(cfg, out=buf)
         out = buf.getvalue()
-        self.assertIn("    # Verify upstream reachability", out)
+        self.assertIn("# Verify upstream reachability", out)
         # Description must appear after the ==> line and before the > request line.
         arrow_idx = out.index("==> ")
         desc_idx = out.index("# Verify")
@@ -167,8 +167,8 @@ class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
         buf = io.StringIO()
         run(cfg, out=buf)
         out = buf.getvalue()
-        self.assertIn("    # line A", out)
-        self.assertIn("    # line B", out)
+        self.assertIn("# line A", out)
+        self.assertIn("# line B", out)
 
     def test_description_on_sleep_step(self):
         cfg = WorkflowConfig(

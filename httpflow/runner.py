@@ -10,7 +10,7 @@ from .model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
 from .runtime.http import run_step
 from .runtime.repeat import build_repeat_iterations
 from .runtime.until import poll_until
-from .template import find_repeat_names
+from .template import find_repeat_names, find_var_names
 
 
 def collect_repeat_names(spec: WorkflowSpec | WorkflowConfig) -> set[str]:
@@ -39,6 +39,42 @@ def collect_repeat_names(spec: WorkflowSpec | WorkflowConfig) -> set[str]:
     return found
 
 
+def collect_var_names(spec: WorkflowSpec | WorkflowConfig) -> set[str]:
+    """Return every explicit ``${var.<name>}`` referenced anywhere in ``spec``."""
+    if isinstance(spec, WorkflowConfig):
+        spec = to_model(spec)
+    found: set[str] = set()
+    for step in spec.steps:
+        if isinstance(step, SleepStep):
+            found.update(find_var_names(step.seconds))
+            continue
+        if isinstance(step, HttpStep):
+            found.update(find_var_names(step.url))
+            for k, v in step.headers.items():
+                found.update(find_var_names(k))
+                found.update(find_var_names(v))
+            if step.body is not None:
+                if isinstance(step.body, TextBody):
+                    found.update(find_var_names(step.body.text))
+                elif isinstance(step.body, FormBody):
+                    for k, v in step.body.fields.items():
+                        found.update(find_var_names(k))
+                        found.update(find_var_names(v))
+            if step.until is not None:
+                found.update(find_var_names(step.until.condition))
+    return found
+
+
+def validate_required_vars(
+    spec: WorkflowSpec | WorkflowConfig,
+    vars_: dict[str, str] | None,
+) -> None:
+    """Raise ValueError if required ``${var.*}`` parameters are missing."""
+    missing = collect_var_names(spec) - set(vars_ or {})
+    if missing:
+        raise ValueError(f"missing required -v/--var for: {sorted(missing)}")
+
+
 def run(
     spec: WorkflowSpec | WorkflowConfig,
     vars_: dict[str, str] | None = None,
@@ -60,6 +96,7 @@ def run(
         "vars": dict(vars_ or {}),
         "repeat": {},
     }
+    validate_required_vars(spec, store["vars"])
 
     total = len(iterations)
     for idx, repeat_iter in enumerate(iterations, start=1):

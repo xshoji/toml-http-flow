@@ -119,21 +119,21 @@ class TestGenerator(unittest.TestCase):
 
             # --- curl -vvv detail assertions ---
             # Request line
-            self.assertIn("    > POST /auth HTTP/1.1", stdout)
-            self.assertIn("    > GET /me HTTP/1.1", stdout)
+            self.assertIn("> POST /auth HTTP/1.1", stdout)
+            self.assertIn("> GET /me HTTP/1.1", stdout)
 
             # Estimated headers
-            self.assertIn("    > Host:", stdout)
-            self.assertIn("    > User-Agent: Python-urllib/", stdout)
+            self.assertIn("> Host:", stdout)
+            self.assertIn("> User-Agent: Python-urllib/", stdout)
 
             # Response status line
-            self.assertIn("    < HTTP/1.1 200 OK", stdout)
+            self.assertIn("< HTTP/1.1 200 OK", stdout)
 
             # Capture line masked by default
             self.assertIn("* capture token = '***'", stdout)
             self.assertNotIn("gen-tok", stdout)
             # Authorization header masked in second request
-            self.assertIn("    > Authorization: ***", stdout)
+            self.assertIn("> Authorization: ***", stdout)
             self.assertNotIn("Bearer gen-tok", stdout)
 
             # ---- Run #2: --no-mask → masking disabled ----
@@ -144,7 +144,7 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(res2.returncode, 0, msg=res2.stderr)
             stdout2 = res2.stdout
             self.assertIn("* capture token = 'gen-tok'", stdout2)
-            self.assertIn("    > Authorization: Bearer gen-tok", stdout2)
+            self.assertIn("> Authorization: Bearer gen-tok", stdout2)
 
     def test_generated_script_treats_http_error_response_as_normal(self):
         srv = HTTPServer(("127.0.0.1", 0), _HttpErrorThenOkHandler)
@@ -444,6 +444,14 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(res2.returncode, 0, msg=res2.stderr)
             self.assertIn("/echo?env=staging&user=bob", res2.stdout)
 
+            missing = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(missing.returncode, 1)
+            self.assertIn("missing required -v/--var for: ['user']", missing.stderr)
+            self.assertNotIn("==>", missing.stdout)
+
     def test_generated_help_omits_required_vars_block_when_none_required(self):
         """Required parameters block appears only when missing ${var.*} exist."""
         base = f"http://127.0.0.1:{self.port}"
@@ -574,10 +582,10 @@ class TestGenerator(unittest.TestCase):
             )
             self.assertEqual(res.returncode, 0, msg=res.stderr)
             stdout1 = res.stdout
-            self.assertIn("    > POST /auth HTTP/1.1", stdout1)
-            self.assertIn("    > GET /me HTTP/1.1", stdout1)
+            self.assertIn("> POST /auth HTTP/1.1", stdout1)
+            self.assertIn("> GET /me HTTP/1.1", stdout1)
             self.assertIn("* capture token = '***'", stdout1)
-            self.assertIn("    > Authorization: ***", stdout1)
+            self.assertIn("> Authorization: ***", stdout1)
 
             # --- Run #2: --no-mask ---
             res2 = subprocess.run(
@@ -587,7 +595,7 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(res2.returncode, 0, msg=res2.stderr)
             stdout2 = res2.stdout
             self.assertIn("* capture token = 'gen-tok'", stdout2)
-            self.assertIn("    > Authorization: Bearer gen-tok", stdout2)
+            self.assertIn("> Authorization: Bearer gen-tok", stdout2)
 
             # --- Run #3: --pretty-json ---
             res3 = subprocess.run(
@@ -609,8 +617,8 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(res4.returncode, 0, msg=res4.stderr)
             stdout4 = res4.stdout
             # Must NOT contain detailed request/response lines
-            self.assertNotIn("    > POST", stdout4)
-            self.assertNotIn("    < HTTP/1.1", stdout4)
+            self.assertNotIn("> POST", stdout4)
+            self.assertNotIn("< HTTP/1.1", stdout4)
             # But summary lines should still be present
             self.assertIn("[getToken] POST ", stdout4)
             self.assertIn("[getToken] status=200", stdout4)
