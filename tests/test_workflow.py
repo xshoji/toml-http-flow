@@ -164,6 +164,203 @@ class TestWorkflow(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn("< HTTP/1.1 200 OK", output)
 
+    def test_step_selection_runs_only_named_steps(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="getToken",
+                    method="POST",
+                    url=f"{base}/auth",
+                    headers={"Content-Type": "application/json"},
+                    body='{"user":"u","pass":"p"}',
+                    capture={"token": "access_token"},
+                ),
+                RequestConfig(
+                    name="getUser",
+                    method="GET",
+                    url=f"{base}/me",
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        store = run(cfg, out=buf, steps=["getUser"])
+        output = buf.getvalue()
+        self.assertIn("[getUser] status=200", output)
+        self.assertNotIn("[getToken]", output)
+        # getToken's capture must not have run.
+        self.assertNotIn("token", store["vars"])
+
+    def test_step_selection_preserves_toml_order(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="getToken",
+                    method="POST",
+                    url=f"{base}/auth",
+                    headers={"Content-Type": "application/json"},
+                    body='{"user":"u","pass":"p"}',
+                    capture={"token": "access_token"},
+                ),
+                RequestConfig(
+                    name="getUser",
+                    method="GET",
+                    url=f"{base}/me",
+                    headers={"Authorization": "Bearer ${token}"},
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        # -s order is reversed; execution must still follow TOML order.
+        run(cfg, out=buf, steps=["getUser", "getToken"])
+        output = buf.getvalue()
+        self.assertLess(output.index("[getToken]"), output.index("[getUser]"))
+
+    def test_step_selection_unknown_name_fails(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(name="getUser", method="GET", url=f"{base}/me"),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "unknown step name"):
+            run(cfg, out=io.StringIO(), steps=["nope"])
+
+    def test_step_selection_scopes_required_var_validation(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="needsVar",
+                    method="GET",
+                    url=f"{base}/me?user=${{var.user}}",
+                ),
+                RequestConfig(name="getUser", method="GET", url=f"{base}/me"),
+            ]
+        )
+        # Selecting only getUser must not require ${var.user}.
+        buf = io.StringIO()
+        run(cfg, out=buf, steps=["getUser"])
+        self.assertIn("[getUser] status=200", buf.getvalue())
+
+    def test_capture_response_header(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="getUser",
+                    method="GET",
+                    url=f"{base}/me",
+                    # case-insensitive header name lookup
+                    capture={"ct": "response.header.content-type"},
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        store = run(cfg, out=buf)
+        self.assertEqual(store["vars"]["ct"], "application/json")
+
+    def test_capture_request_header_and_url(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="getToken",
+                    method="POST",
+                    url=f"{base}/auth",
+                    headers={"Content-Type": "application/json"},
+                    body='{"user":"u","pass":"p"}',
+                    capture={"token": "access_token"},
+                ),
+                RequestConfig(
+                    name="getUser",
+                    method="GET",
+                    url=f"{base}/me",
+                    headers={"Authorization": "Bearer ${token}"},
+                    capture={
+                        "sent_auth": "request.header.Authorization",
+                        "called_url": "request.url",
+                    },
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        store = run(cfg, out=buf)
+        # The captured request header reflects the rendered (sent) value.
+        self.assertEqual(store["vars"]["sent_auth"], "Bearer tok-abc")
+        self.assertEqual(store["vars"]["called_url"], f"{base}/me")
+
+    def test_capture_request_body(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="getToken",
+                    method="POST",
+                    url=f"{base}/auth",
+                    headers={"Content-Type": "application/json"},
+                    body='{"user":"u","pass":"p"}',
+                    capture={"sent_body": "request.body"},
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        store = run(cfg, out=buf)
+        self.assertEqual(store["vars"]["sent_body"], '{"user":"u","pass":"p"}')
+
+    def test_capture_missing_response_header_fails(self):
+        base = f"http://127.0.0.1:{self.port}"
+        cfg = WorkflowConfig(
+            requests=[
+                RequestConfig(
+                    name="getUser",
+                    method="GET",
+                    url=f"{base}/me",
+                    capture={"x": "response.header.X-Does-Not-Exist"},
+                ),
+            ]
+        )
+        with self.assertRaisesRegex(KeyError, "response header not found"):
+            run(cfg, out=io.StringIO())
+
+    def test_header_capture_works_without_json_body(self):
+        """Header/request captures must not require a JSON response body."""
+        class _PlainHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = b"not json at all"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("X-Trace-Id", "abc-123")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                return
+
+        srv = HTTPServer(("127.0.0.1", 0), _PlainHandler)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            cfg = WorkflowConfig(
+                requests=[
+                    RequestConfig(
+                        name="ping",
+                        method="GET",
+                        url=f"http://127.0.0.1:{port}/x",
+                        capture={"trace": "response.header.X-Trace-Id"},
+                    ),
+                ]
+            )
+            buf = io.StringIO()
+            store = run(cfg, out=buf)
+            self.assertEqual(store["vars"]["trace"], "abc-123")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
     def test_http_error_response_continues_and_can_be_captured(self):
         base = f"http://127.0.0.1:{self.port}"
         cfg = WorkflowConfig(

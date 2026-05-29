@@ -22,6 +22,7 @@ class TestCLISmoke(unittest.TestCase):
         res = self._run(["run", "--help"])
         self.assertEqual(res.returncode, 0, msg=res.stderr)
         self.assertIn("--file", res.stdout)
+        self.assertIn("--step", res.stdout)
         self.assertIn("--quiet", res.stdout)
         self.assertIn("--pretty-json", res.stdout)
         self.assertIn("--no-mask", res.stdout)

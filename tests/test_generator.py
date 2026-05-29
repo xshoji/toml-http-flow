@@ -146,6 +146,48 @@ class TestGenerator(unittest.TestCase):
             self.assertIn("* capture token = 'gen-tok'", stdout2)
             self.assertIn("> Authorization: Bearer gen-tok", stdout2)
 
+    def test_generated_script_captures_headers_and_request_values(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml_text = textwrap.dedent(f"""
+            [[requests]]
+            name = "getToken"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '''{{"user":"u","pass":"p"}}'''
+            capture = ["token = access_token"]
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+            headers = ["Authorization: Bearer ${{token}}"]
+            capture = [
+                "ct        = response.header.Content-Type",
+                "sent_auth = request.header.Authorization",
+                "called    = request.url",
+            ]
+        """).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_bytes(toml_text)
+            wf = cfg_mod.load(str(toml_path))
+            script = generator.generate(wf)
+            compile(script, "<generated>", "exec")
+            script_path = tmp_path / "workflow.py"
+            script_path.write_text(script, encoding="utf-8")
+
+            res = subprocess.run(
+                [sys.executable, str(script_path), "--no-mask"],
+                capture_output=True, text=True, timeout=10,
+            )
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertIn("* capture ct = 'application/json'", res.stdout)
+        self.assertIn("* capture sent_auth = 'Bearer gen-tok'", res.stdout)
+        self.assertIn(f"* capture called = '{base}/me'", res.stdout)
+
     def test_generated_script_treats_http_error_response_as_normal(self):
         srv = HTTPServer(("127.0.0.1", 0), _HttpErrorThenOkHandler)
         port = srv.server_address[1]
