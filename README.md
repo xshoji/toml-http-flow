@@ -224,7 +224,7 @@ body_form = [
 | `headers`   | -        | array[string]  | `"Key: Value"` form |
 | `body`      | -        | string         | Raw text body (mutually exclusive with `body_form`) |
 | `body_form` | -        | array[string]  | `"key = value"` form; `application/x-www-form-urlencoded` is auto-added |
-| `capture`   | -        | array[string]  | `"var_name = json.path"` form |
+| `capture`   | -        | array[string]  | `"var_name = source"` form (see "Capture sources" below) |
 | `until`     | -        | array[string]  | Polling settings (see below). Repeat the request until a condition is met |
 
 ### Parse rules
@@ -262,6 +262,38 @@ capture = [
 - `[N]` selects a list index
 - A missing path stops execution with an error
 - Captured values can be referenced later as `${uid}` or `${var.uid}`
+
+### Capture sources
+
+The right-hand side of a `capture` entry defaults to a JSON path into the
+**response body** (backward compatible). A namespace prefix selects a
+different source, including response headers and request-time values that
+never appear in the response:
+
+| `source` syntax              | Captured from                                          |
+|------------------------------|-------------------------------------------------------|
+| `<json.path>` (no prefix)    | response body JSON (default)                           |
+| `response.body.<json.path>`  | response body JSON (explicit form)                    |
+| `response.header.<Name>`     | response header value (case-insensitive)              |
+| `request.header.<Name>`      | request header value sent (case-insensitive)          |
+| `request.url`                | request URL after template expansion                  |
+| `request.body`               | request body as sent (urlencoded for `body_form`)     |
+
+```toml
+capture = [
+    "token     = access_token",                  # response body (default)
+    "location  = response.header.Location",      # response header
+    "sent_auth = request.header.Authorization",  # request header
+    "called    = request.url",                   # request URL
+    "sent_body = request.body",                  # request body
+]
+```
+
+- Header lookups are case-insensitive; a missing header stops execution with an error.
+- `request.header.*` only sees headers you set in `headers` (plus the auto-added
+  `Content-Type` for `body_form`), not transport headers added by `urllib`
+  (`Host`, `User-Agent`, `Content-Length`, `Accept-Encoding`).
+- Only response-body captures require a JSON response; header/request captures do not.
 
 ### SLEEP special step
 

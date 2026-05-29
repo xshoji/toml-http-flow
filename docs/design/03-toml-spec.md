@@ -62,7 +62,7 @@ body_form = [
 | headers      | -    | array[string]  | `"Key: Value"` 形式の文字列リスト                                    |
 | body         | -    | string         | 生テキストボディ（複数行リテラル `'''...'''` 推奨。`body_form`と排他）|
 | body_form    | -    | array[string]  | `"key = value"` 形式の文字列リスト（`body`と排他）                   |
-| capture      | -    | array[string]  | `"var_name = json.path"` 形式の文字列リスト                          |
+| capture      | -    | array[string]  | `"var_name = source"` 形式の文字列リスト（`source` の記法は §4.5）   |
 | until        | -    | array[string]  | ポーリング設定（§4.5）。条件を満たすまでリクエストを繰り返す         |
 
 ## 4.4 パース規則
@@ -93,11 +93,31 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
 
 ## 4.5 capture の意味とパス記法
 
-`capture` の各要素は `"<変数名> = <JSONパス>"` 形式で、
-**レスポンスJSONの「JSONパス」位置にある値を、「変数名」として変数ストアに保存する** という指示。
+`capture` の各要素は `"<変数名> = <source>"` 形式で、
+**`<source>` が指す値を、「変数名」として変数ストアに保存する** という指示。
 
 保存先はトップレベル変数 `<変数名>` のみで、後続ステップから `${<変数名>}` で参照できる。
 変数名が重複した場合は、後から capture した値で上書きする。
+
+`<source>` は名前空間プレフィックスで保存元を切り替える。プレフィックスが無い場合は
+**従来通りレスポンスボディのJSONパス**として解釈する（後方互換）。
+
+| `<source>` の記法            | 保存元                                            | 例                                       |
+|------------------------------|---------------------------------------------------|------------------------------------------|
+| `<json.path>`（プレフィックス無し） | レスポンスボディのJSON（§4.5.1〜4.5.4）          | `token = access_token`                    |
+| `response.body.<json.path>`  | 同上（明示形）                                     | `token = response.body.access_token`     |
+| `response.header.<Name>`     | レスポンスヘッダー値（大文字小文字を無視）        | `loc = response.header.Location`         |
+| `request.header.<Name>`      | リクエストヘッダー値（送信した実値、大小無視）    | `sent_auth = request.header.Authorization` |
+| `request.url`                | テンプレート展開後のリクエストURL                 | `called_url = request.url`               |
+| `request.body`              | 送信したリクエストボディ（form は urlencode 済み）| `sent_body = request.body`               |
+
+- `response.header.*` / `request.header.*` のヘッダー名は大文字小文字を区別しない。
+  該当ヘッダーが存在しない場合はエラーで停止する。
+- `request.header.*` は TOML の `headers` で明示指定したヘッダー（form 指定時に
+  自動付与される `Content-Type` を含む）のみが対象。`urllib` が自動付与する
+  `Host` / `User-Agent` / `Content-Length` / `Accept-Encoding` は対象外。
+- `request.url` / `request.body` / `request.header.*` は**レスポンスに現れない値**を
+  保存する用途に使う（リクエスト時に確定する値のキャプチャー）。
 
 ### 4.5.1 トップレベルフィールドの抽出
 
@@ -186,8 +206,11 @@ def extract(body: Any, path: str) -> Any:
 
 ### 4.5.5 抽出失敗時の挙動
 
-- 指定パスが存在しない → エラーで停止（後続ステップは実行しない）
-- レスポンスがJSONとしてパース不能だが `capture` が指定されている → エラー
+- 指定パスが存在しない / ヘッダーが存在しない → エラーで停止（後続ステップは実行しない）
+- レスポンスボディ系の `capture`（プレフィックス無し / `response.body.*`）が指定されているが
+  レスポンスがJSONとしてパース不能 → エラー
+- ヘッダー系・リクエスト系の `capture`（`response.header.*` / `request.*`）のみの場合は、
+  レスポンスがJSONでなくてもエラーにならない
 - `capture` 指定なしでJSONパース失敗 → 警告ログのみで継続
 
 ## 4.6 TOML特有の注意点

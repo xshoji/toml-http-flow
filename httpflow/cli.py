@@ -49,6 +49,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("-f", "--file", required=True, help="workflow TOML file")
     p_run.add_argument("-v", "--var", action="append", default=[],
                        help="key=value variable injection (repeatable)")
+    p_run.add_argument("-s", "--step", action="append", default=[], metavar="NAME",
+                       help="run only the named step(s) (repeatable); "
+                            "steps run in TOML order regardless of -s order")
     p_run.add_argument("-q", "--quiet", action="store_true",
                        help="suppress per-step request/response detail output "
                             "(detail is ON by default)")
@@ -102,7 +105,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         repeat_vars = _parse_repeat_vars(args.repeat_vars)
         try:
             runner.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json,
-                       no_mask=args.no_mask, repeat_vars=repeat_vars)
+                       no_mask=args.no_mask, repeat_vars=repeat_vars,
+                       steps=args.step or None)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1

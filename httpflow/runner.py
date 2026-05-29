@@ -75,6 +75,18 @@ def validate_required_vars(
         raise ValueError(f"missing required -v/--var for: {sorted(missing)}")
 
 
+def select_steps(spec: WorkflowSpec, names: list[str]) -> WorkflowSpec:
+    """Return a new spec keeping only the named steps, in TOML order."""
+    available = [step.name for step in spec.steps]
+    missing = [n for n in names if n not in available]
+    if missing:
+        raise ValueError(
+            f"unknown step name(s): {missing} (available: {available})"
+        )
+    wanted = set(names)
+    return WorkflowSpec(steps=[s for s in spec.steps if s.name in wanted])
+
+
 def run(
     spec: WorkflowSpec | WorkflowConfig,
     vars_: dict[str, str] | None = None,
@@ -83,11 +95,19 @@ def run(
     pretty_json: bool = False,
     no_mask: bool = False,
     repeat_vars: dict[str, list[str]] | None = None,
+    steps: list[str] | None = None,
     out=sys.stdout,
 ) -> dict[str, Any]:
-    """Run every step in ``spec`` and return the final variable store."""
+    """Run every step in ``spec`` and return the final variable store.
+
+    When ``steps`` is given, only the named steps are executed (in TOML
+    order); validation of required vars and repeat names then applies to
+    that subset only.
+    """
     if isinstance(spec, WorkflowConfig):
         spec = to_model(spec)
+    if steps:
+        spec = select_steps(spec, steps)
 
     required_repeat = collect_repeat_names(spec)
     iterations = build_repeat_iterations(repeat_vars, required_repeat)
