@@ -36,6 +36,55 @@ def extract(body: Any, path: str) -> Any:
     return cur
 
 
+# Capture-source namespaces (see design §4.5). A capture entry's right-hand
+# side defaults to a response-body JSON path; these prefixes select other
+# sources such as response headers or request-time values.
+_CAP_RESP_HEADER = "response.header."
+_CAP_REQ_HEADER = "request.header."
+_CAP_RESP_BODY = "response.body."
+
+
+def _header_value(headers: dict[str, str], name: str, step_name: str, side: str) -> str:
+    """Look up a header value case-insensitively, raising KeyError if absent."""
+    target = name.lower()
+    for key, value in headers.items():
+        if key.lower() == target:
+            return value
+    raise KeyError(f"step {step_name!r}: {side} header not found: {name!r}")
+
+
+def resolve_capture(
+    source: str,
+    *,
+    step_name: str,
+    body_json: Any | None,
+    resp_headers: dict[str, str],
+    req_url: str,
+    req_headers: dict[str, str],
+    req_body: str,
+) -> Any:
+    """Resolve a capture source expression into a value.
+
+    With no namespace the source is a JSON path into the response body
+    (backward compatible). Namespaced sources read response headers or
+    request-time values that never appear in the response.
+    """
+    if source.startswith(_CAP_RESP_HEADER):
+        return _header_value(resp_headers, source[len(_CAP_RESP_HEADER):], step_name, "response")
+    if source.startswith(_CAP_REQ_HEADER):
+        return _header_value(req_headers, source[len(_CAP_REQ_HEADER):], step_name, "request")
+    if source == "request.url":
+        return req_url
+    if source == "request.body":
+        return req_body
+    path = source[len(_CAP_RESP_BODY):] if source.startswith(_CAP_RESP_BODY) else source
+    if body_json is None:
+        raise RuntimeError(
+            f"step {step_name!r}: capture {source!r} requires a JSON response body"
+        )
+    return extract(body_json, path)
+
+
 def do_request(
     method: str,
     url: str,
@@ -211,10 +260,17 @@ def run_step(
         _log_response(status, reason, resp_headers, text, pretty_json, no_mask=no_mask, out=out)
 
     if capture:
-        if body_json is None:
-            raise RuntimeError(f"step {name!r}: capture requested but response is not JSON")
-        for var, path in capture.items():
-            captured = extract(body_json, path)
+        req_body_text = body_bytes.decode("utf-8", errors="replace") if body_bytes is not None else ""
+        for var, source in capture.items():
+            captured = resolve_capture(
+                source,
+                step_name=name,
+                body_json=body_json,
+                resp_headers=resp_headers,
+                req_url=url,
+                req_headers=headers,
+                req_body=req_body_text,
+            )
             store["vars"][var] = captured
             if not quiet:
                 shown = mask_value(var, captured, disabled=no_mask)
