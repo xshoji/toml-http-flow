@@ -9,42 +9,6 @@ from typing import Any
 from .model import FormBody, HttpStep, SleepStep, TextBody, UntilSpec, WorkflowSpec
 
 
-# ------------------------------------------------------------------ Legacy dataclasses (backward compatible)
-
-@dataclass
-class UntilConfig:
-    """Polling configuration for a single request (see design §4.8)."""
-
-    condition: str
-    interval: float = 1.0
-    max_attempts: int = 10
-
-
-@dataclass
-class RequestConfig:
-    """Legacy intermediate representation.  Kept for test compatibility."""
-
-    name: str
-    method: str
-    url: str
-    description: str | None = None
-    headers: dict[str, str] = field(default_factory=dict)
-    body: str | None = None
-    body_form: dict[str, str] | None = None
-    capture: dict[str, str] = field(default_factory=dict)
-    until: UntilConfig | None = None
-
-
-@dataclass
-class WorkflowConfig:
-    """Legacy intermediate representation.  Kept for test compatibility."""
-
-    requests: list[RequestConfig]
-
-
-# ------------------------------------------------------------------ internal parsing helpers
-
-
 SPECIAL_METHODS = {"SLEEP"}
 _UNTIL_KEYS = {"condition", "interval", "max_attempts"}
 
@@ -71,6 +35,7 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
 
 
 # ------------------------------------------------------------------ internal intermediate
+
 
 @dataclass
 class _IntermediateRequest:
@@ -99,7 +64,6 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
     if description is not None and not isinstance(description, str):
         raise ValueError(f"request {d['name']!r}: 'description' must be a string")
 
-            # --- SLEEP step validation ---
     if method == "SLEEP":
         if (
             d.get("headers")
@@ -255,43 +219,3 @@ def load(path: str) -> WorkflowSpec:
     return WorkflowSpec(
         steps=[_intermediate_to_step(_build_intermediate(r)) for r in requests_raw]
     )
-
-
-def to_model(cfg: WorkflowConfig) -> WorkflowSpec:
-    """Convert a legacy :class:`WorkflowConfig` into a :class:`WorkflowSpec`."""
-    steps: list[HttpStep | SleepStep] = []
-    for req in cfg.requests:
-        if req.method == "SLEEP":
-            steps.append(
-                SleepStep(
-                    name=req.name,
-                    seconds=req.url,
-                    description=req.description,
-                )
-            )
-        else:
-            body: TextBody | FormBody | None = None
-            if req.body is not None:
-                body = TextBody(text=req.body)
-            elif req.body_form is not None:
-                body = FormBody(fields=req.body_form)
-            until = None
-            if req.until is not None:
-                until = UntilSpec(
-                    condition=req.until.condition,
-                    interval=req.until.interval,
-                    max_attempts=req.until.max_attempts,
-                )
-            steps.append(
-                HttpStep(
-                    name=req.name,
-                    method=req.method,
-                    url=req.url,
-                    description=req.description,
-                    headers=req.headers,
-                    body=body,
-                    capture=req.capture,
-                    until=until,
-                )
-            )
-    return WorkflowSpec(steps=steps)
