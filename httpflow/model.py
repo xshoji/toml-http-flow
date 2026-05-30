@@ -7,27 +7,27 @@ import it without circular dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TypeAlias
 
 
-@dataclass
+@dataclass(slots=True)
 class TextBody:
     """A raw text body (e.g. JSON)."""
 
     text: str
 
 
-@dataclass
+@dataclass(slots=True)
 class FormBody:
     """An ``application/x-www-form-urlencoded`` body."""
 
     fields: dict[str, str]
 
 
-type Body = TextBody | FormBody
+Body: TypeAlias = TextBody | FormBody
 
 
-@dataclass
+@dataclass(slots=True)
 class UntilSpec:
     """Polling configuration for a single HTTP request."""
 
@@ -36,7 +36,7 @@ class UntilSpec:
     max_attempts: int = 10
 
 
-@dataclass
+@dataclass(slots=True)
 class HttpStep:
     """A single HTTP request step.
 
@@ -55,7 +55,7 @@ class HttpStep:
     until: UntilSpec | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class SleepStep:
     """A non-HTTP pause step."""
 
@@ -64,21 +64,12 @@ class SleepStep:
     description: str | None = None
 
 
-type Step = HttpStep | SleepStep
+Step: TypeAlias = HttpStep | SleepStep
 
 
-@dataclass
+@dataclass(slots=True)
 class WorkflowSpec:
     """Validated, normalised view of a workflow ready for execution or emission."""
 
     steps: list[Step] = field(default_factory=list)
 
-
-def from_config(config):
-    """Convert a legacy :class:`WorkflowConfig` into a :class:`WorkflowSpec`.
-
-    This delegates to :func:`config.to_model` so that normalisation logic
-    lives in one place.
-    """
-    from .config import to_model
-    return to_model(config)
