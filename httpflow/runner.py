@@ -75,7 +75,7 @@ def run(
     no_mask: bool = False,
     repeat_vars: dict[str, list[str]] | None = None,
     steps: list[str] | None = None,
-    out=sys.stdout,
+    out=None,
 ) -> dict[str, Any]:
     """Run every step in ``spec`` and return the final variable store.
 
@@ -94,6 +94,8 @@ def run(
         "repeat": {},
     }
     validate_required_vars(spec, store["vars"])
+
+    out = sys.stdout if out is None else out
 
     total = len(iterations)
     for idx, repeat_iter in enumerate(iterations, start=1):

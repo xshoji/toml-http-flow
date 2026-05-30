@@ -130,8 +130,10 @@ def _pretty(text: str, enabled: bool) -> str:
         return text
 
 
-def _print_lines(prefix: str, text: str, *, out=sys.stdout) -> None:
+def _print_lines(prefix: str, text: str, *, out=None) -> None:
     """Print ``text`` line-by-line with ``prefix`` (e.g. '    > ' or '    < ')."""
+    if out is None:
+        out = sys.stdout
     print(f"{LOG_INDENT}{prefix}", file=out)
     for line in text.splitlines() or [""]:
         print(f"{LOG_INDENT}{prefix} {line}", file=out)
@@ -146,9 +148,9 @@ def _log_request(
     pretty_json: bool,
     no_mask: bool = False,
     *,
-    out=sys.stdout,
+    out=None,
 ) -> None:
-    """Print the request line and headers that urllib will actually send."""
+    out = sys.stdout if out is None else out
     parsed = urllib.parse.urlparse(mask_url(url, disabled=no_mask))
     path = parsed.path or "/"
     if parsed.query:
@@ -187,9 +189,10 @@ def _log_response(
     pretty_json: bool,
     no_mask: bool = False,
     *,
-    out=sys.stdout,
+    out=None,
 ) -> None:
     """Print the HTTP status line and response headers/body."""
+    out = sys.stdout if out is None else out
     print(f"{LOG_INDENT}< HTTP/1.1 {status} {reason}", file=out)
     for k, v in resp_headers.items():
         print(f"{LOG_INDENT}< {k}: {mask_value(k, v, disabled=no_mask)}", file=out)
@@ -211,12 +214,13 @@ def run_step(
     quiet: bool = False,
     pretty_json: bool = False,
     no_mask: bool = False,
-    out=sys.stdout,
+    out=None,
 ) -> None:
     """Render, send, log, and capture a single HTTP (or SLEEP) attempt.
 
     On return, ``store["vars"]`` is updated with captured values.
     """
+    out = sys.stdout if out is None else out
     url = render(url, store)
 
     if method == "SLEEP":

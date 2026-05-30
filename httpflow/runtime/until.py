@@ -74,9 +74,10 @@ def poll_until(
     max_attempts: int,
     store: dict[str, Any],
     quiet: bool,
-    out=sys.stdout,
+    out=None,
 ) -> None:
     """Re-run ``attempt_fn`` until ``eval_until(condition, store)`` becomes true."""
+    out = sys.stdout if out is None else out
     for attempt in range(1, max_attempts + 1):
         attempt_fn()
         if eval_until(condition, store):
