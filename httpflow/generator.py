@@ -14,8 +14,8 @@ import re
 from pathlib import Path
 
 from . import __version__
-from .config import WorkflowConfig
-from .model import HttpStep, SleepStep, Step, WorkflowSpec, from_config
+from .model import FormBody, HttpStep, SleepStep, Step, TextBody, WorkflowSpec
+from .runner import collect_repeat_names, collect_var_names
 
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
@@ -298,7 +298,6 @@ def _flatten_modules(features: set[str]) -> str:
 
 def _collect_required_var_names(spec: WorkflowSpec, default_vars: dict[str, str]) -> list[str]:
     """Return ``${var.<name>}`` names not embedded in ``DEFAULT_VARS``."""
-    from .runner import collect_var_names
     return sorted(collect_var_names(spec) - set(default_vars))
 
 
@@ -400,15 +399,20 @@ def _emit_sleep_step(step: SleepStep, func_name: str) -> str:
     ])
 
 
+def _body_parts(step: HttpStep) -> tuple[str | None, dict[str, str] | None]:
+    """Return (body_text, body_form) for an HttpStep."""
+    match step.body:
+        case TextBody(text=t):
+            return t, None
+        case FormBody(fields=f):
+            return None, f
+        case _:
+            return None, None
+
+
 def _emit_http_step(step: HttpStep, func_name: str) -> str:
     """Plain HTTP step: docstring + a single ``run_step(...)`` call."""
-    body: str | None = None
-    body_form: dict[str, str] | None = None
-    if step.body is not None:
-        if hasattr(step.body, "text"):
-            body = step.body.text
-        elif hasattr(step.body, "fields"):
-            body_form = step.body.fields
+    body, body_form = _body_parts(step)
     return "\n".join([
         f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
         f'    """[[requests]] name = {step.name!r} — {step.method.upper()} {step.url}"""',
@@ -429,14 +433,7 @@ def _emit_http_step(step: HttpStep, func_name: str) -> str:
 def _emit_until_step(step: HttpStep, func_name: str) -> str:
     """HTTP step wrapped in a ``poll_until`` loop."""
     assert step.until is not None
-    u = step.until
-    body: str | None = None
-    body_form: dict[str, str] | None = None
-    if step.body is not None:
-        if hasattr(step.body, "text"):
-            body = step.body.text
-        elif hasattr(step.body, "fields"):
-            body_form = step.body.fields
+    body, body_form = _body_parts(step)
     return "\n".join([
         f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
         f'    """[[requests]] name = {step.name!r} — {step.method.upper()} {step.url}"""',
@@ -452,19 +449,21 @@ def _emit_until_step(step: HttpStep, func_name: str) -> str:
             description=step.description,
             indent="        ",
         ),
-        f"    poll_until({step.name!r}, attempt, {u.condition!r}, "
-        f"{u.interval!r}, {u.max_attempts!r}, store, quiet)",
+        f"    poll_until({step.name!r}, attempt, {step.until.condition!r}, "
+        f"{step.until.interval!r}, {step.until.max_attempts!r}, store, quiet)",
     ])
 
 
 def _emit_step(step: Step, func_name: str) -> str:
-    if isinstance(step, SleepStep):
-        return _emit_sleep_step(step, func_name)
-    if isinstance(step, HttpStep):
-        if step.until is not None:
+    match step:
+        case SleepStep():
+            return _emit_sleep_step(step, func_name)
+        case HttpStep(until=None):
+            return _emit_http_step(step, func_name)
+        case HttpStep():
             return _emit_until_step(step, func_name)
-        return _emit_http_step(step, func_name)
-    raise TypeError(f"unknown step type: {type(step).__name__}")
+        case _:
+            raise TypeError(f"unknown step type: {type(step).__name__}")
 
 
 # ---------------------------------------------------------------- public API
@@ -483,16 +482,13 @@ def _list_dict_literal(d: dict[str, list[str]], indent: str = "    ") -> str:
 
 
 def generate(
-    spec: WorkflowSpec | WorkflowConfig,
+    spec: WorkflowSpec,
     *,
     default_vars: dict[str, str] | None = None,
     default_repeat_vars: dict[str, list[str]] | None = None,
     shebang: bool = False,
 ) -> str:
     """Return the source of a self-contained runner script."""
-    if isinstance(spec, WorkflowConfig):
-        spec = from_config(spec)
-
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     timestamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     default_vars = dict(default_vars or {})
@@ -523,7 +519,6 @@ def generate(
         features.add("until")
 
     # Required ${repeat.<name>} variables
-    from .runner import collect_repeat_names
     required_repeat = sorted(collect_repeat_names(spec))
     needs_repeat = bool(required_repeat)
     if needs_repeat:

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, Iterator
 
-from .config import WorkflowConfig, to_model
 from .model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
 from .runtime.http import run_step
 from .runtime.repeat import build_repeat_iterations
@@ -13,60 +12,40 @@ from .runtime.until import poll_until
 from .template import find_repeat_names, find_var_names
 
 
-def collect_repeat_names(spec: WorkflowSpec | WorkflowConfig) -> set[str]:
+def _iter_template_strings(spec: WorkflowSpec) -> Iterator[str]:
+    """Yield every template-containing string in ``spec``."""
+    for step in spec.steps:
+        match step:
+            case SleepStep():
+                yield step.seconds
+            case HttpStep():
+                yield step.url
+                yield from step.headers
+                yield from step.headers.values()
+                match step.body:
+                    case TextBody():
+                        yield step.body.text
+                    case FormBody():
+                        yield from step.body.fields
+                        yield from step.body.fields.values()
+                    case None:
+                        pass
+                if step.until is not None:
+                    yield step.until.condition
+
+
+def collect_repeat_names(spec: WorkflowSpec) -> set[str]:
     """Return every ``${repeat.<name>}`` referenced anywhere in ``spec``."""
-    if isinstance(spec, WorkflowConfig):
-        spec = to_model(spec)
-    found: set[str] = set()
-    for step in spec.steps:
-        if isinstance(step, SleepStep):
-            found.update(find_repeat_names(step.seconds))
-            continue
-        if isinstance(step, HttpStep):
-            found.update(find_repeat_names(step.url))
-            for k, v in step.headers.items():
-                found.update(find_repeat_names(k))
-                found.update(find_repeat_names(v))
-            if step.body is not None:
-                if isinstance(step.body, TextBody):
-                    found.update(find_repeat_names(step.body.text))
-                elif isinstance(step.body, FormBody):
-                    for k, v in step.body.fields.items():
-                        found.update(find_repeat_names(k))
-                        found.update(find_repeat_names(v))
-            if step.until is not None:
-                found.update(find_repeat_names(step.until.condition))
-    return found
+    return {n for s in _iter_template_strings(spec) for n in find_repeat_names(s)}
 
 
-def collect_var_names(spec: WorkflowSpec | WorkflowConfig) -> set[str]:
+def collect_var_names(spec: WorkflowSpec) -> set[str]:
     """Return every explicit ``${var.<name>}`` referenced anywhere in ``spec``."""
-    if isinstance(spec, WorkflowConfig):
-        spec = to_model(spec)
-    found: set[str] = set()
-    for step in spec.steps:
-        if isinstance(step, SleepStep):
-            found.update(find_var_names(step.seconds))
-            continue
-        if isinstance(step, HttpStep):
-            found.update(find_var_names(step.url))
-            for k, v in step.headers.items():
-                found.update(find_var_names(k))
-                found.update(find_var_names(v))
-            if step.body is not None:
-                if isinstance(step.body, TextBody):
-                    found.update(find_var_names(step.body.text))
-                elif isinstance(step.body, FormBody):
-                    for k, v in step.body.fields.items():
-                        found.update(find_var_names(k))
-                        found.update(find_var_names(v))
-            if step.until is not None:
-                found.update(find_var_names(step.until.condition))
-    return found
+    return {n for s in _iter_template_strings(spec) for n in find_var_names(s)}
 
 
 def validate_required_vars(
-    spec: WorkflowSpec | WorkflowConfig,
+    spec: WorkflowSpec,
     vars_: dict[str, str] | None,
 ) -> None:
     """Raise ValueError if required ``${var.*}`` parameters are missing."""
@@ -88,7 +67,7 @@ def select_steps(spec: WorkflowSpec, names: list[str]) -> WorkflowSpec:
 
 
 def run(
-    spec: WorkflowSpec | WorkflowConfig,
+    spec: WorkflowSpec,
     vars_: dict[str, str] | None = None,
     *,
     quiet: bool = False,
@@ -104,8 +83,6 @@ def run(
     order); validation of required vars and repeat names then applies to
     that subset only.
     """
-    if isinstance(spec, WorkflowConfig):
-        spec = to_model(spec)
     if steps:
         spec = select_steps(spec, steps)
 
@@ -145,31 +122,33 @@ def _run_once(
 ) -> None:
     """Execute every step in ``spec`` exactly once against ``store``."""
     for step in spec.steps:
-        if isinstance(step, SleepStep):
-            run_step(
-                store,
-                step.name,
-                "SLEEP",
-                step.seconds,
-                description=step.description,
-                quiet=quiet,
-                pretty_json=pretty_json,
-                no_mask=no_mask,
-                out=out,
-            )
-            continue
+        match step:
+            case SleepStep():
+                run_step(
+                    store,
+                    step.name,
+                    "SLEEP",
+                    step.seconds,
+                    description=step.description,
+                    quiet=quiet,
+                    pretty_json=pretty_json,
+                    no_mask=no_mask,
+                    out=out,
+                )
+                continue
 
-        # HttpStep
         assert isinstance(step, HttpStep)
         body: str | None = None
         body_form: dict[str, str] | None = None
-        if isinstance(step.body, TextBody):
-            body = step.body.text
-        elif isinstance(step.body, FormBody):
-            body_form = step.body.fields
+        match step.body:
+            case TextBody():
+                body = step.body.text
+            case FormBody():
+                body_form = step.body.fields
+            case None:
+                pass
 
-        until = step.until
-        if until is None:
+        if step.until is None:
             run_step(
                 store,
                 step.name,
@@ -208,9 +187,9 @@ def _run_once(
         poll_until(
             step.name,
             attempt,
-            until.condition,
-            until.interval,
-            until.max_attempts,
+            step.until.condition,
+            step.until.interval,
+            step.until.max_attempts,
             store,
             quiet,
             out=out,

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
+import stat
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 from . import __version__
 from . import config as config_mod
@@ -133,7 +135,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(script)
         if args.shebang:
-            import os, stat
             mode = os.stat(args.output).st_mode
             os.chmod(args.output, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         return 0
