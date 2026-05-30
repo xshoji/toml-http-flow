@@ -1,3 +1,5 @@
+"""Tests for the until (polling) feature."""
+
 import io
 import json
 import os
@@ -11,10 +13,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from httpflow import config as cfg_mod
-from httpflow import generator
-from httpflow.config import RequestConfig, UntilConfig, WorkflowConfig
-from httpflow.until import evaluate
-from httpflow.workflow import run
+from httpflow import generator, runner
+from httpflow.runtime.until import eval_until
 
 
 # ─── Stateful mock server used by polling tests ─────────────────────────
@@ -70,49 +70,49 @@ class TestEvaluateCondition(unittest.TestCase):
 
     def test_eq_true(self):
         store = self._store(status="Active")
-        self.assertTrue(evaluate("${status} == Active", store))
+        self.assertTrue(eval_until("${status} == Active", store))
 
     def test_eq_false(self):
         store = self._store(status="Pending")
-        self.assertFalse(evaluate("${status} == Active", store))
+        self.assertFalse(eval_until("${status} == Active", store))
 
     def test_eq_with_spaces_trimmed(self):
         store = self._store(status="Active")
-        self.assertTrue(evaluate("  ${status}   ==   Active  ", store))
+        self.assertTrue(eval_until("  ${status}   ==   Active  ", store))
 
     def test_ne(self):
         store = self._store(status="Pending")
-        self.assertTrue(evaluate("${status} != Active", store))
-        self.assertFalse(evaluate("${status} != Pending", store))
+        self.assertTrue(eval_until("${status} != Active", store))
+        self.assertFalse(eval_until("${status} != Pending", store))
 
     def test_regex_match(self):
         store = self._store(msg="operation succeeded")
-        self.assertTrue(evaluate("${msg} ~ /succe.+/", store))
-        self.assertFalse(evaluate("${msg} ~ /^fail/", store))
+        self.assertTrue(eval_until("${msg} ~ /succe.+/", store))
+        self.assertFalse(eval_until("${msg} ~ /^fail/", store))
 
     def test_regex_case_insensitive_flag(self):
         store = self._store(msg="OK")
-        self.assertTrue(evaluate("${msg} ~ /ok/i", store))
+        self.assertTrue(eval_until("${msg} ~ /ok/i", store))
 
     def test_regex_invalid_rhs(self):
         store = self._store(msg="x")
         with self.assertRaises(ValueError):
-            evaluate("${msg} ~ no-slashes", store)
+            eval_until("${msg} ~ no-slashes", store)
 
     def test_in_list(self):
         store = self._store(code="201")
-        self.assertTrue(evaluate("${code} in [200, 201, 204]", store))
-        self.assertFalse(evaluate("${code} in [400, 500]", store))
+        self.assertTrue(eval_until("${code} in [200, 201, 204]", store))
+        self.assertFalse(eval_until("${code} in [400, 500]", store))
 
     def test_in_invalid_rhs(self):
         store = self._store(code="200")
         with self.assertRaises(ValueError):
-            evaluate("${code} in 200", store)
+            eval_until("${code} in 200", store)
 
     def test_no_operator(self):
         store = self._store(s={"x": "y"})
         with self.assertRaises(ValueError):
-            evaluate("just a string", store)
+            eval_until("just a string", store)
 
 
 # ─── 2. Config parsing tests ───────────────────────────────────────────
@@ -222,59 +222,74 @@ class TestWorkflowPolling(_PollServerMixin, unittest.TestCase):
     def setUp(self):
         _PollHandler.pending_remaining = 0
 
-    def _make_poll_cfg(self, max_attempts: int = 5) -> WorkflowConfig:
+    def _make_poll_toml(self, max_attempts: int = 5) -> str:
         base = f"http://127.0.0.1:{self.port}"
-        return WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="createJob",
-                    method="POST",
-                    url=f"{base}/jobs",
-                    headers={"Content-Type": "application/json"},
-                    body='{"name":"x"}',
-                    capture={"id": "data.id"},
-                ),
-                RequestConfig(
-                    name="pollStatus",
-                    method="GET",
-                    url=f"{base}/jobs/${{id}}",
-                    capture={"status": "data.status"},
-                    until=UntilConfig(
-                        condition="${status} == Active",
-                        interval=0.01,
-                        max_attempts=max_attempts,
-                    ),
-                ),
+        return textwrap.dedent(f"""\
+            [[requests]]
+            name = "createJob"
+            method = "POST"
+            url = "{base}/jobs"
+            headers = ["Content-Type: application/json"]
+            body = '{{"name":"x"}}'
+            capture = ["id = data.id"]
+
+            [[requests]]
+            name = "pollStatus"
+            method = "GET"
+            url = "{base}/jobs/${{id}}"
+            capture = ["status = data.status"]
+            until = [
+                "condition = ${{status}} == Active",
+                "interval  = 0.01",
+                "max_attempts = {max_attempts}",
             ]
-        )
+        """)
 
     def test_polling_succeeds_after_retries(self):
         _PollHandler.pending_remaining = 2
-        cfg = self._make_poll_cfg(max_attempts=5)
-        buf = io.StringIO()
-        store = run(cfg, out=buf)
-        self.assertEqual(store["vars"]["status"], "Active")
-        output = buf.getvalue()
-        # First two attempts are Pending, third is Active.
-        self.assertIn("until satisfied on attempt 3", output)
-        self.assertIn("until not satisfied (attempt 1/5)", output)
-        self.assertIn("until not satisfied (attempt 2/5)", output)
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self._make_poll_toml(max_attempts=5))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            store = runner.run(cfg, out=buf)
+            self.assertEqual(store["vars"]["status"], "Active")
+            output = buf.getvalue()
+            # First two attempts are Pending, third is Active.
+            self.assertIn("until satisfied on attempt 3", output)
+            self.assertIn("until not satisfied (attempt 1/5)", output)
+            self.assertIn("until not satisfied (attempt 2/5)", output)
+        finally:
+            os.unlink(path)
 
     def test_polling_succeeds_first_attempt(self):
         _PollHandler.pending_remaining = 0
-        cfg = self._make_poll_cfg(max_attempts=3)
-        buf = io.StringIO()
-        store = run(cfg, out=buf)
-        self.assertEqual(store["vars"]["status"], "Active")
-        self.assertIn("until satisfied on attempt 1", buf.getvalue())
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self._make_poll_toml(max_attempts=3))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            store = runner.run(cfg, out=buf)
+            self.assertEqual(store["vars"]["status"], "Active")
+            self.assertIn("until satisfied on attempt 1", buf.getvalue())
+        finally:
+            os.unlink(path)
 
     def test_polling_max_attempts_exceeded(self):
         _PollHandler.pending_remaining = 10
-        cfg = self._make_poll_cfg(max_attempts=3)
-        buf = io.StringIO()
-        with self.assertRaises(RuntimeError) as ctx:
-            run(cfg, out=buf)
-        self.assertIn("not satisfied after 3 attempts", str(ctx.exception))
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self._make_poll_toml(max_attempts=3))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            with self.assertRaises(RuntimeError) as ctx:
+                runner.run(cfg, out=buf)
+            self.assertIn("not satisfied after 3 attempts", str(ctx.exception))
+        finally:
+            os.unlink(path)
 
 
 # ─── 4. Generated script also polls correctly ──────────────────────────
@@ -355,7 +370,7 @@ class TestGeneratorPolling(_PollServerMixin, unittest.TestCase):
             wf = cfg_mod.load(str(toml_path))
 
             buf = io.StringIO()
-            store = run(wf, out=buf)
+            store = runner.run(wf, out=buf)
 
             _PollHandler.pending_remaining = 2
             script_path = tmp_path / "workflow.py"
@@ -373,40 +388,45 @@ class TestGeneratorPolling(_PollServerMixin, unittest.TestCase):
 
 # ─── 5. Logical equivalence: package vs generated runner ──────────────
 class TestUntilEquivalence(unittest.TestCase):
-    """Generated runner's eval_until must agree with httpflow.until.evaluate."""
+    """Generated runner's eval_until must agree with httpflow.runtime.until.eval_until."""
 
     def test_equivalence_against_inline_runner(self):
         # Generate a script with an until step to force inclusion of eval_until.
-        wf = WorkflowConfig(requests=[
-            RequestConfig(
-                name="dummy",
-                method="GET",
-                url="http://example.com",
-                until=UntilConfig(
-                    condition="${x} == 1",
-                    interval=1.0,
-                    max_attempts=1,
-                ),
-            ),
-        ])
-        script = generator.generate(wf)
-        ns: dict = {}
-        exec(compile(script, "<generated>", "exec"), ns)
-        gen_eval = ns["eval_until"]
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent("""\
+                [[requests]]
+                name = "dummy"
+                method = "GET"
+                url = "http://example.com"
+                until = [
+                    "condition = ${x} == 1",
+                    "interval = 1.0",
+                    "max_attempts = 1",
+                ]
+            """))
+        try:
+            wf = cfg_mod.load(path)
+            script = generator.generate(wf)
+            ns: dict = {}
+            exec(compile(script, "<generated>", "exec"), ns)
+            gen_eval = ns["eval_until"]
 
-        store = {"vars": {"status": "Active", "code": "201"}}
-        cases = [
-            "${status} == Active",
-            "${status} == Pending",
-            "${status} != Pending",
-            "${code} in [200, 201, 204]",
-            "${code} in [400, 500]",
-            "${status} ~ /^Act/",
-            "${status} ~ /pending/i",
-        ]
-        for cond in cases:
-            with self.subTest(cond=cond):
-                self.assertEqual(evaluate(cond, store), gen_eval(cond, store))
+            store = {"vars": {"status": "Active", "code": "201"}}
+            cases = [
+                "${status} == Active",
+                "${status} == Pending",
+                "${status} != Pending",
+                "${code} in [200, 201, 204]",
+                "${code} in [400, 500]",
+                "${status} ~ /^Act/",
+                "${status} ~ /pending/i",
+            ]
+            for cond in cases:
+                with self.subTest(cond=cond):
+                    self.assertEqual(eval_until(cond, store), gen_eval(cond, store))
+        finally:
+            os.unlink(path)
 
 
 if __name__ == "__main__":

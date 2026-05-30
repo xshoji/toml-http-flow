@@ -13,7 +13,7 @@ from pathlib import Path
 
 from httpflow import config as cfg_mod
 from httpflow import generator
-from httpflow.httpclient import extract
+from httpflow.runtime.http import extract
 from httpflow.template import TemplateError, render
 
 

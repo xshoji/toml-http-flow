@@ -1,11 +1,16 @@
+"""Tests for httpflow.runner workflow execution."""
+
 import io
 import json
+import os
+import tempfile
+import textwrap
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from httpflow.config import RequestConfig, WorkflowConfig
-from httpflow.workflow import run
+from httpflow import config as cfg_mod
+from httpflow import runner
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -49,24 +54,24 @@ class TestWorkflow(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
+    def _write(self, toml: str) -> str:
+        fd, path = tempfile.mkstemp(suffix=".toml")
+        with os.fdopen(fd, "wb") as f:
+            f.write(toml.encode("utf-8"))
+        self.addCleanup(os.unlink, path)
+        return path
+
     def test_body_form_template_rendering_with_hyphen_step(self):
         """body_form values must have ${...} expanded, including when the
         referenced step name contains a hyphen (regression: the template
         regex used to reject hyphens)."""
         from httpflow.runtime.core import render_mapping
 
-        req = RequestConfig(
-            name="next",
-            method="POST",
-            url="http://example.com/x",
-            body_form={
-                "nickname": "new_name",
-                "email": "test@email.com",
-                "args": "${argsAaa2}",
-            },
-        )
         store = {"vars": {"argsAaa2": "hello-world"}}
-        rendered_body_form = render_mapping(req.body_form, store)
+        rendered_body_form = render_mapping(
+            {"nickname": "new_name", "email": "test@email.com", "args": "${argsAaa2}"},
+            store,
+        )
         self.assertEqual(rendered_body_form, {
             "nickname": "new_name",
             "email": "test@email.com",
@@ -75,27 +80,25 @@ class TestWorkflow(unittest.TestCase):
 
     def test_two_step_capture_and_template(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="getToken",
-                    method="POST",
-                    url=f"{base}/auth",
-                    headers={"Content-Type": "application/json"},
-                    body='{"user":"u","pass":"p"}',
-                    capture={"token": "access_token"},
-                ),
-                RequestConfig(
-                    name="getUser",
-                    method="GET",
-                    url=f"{base}/me",
-                    headers={"Authorization": "Bearer ${token}"},
-                    capture={"uid": "user.id", "echoed_auth": "user.auth_seen"},
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getToken"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"user":"u","pass":"p"}}'
+            capture = ["token = access_token"]
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+            headers = ["Authorization: Bearer ${{token}}"]
+            capture = ["uid = user.id", "echoed_auth = user.auth_seen"]
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        store = run(cfg, {"env": "test"}, out=buf)
+        store = runner.run(cfg, {"env": "test"}, out=buf)
 
         self.assertEqual(store["vars"], {"env": "test", "token": "tok-abc", "uid": 7, "echoed_auth": "Bearer tok-abc"})
 
@@ -111,18 +114,16 @@ class TestWorkflow(unittest.TestCase):
 
     def test_missing_required_var_fails_before_request(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="ping",
-                    method="GET",
-                    url=f"{base}/me?user=${{var.user}}",
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/me?user=${{var.user}}"
+        """))
+        cfg = cfg_mod.load(path)
 
         with self.assertRaisesRegex(ValueError, "missing required -v/--var"):
-            run(cfg, out=io.StringIO())
+            runner.run(cfg, out=io.StringIO())
 
     # --- curl -vvv detailed output assertions ---
 
@@ -130,17 +131,15 @@ class TestWorkflow(unittest.TestCase):
         """The detailed output must include the request line, Host,
         and estimated User-Agent/Accept-Encoding when not supplied."""
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="ping",
-                    method="GET",
-                    url=f"{base}/me",
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/me"
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        run(cfg, out=buf)
+        runner.run(cfg, out=buf)
         output = buf.getvalue()
         self.assertIn("> GET /me HTTP/1.1", output)
         self.assertIn("> Host:", output)
@@ -150,41 +149,37 @@ class TestWorkflow(unittest.TestCase):
     def test_response_status_line(self):
         """The detailed output must include the HTTP/1.1 status line."""
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="ping",
-                    method="GET",
-                    url=f"{base}/me",
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/me"
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        run(cfg, out=buf)
+        runner.run(cfg, out=buf)
         output = buf.getvalue()
         self.assertIn("< HTTP/1.1 200 OK", output)
 
     def test_step_selection_runs_only_named_steps(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="getToken",
-                    method="POST",
-                    url=f"{base}/auth",
-                    headers={"Content-Type": "application/json"},
-                    body='{"user":"u","pass":"p"}',
-                    capture={"token": "access_token"},
-                ),
-                RequestConfig(
-                    name="getUser",
-                    method="GET",
-                    url=f"{base}/me",
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getToken"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"user":"u","pass":"p"}}'
+            capture = ["token = access_token"]
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        store = run(cfg, out=buf, steps=["getUser"])
+        store = runner.run(cfg, out=buf, steps=["getUser"])
         output = buf.getvalue()
         self.assertIn("[getUser] status=200", output)
         self.assertNotIn("[getToken]", output)
@@ -193,136 +188,130 @@ class TestWorkflow(unittest.TestCase):
 
     def test_step_selection_preserves_toml_order(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="getToken",
-                    method="POST",
-                    url=f"{base}/auth",
-                    headers={"Content-Type": "application/json"},
-                    body='{"user":"u","pass":"p"}',
-                    capture={"token": "access_token"},
-                ),
-                RequestConfig(
-                    name="getUser",
-                    method="GET",
-                    url=f"{base}/me",
-                    headers={"Authorization": "Bearer ${token}"},
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getToken"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"user":"u","pass":"p"}}'
+            capture = ["token = access_token"]
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+            headers = ["Authorization: Bearer ${{token}}"]
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
         # -s order is reversed; execution must still follow TOML order.
-        run(cfg, out=buf, steps=["getUser", "getToken"])
+        runner.run(cfg, out=buf, steps=["getUser", "getToken"])
         output = buf.getvalue()
         self.assertLess(output.index("[getToken]"), output.index("[getUser]"))
 
     def test_step_selection_unknown_name_fails(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(name="getUser", method="GET", url=f"{base}/me"),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+        """))
+        cfg = cfg_mod.load(path)
         with self.assertRaisesRegex(ValueError, "unknown step name"):
-            run(cfg, out=io.StringIO(), steps=["nope"])
+            runner.run(cfg, out=io.StringIO(), steps=["nope"])
 
     def test_step_selection_scopes_required_var_validation(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="needsVar",
-                    method="GET",
-                    url=f"{base}/me?user=${{var.user}}",
-                ),
-                RequestConfig(name="getUser", method="GET", url=f"{base}/me"),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "needsVar"
+            method = "GET"
+            url = "{base}/me?user=${{var.user}}"
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+        """))
+        cfg = cfg_mod.load(path)
         # Selecting only getUser must not require ${var.user}.
         buf = io.StringIO()
-        run(cfg, out=buf, steps=["getUser"])
+        runner.run(cfg, out=buf, steps=["getUser"])
         self.assertIn("[getUser] status=200", buf.getvalue())
 
     def test_capture_response_header(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="getUser",
-                    method="GET",
-                    url=f"{base}/me",
-                    # case-insensitive header name lookup
-                    capture={"ct": "response.header.content-type"},
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+            # case-insensitive header name lookup
+            capture = ["ct = response.header.content-type"]
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        store = run(cfg, out=buf)
+        store = runner.run(cfg, out=buf)
         self.assertEqual(store["vars"]["ct"], "application/json")
 
     def test_capture_request_header_and_url(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="getToken",
-                    method="POST",
-                    url=f"{base}/auth",
-                    headers={"Content-Type": "application/json"},
-                    body='{"user":"u","pass":"p"}',
-                    capture={"token": "access_token"},
-                ),
-                RequestConfig(
-                    name="getUser",
-                    method="GET",
-                    url=f"{base}/me",
-                    headers={"Authorization": "Bearer ${token}"},
-                    capture={
-                        "sent_auth": "request.header.Authorization",
-                        "called_url": "request.url",
-                    },
-                ),
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getToken"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"user":"u","pass":"p"}}'
+            capture = ["token = access_token"]
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+            headers = ["Authorization: Bearer ${{token}}"]
+            capture = [
+                "sent_auth = request.header.Authorization",
+                "called_url = request.url",
             ]
-        )
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        store = run(cfg, out=buf)
+        store = runner.run(cfg, out=buf)
         # The captured request header reflects the rendered (sent) value.
         self.assertEqual(store["vars"]["sent_auth"], "Bearer tok-abc")
         self.assertEqual(store["vars"]["called_url"], f"{base}/me")
 
     def test_capture_request_body(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="getToken",
-                    method="POST",
-                    url=f"{base}/auth",
-                    headers={"Content-Type": "application/json"},
-                    body='{"user":"u","pass":"p"}',
-                    capture={"sent_body": "request.body"},
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getToken"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"user":"u","pass":"p"}}'
+            capture = ["sent_body = request.body"]
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        store = run(cfg, out=buf)
+        store = runner.run(cfg, out=buf)
         self.assertEqual(store["vars"]["sent_body"], '{"user":"u","pass":"p"}')
 
     def test_capture_missing_response_header_fails(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="getUser",
-                    method="GET",
-                    url=f"{base}/me",
-                    capture={"x": "response.header.X-Does-Not-Exist"},
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+            capture = ["x = response.header.X-Does-Not-Exist"]
+        """))
+        cfg = cfg_mod.load(path)
         with self.assertRaisesRegex(KeyError, "response header not found"):
-            run(cfg, out=io.StringIO())
+            runner.run(cfg, out=io.StringIO())
 
     def test_header_capture_works_without_json_body(self):
         """Header/request captures must not require a JSON response body."""
@@ -344,18 +333,16 @@ class TestWorkflow(unittest.TestCase):
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
         try:
-            cfg = WorkflowConfig(
-                requests=[
-                    RequestConfig(
-                        name="ping",
-                        method="GET",
-                        url=f"http://127.0.0.1:{port}/x",
-                        capture={"trace": "response.header.X-Trace-Id"},
-                    ),
-                ]
-            )
+            path = self._write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "ping"
+                method = "GET"
+                url = "http://127.0.0.1:{port}/x"
+                capture = ["trace = response.header.X-Trace-Id"]
+            """))
+            cfg = cfg_mod.load(path)
             buf = io.StringIO()
-            store = run(cfg, out=buf)
+            store = runner.run(cfg, out=buf)
             self.assertEqual(store["vars"]["trace"], "abc-123")
         finally:
             srv.shutdown()
@@ -363,23 +350,21 @@ class TestWorkflow(unittest.TestCase):
 
     def test_http_error_response_continues_and_can_be_captured(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="missing",
-                    method="GET",
-                    url=f"{base}/missing",
-                    capture={"message": "error"},
-                ),
-                RequestConfig(
-                    name="getUser",
-                    method="GET",
-                    url=f"{base}/me",
-                ),
-            ]
-        )
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "missing"
+            method = "GET"
+            url = "{base}/missing"
+            capture = ["message = error"]
+
+            [[requests]]
+            name = "getUser"
+            method = "GET"
+            url = "{base}/me"
+        """))
+        cfg = cfg_mod.load(path)
         buf = io.StringIO()
-        store = run(cfg, out=buf)
+        store = runner.run(cfg, out=buf)
         output = buf.getvalue()
         self.assertEqual(store["vars"]["message"], "not found")
         self.assertIn("<== ", output)

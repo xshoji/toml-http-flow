@@ -23,12 +23,13 @@ Read this before changing any code.
 
 | Path | Responsibility | Notes when editing |
 |------|----------------|--------------------|
-| [httpflow/config.py](httpflow/config.py) | TOML → `@dataclass` conversion / validation | If you change `parse_kv_list` behavior, also update design doc §4.4 |
+| [httpflow/config.py](httpflow/config.py) | TOML → `WorkflowSpec` conversion / validation | If you change `parse_kv_list` behavior, also update design doc §4.4 |
 | [httpflow/template.py](httpflow/template.py) | `${...}` expansion / `$$` escaping | Keep the `PATTERN` regex aligned with the generator's equivalent |
-| [httpflow/httpclient.py](httpflow/httpclient.py) | HTTP send via `urllib` / JSON path extraction | Reflect any `extract()` logic changes in the generator too |
-| [httpflow/workflow.py](httpflow/workflow.py) | Step execution / variable store management | The shape `store = {"vars": ..., "steps": ...}` is fixed |
 | [httpflow/cli.py](httpflow/cli.py) | `argparse` dispatch | Preserve backward compatibility: when `run` is omitted, treat it as `run` |
 | [httpflow/generator.py](httpflow/generator.py) | TOML → single .py generator | The output must always pass `compile()` syntax validation |
+| [httpflow/model.py](httpflow/model.py) | Normalised workflow models (`WorkflowSpec`, `HttpStep`, `SleepStep`, etc.) | Kept free of runtime helpers to avoid circular deps |
+| [httpflow/runner.py](httpflow/runner.py) | Step execution engine / variable store / repeat iteration | Same `collect_*` logic used by the generator; keep them in sync |
+| [httpflow/runtime/](httpflow/runtime/) | Shared helpers used by both the package and generated scripts (`core`, `http`, `mask`, `until`, `repeat`) | When fixing logic here, always fix the generator template too |
 | [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{STEP_FUNCTIONS}}` `{{STEP_CALLS}}` `{{DEFAULT_VARS}}` `{{VERSION}}` `{{GENERATED_AT}}` `{{UNTIL_HELPERS}}` `{{REPEAT_HELPERS}}` `{{ARGPARSE_REPEAT}}` `{{MAIN_REPEAT_SETUP}}` |
 | [tests/](tests/) | `unittest`-based tests | Follow the convention of standing up a local mock with `http.server` |
 

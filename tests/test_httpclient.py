@@ -1,11 +1,12 @@
+"""Tests for httpflow.runtime.http helpers."""
+
 import io
 import json
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from httpflow.config import RequestConfig
-from httpflow.httpclient import execute, extract
+from httpflow.runtime.http import do_request, extract
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -42,7 +43,7 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
 
-class TestHTTPClient(unittest.TestCase):
+class TestDoRequest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server = HTTPServer(("127.0.0.1", 0), _Handler)
@@ -62,40 +63,46 @@ class TestHTTPClient(unittest.TestCase):
         return f"http://127.0.0.1:{self.port}{path}"
 
     def test_get_json(self):
-        req = RequestConfig(name="g", method="GET", url=self._url("/x"))
-        resp = execute(req)
-        self.assertEqual(resp.status, 200)
-        self.assertEqual(resp.body_json, {"ok": True, "path": "/x"})
+        status, reason, resp_headers, text, body_json = do_request(
+            "GET", self._url("/x"), {}, None
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body_json, {"ok": True, "path": "/x"})
 
     def test_http_error_response_is_returned(self):
-        req = RequestConfig(name="g", method="GET", url=self._url("/missing"))
-        resp = execute(req)
-        self.assertEqual(resp.status, 404)
-        self.assertEqual(resp.reason, "Not Found")
-        self.assertEqual(resp.body_json, {"error": "not found"})
-        self.assertIn('"error": "not found"', resp.body_text)
+        status, reason, resp_headers, text, body_json = do_request(
+            "GET", self._url("/missing"), {}, None
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(reason, "Not Found")
+        self.assertEqual(body_json, {"error": "not found"})
+        self.assertIn('"error": "not found"', text)
 
     def test_post_json_body(self):
-        req = RequestConfig(
-            name="p", method="POST", url=self._url("/auth"),
-            headers={"Content-Type": "application/json"},
-            body='{"user":"a"}',
+        status, reason, resp_headers, text, body_json = do_request(
+            "POST",
+            self._url("/auth"),
+            {"Content-Type": "application/json"},
+            b'{"user":"a"}',
         )
-        resp = execute(req)
-        self.assertEqual(resp.status, 200)
-        self.assertEqual(resp.body_json["access_token"], "tok-xyz")
+        self.assertEqual(status, 200)
+        self.assertEqual(body_json["access_token"], "tok-xyz")
         method, path, _hdrs, body = _Handler.received[-1]
         self.assertEqual(method, "POST")
         self.assertEqual(path, "/auth")
         self.assertEqual(body, b'{"user":"a"}')
 
     def test_post_form(self):
-        req = RequestConfig(
-            name="p", method="PUT", url=self._url("/profile"),
-            body_form={"a": "1", "b": "hello world"},
+        import urllib.parse
+
+        body_bytes = urllib.parse.urlencode({"a": "1", "b": "hello world"}).encode("utf-8")
+        status, reason, resp_headers, text, body_json = do_request(
+            "PUT",
+            self._url("/profile"),
+            {"Content-Type": "application/x-www-form-urlencoded"},
+            body_bytes,
         )
-        resp = execute(req)
-        self.assertEqual(resp.status, 200)
+        self.assertEqual(status, 200)
         method, path, hdrs, body = _Handler.received[-1]
         self.assertEqual(method, "PUT")
         self.assertEqual(hdrs.get("Content-Type"), "application/x-www-form-urlencoded")
@@ -124,51 +131,17 @@ class TestHTTPClient(unittest.TestCase):
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
         try:
-            req = RequestConfig(
-                name="c", method="POST", url=f"http://127.0.0.1:{port}/items",
-                headers={"Content-Type": "application/json"},
-                body='{"name":"x"}',
+            status, reason, _, _, body_json = do_request(
+                "POST",
+                f"http://127.0.0.1:{port}/items",
+                {"Content-Type": "application/json"},
+                b'{"name":"x"}',
             )
-            resp = execute(req)
-            self.assertEqual(resp.status, 201)
-            self.assertEqual(resp.reason, "Created")
+            self.assertEqual(status, 201)
+            self.assertEqual(reason, "Created")
         finally:
             srv.shutdown()
             srv.server_close()
-
-    # -- no explicit test for reason on 200; mock framework may return "OK" --
-
-
-class TestPrepareRequest(unittest.TestCase):
-    """Smoke tests for prepare_request helper."""
-
-    def test_get_has_no_body(self):
-        from httpflow.httpclient import prepare_request
-        req = RequestConfig(name="g", method="GET", url="http://example.com/")
-        request, body_bytes = prepare_request(req)
-        self.assertIsNone(body_bytes)
-        self.assertEqual(request.get_method(), "GET")
-
-    def test_post_json_body_bytes(self):
-        from httpflow.httpclient import prepare_request
-        req = RequestConfig(
-            name="p", method="POST", url="http://example.com/",
-            headers={"Content-Type": "application/json"},
-            body='{"a":1}',
-        )
-        request, body_bytes = prepare_request(req)
-        self.assertEqual(body_bytes, b'{"a":1}')
-        self.assertEqual(request.get_method(), "POST")
-
-    def test_body_form_adds_content_type(self):
-        from httpflow.httpclient import prepare_request
-        req = RequestConfig(
-            name="f", method="POST", url="http://example.com/",
-            body_form={"x": "y"},
-        )
-        request, body_bytes = prepare_request(req)
-        self.assertEqual(request.get_header("Content-type"), "application/x-www-form-urlencoded")
-        self.assertIsNotNone(body_bytes)
 
 
 class TestExtract(unittest.TestCase):

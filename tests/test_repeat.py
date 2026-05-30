@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,11 +12,11 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+from httpflow import config as cfg_mod
 from httpflow import generator
-from httpflow.config import RequestConfig, WorkflowConfig
-from httpflow.template import find_repeat_names
+from httpflow.model import HttpStep, TextBody
 from httpflow.runner import build_repeat_iterations, collect_repeat_names, run
-from httpflow.workflow import run as _compat_run
+from httpflow.template import find_repeat_names
 
 
 class _EchoHandler(BaseHTTPRequestHandler):
@@ -49,23 +50,27 @@ class TestFindRepeatNames(unittest.TestCase):
 
 class TestCollectRepeatNames(unittest.TestCase):
     def test_collects_from_all_fields(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
+        from httpflow.model import WorkflowSpec
+
+        spec = WorkflowSpec(
+            steps=[
+                HttpStep(
                     name="r1",
                     method="POST",
                     url="http://x/${repeat.a}",
                     headers={"X-Tag": "${repeat.b}"},
-                    body='{"v":"${repeat.c}"}',
+                    body=TextBody(text='{"v":"${repeat.c}"}'),
                 ),
             ]
         )
-        self.assertEqual(collect_repeat_names(cfg), {"a", "b", "c"})
+        self.assertEqual(collect_repeat_names(spec), {"a", "b", "c"})
 
     def test_collects_from_mapping_keys(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
+        from httpflow.model import WorkflowSpec
+
+        spec = WorkflowSpec(
+            steps=[
+                HttpStep(
                     name="r1",
                     method="POST",
                     url="http://x",
@@ -73,7 +78,7 @@ class TestCollectRepeatNames(unittest.TestCase):
                 ),
             ]
         )
-        self.assertEqual(collect_repeat_names(cfg), {"key"})
+        self.assertEqual(collect_repeat_names(spec), {"key"})
 
 
 class TestBuildRepeatIterations(unittest.TestCase):
@@ -115,58 +120,69 @@ class TestRunWithRepeat(unittest.TestCase):
 
     def test_workflow_iterates_per_index(self):
         base = f"http://127.0.0.1:{self.port}"
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="echo",
-                    method="GET",
-                    url=f"{base}/echo?id=${{repeat.id}}&label=${{repeat.label}}",
-                    capture={"got": "path"},
-                ),
-            ]
-        )
-        buf = io.StringIO()
-        run(
-            cfg,
-            repeat_vars={"id": ["1", "2", "3"], "label": ["a", "b", "c"]},
-            out=buf,
-        )
-        output = buf.getvalue()
-        self.assertIn("/echo?id=1&label=a", output)
-        self.assertIn("/echo?id=2&label=b", output)
-        self.assertIn("/echo?id=3&label=c", output)
-        self.assertIn("=== repeat iteration 1/3", output)
-        self.assertIn("=== repeat iteration 3/3", output)
-
-    def test_missing_repeat_vars_raises(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="echo",
-                    method="GET",
-                    url=f"http://127.0.0.1:{self.port}/echo?id=${{repeat.id}}",
-                ),
-            ]
-        )
-        with self.assertRaisesRegex(ValueError, "missing for"):
-            run(cfg, out=io.StringIO())
-
-    def test_mismatched_lengths_raises(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="echo",
-                    method="GET",
-                    url=f"http://127.0.0.1:{self.port}/echo?a=${{repeat.a}}&b=${{repeat.b}}",
-                ),
-            ]
-        )
-        with self.assertRaisesRegex(ValueError, "value counts must match"):
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "echo"
+                method = "GET"
+                url = "{base}/echo?id=${{repeat.id}}&label=${{repeat.label}}"
+                capture = ["got = path"]
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
             run(
                 cfg,
-                repeat_vars={"a": ["1", "2"], "b": ["x"]},
-                out=io.StringIO(),
+                repeat_vars={"id": ["1", "2", "3"], "label": ["a", "b", "c"]},
+                out=buf,
             )
+            output = buf.getvalue()
+            self.assertIn("/echo?id=1&label=a", output)
+            self.assertIn("/echo?id=2&label=b", output)
+            self.assertIn("/echo?id=3&label=c", output)
+            self.assertIn("=== repeat iteration 1/3", output)
+            self.assertIn("=== repeat iteration 3/3", output)
+        finally:
+            os.unlink(path)
+
+    def test_missing_repeat_vars_raises(self):
+        base = f"http://127.0.0.1:{self.port}"
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "echo"
+                method = "GET"
+                url = "{base}/echo?id=${{repeat.id}}"
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            with self.assertRaisesRegex(ValueError, "missing for"):
+                run(cfg, out=io.StringIO())
+        finally:
+            os.unlink(path)
+
+    def test_mismatched_lengths_raises(self):
+        base = f"http://127.0.0.1:{self.port}"
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "echo"
+                method = "GET"
+                url = "{base}/echo?a=${{repeat.a}}&b=${{repeat.b}}"
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            with self.assertRaisesRegex(ValueError, "value counts must match"):
+                run(
+                    cfg,
+                    repeat_vars={"a": ["1", "2"], "b": ["x"]},
+                    out=io.StringIO(),
+                )
+        finally:
+            os.unlink(path)
 
 
 class TestGeneratedScriptWithRepeat(unittest.TestCase):
@@ -183,8 +199,6 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
         cls.server.server_close()
 
     def test_generated_script_repeats(self):
-        from httpflow import config as cfg_mod
-
         base = f"http://127.0.0.1:{self.port}"
         toml_text = textwrap.dedent(f"""
             [[requests]]
@@ -238,8 +252,6 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
 
     def test_generated_script_without_repeat_still_works(self):
         """Workflows that don't use ${repeat.*} keep their old single-run shape."""
-        from httpflow import config as cfg_mod
-
         base = f"http://127.0.0.1:{self.port}"
         toml_text = textwrap.dedent(f"""
             [[requests]]
@@ -268,8 +280,6 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
             self.assertNotIn("=== repeat iteration", res.stdout)
 
     def test_generated_script_parity_with_runner_for_repeat(self):
-        from httpflow import config as cfg_mod
-
         base = f"http://127.0.0.1:{self.port}"
         toml_text = textwrap.dedent(f"""
             [[requests]]
@@ -311,8 +321,6 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
 
     def test_embed_repeat_vars(self):
         """--repeat-vars embeds defaults so the script runs without args."""
-        from httpflow import config as cfg_mod
-
         base = f"http://127.0.0.1:{self.port}"
         toml_text = textwrap.dedent(f"""
             [[requests]]
@@ -358,8 +366,6 @@ class TestGeneratedScriptWithRepeat(unittest.TestCase):
 
     def test_partial_embed_repeat_vars(self):
         """Embedding one repeat var and passing the other at runtime works."""
-        from httpflow import config as cfg_mod
-
         base = f"http://127.0.0.1:{self.port}"
         toml_text = textwrap.dedent(f"""
             [[requests]]

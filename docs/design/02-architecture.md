@@ -8,13 +8,8 @@ httpflow/
 ├── config.py            # TOML読込み・バリデーション（出力は WorkflowSpec）
 ├── model.py             # WorkflowSpec / HttpStep / SleepStep / UntilSpec
 ├── runner.py            # ステップ実行エンジン＋変数ストア
-├── embedded_runtime.py  # 旧 monolithic runtime の互換 shim（非推奨）
 ├── generator.py         # WorkflowSpec → standalone .py emitter
-├── httpclient.py        # urllib ベースの HTTP クライアント（runtime.http ラッパー）
 ├── template.py          # テンプレート展開エンジン（runtime.core ラッパー）
-├── masking.py           # ログ出力用マスキング（runtime.mask ラッパー）
-├── until.py             # until 条件評価（runtime.until ラッパー）
-├── workflow.py          # backward-compatible shim → runner
 ├── runtime/             # 本体と生成スクリプトの両方で使う helper
 │   ├── __init__.py
 │   ├── core.py          # render / render_mapping / TemplateError
@@ -69,7 +64,7 @@ class SleepStep:
     seconds: str                     # テンプレート式、実行時に評価
     description: str | None = None
 
-type Step = HttpStep | SleepStep
+Step: TypeAlias = HttpStep | SleepStep
 
 @dataclass
 class WorkflowSpec:
@@ -99,12 +94,7 @@ class WorkflowSpec:
 本体では `from .runtime.core import render` や `from .runtime.http import run_step` として import して使う。
 生成時は `runtime/*.py` のソーステキストを選んでフラット化し、`{{RUNTIME_HELPERS}}` に埋め込む。
 
-## 3.4 httpflow/embedded_runtime.py（互換 shim）
-
-旧 monolithic runtime。現在は `httpflow.runtime.*` への re-export shim として残しており、
-外部コードからの `from httpflow.embedded_runtime import render` 等を維持している。
-
-## 3.5 httpflow/runner.py
+## 3.4 httpflow/runner.py
 
 - `WorkflowSpec` を受け取り、ステップを順次実行
 - 各ステップ実行前にテンプレート展開 (`run_step` 内で実施)
@@ -112,7 +102,7 @@ class WorkflowSpec:
 - 後続ステップで参照可能にする
 - `repeat_vars` による反復実行
 - `until` 条件付きポーリング対応
-- **責務は「実行順序と store 更新」のみ**。出力整形はすべて `embedded_runtime.run_step` に委譲
+- **責務は「実行順序と store 更新」のみ**。出力整形はすべて `runtime.http.run_step` に委譲
 
 ## 3.5 httpflow/generator.py
 
@@ -123,12 +113,7 @@ class WorkflowSpec:
 - 生成後に `compile()` で構文検証
 - **主要な** ランタイム実装文字列を持たない（共通 helper は `httpflow/runtime/*.py` を source-of-truth とする）
 
-## 3.6 httpflow/workflow.py
-
-後方互換シム。`from .runner import collect_repeat_names, run` のみエクスポート。
-既存テストや外部コードからの `from httpflow.workflow import run` 等を維持する。
-
-## 3.7 httpflow/cli.py
+## 3.6 httpflow/cli.py
 
 - `argparse` で `-f`, `-v`, `--repeat-vars` をパース
 - `-v key=value` を複数回受け取り `vars` 名前空間に格納

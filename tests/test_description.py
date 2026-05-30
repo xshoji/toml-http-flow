@@ -1,3 +1,5 @@
+"""Tests for httpflow.step descriptions (HTTP and SLEEP)."""
+
 import io
 import json
 import os
@@ -12,9 +14,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from httpflow import config as cfg_mod
-from httpflow import generator
-from httpflow.config import RequestConfig, WorkflowConfig
-from httpflow.workflow import run
+from httpflow import generator, runner
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -114,94 +114,112 @@ url         = "0.01"
 
 class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
     def test_description_printed_for_http(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="ping",
-                    method="GET",
-                    url=f"http://127.0.0.1:{self.port}/",
-                    description="Verify upstream reachability",
-                ),
-            ]
-        )
-        buf = io.StringIO()
-        run(cfg, out=buf)
-        out = buf.getvalue()
-        self.assertIn("# Verify upstream reachability", out)
-        # Description must appear after the ==> line and before the > request line.
-        arrow_idx = out.index("==> ")
-        desc_idx = out.index("# Verify")
-        req_idx = out.index("> GET")
-        self.assertLess(arrow_idx, desc_idx)
-        self.assertLess(desc_idx, req_idx)
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "ping"
+                method = "GET"
+                url = "http://127.0.0.1:{self.port}/"
+                description = "Verify upstream reachability"
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            runner.run(cfg, out=buf)
+            out = buf.getvalue()
+            self.assertIn("# Verify upstream reachability", out)
+            # Description must appear after the ==> line and before the > request line.
+            arrow_idx = out.index("==> ")
+            desc_idx = out.index("# Verify")
+            req_idx = out.index("> GET")
+            self.assertLess(arrow_idx, desc_idx)
+            self.assertLess(desc_idx, req_idx)
+        finally:
+            os.unlink(path)
 
     def test_description_printed_in_quiet_mode(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="ping",
-                    method="GET",
-                    url=f"http://127.0.0.1:{self.port}/",
-                    description="Should still show in quiet mode",
-                ),
-            ]
-        )
-        buf = io.StringIO()
-        run(cfg, quiet=True, out=buf)
-        out = buf.getvalue()
-        self.assertIn("# Should still show in quiet mode", out)
-        # quiet still suppresses the detailed `> GET` lines.
-        self.assertNotIn("> GET ", out)
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "ping"
+                method = "GET"
+                url = "http://127.0.0.1:{self.port}/"
+                description = "Should still show in quiet mode"
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            runner.run(cfg, quiet=True, out=buf)
+            out = buf.getvalue()
+            self.assertIn("# Should still show in quiet mode", out)
+            # quiet still suppresses the detailed `> GET` lines.
+            self.assertNotIn("> GET ", out)
+        finally:
+            os.unlink(path)
 
     def test_description_multiline_printed_one_line_each(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="ping",
-                    method="GET",
-                    url=f"http://127.0.0.1:{self.port}/",
-                    description="line A\nline B",
-                ),
-            ]
-        )
-        buf = io.StringIO()
-        run(cfg, out=buf)
-        out = buf.getvalue()
-        self.assertIn("# line A", out)
-        self.assertIn("# line B", out)
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "ping"
+                method = "GET"
+                url = "http://127.0.0.1:{self.port}/"
+                description = '''
+                line A
+                line B
+                '''
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            runner.run(cfg, out=buf)
+            out = buf.getvalue()
+            self.assertIn("# line A", out)
+            self.assertIn("# line B", out)
+        finally:
+            os.unlink(path)
 
     def test_description_on_sleep_step(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="wait",
-                    method="SLEEP",
-                    url="0.01",
-                    description="Wait for downstream",
-                ),
-            ]
-        )
-        buf = io.StringIO()
-        start = time.monotonic()
-        run(cfg, out=buf)
-        self.assertGreaterEqual(time.monotonic() - start, 0.01)
-        self.assertIn("# Wait for downstream", buf.getvalue())
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent("""\
+                [[requests]]
+                name = "wait"
+                method = "SLEEP"
+                url = "0.01"
+                description = "Wait for downstream"
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            start = time.monotonic()
+            runner.run(cfg, out=buf)
+            self.assertGreaterEqual(time.monotonic() - start, 0.01)
+            self.assertIn("# Wait for downstream", buf.getvalue())
+        finally:
+            os.unlink(path)
 
     def test_no_description_no_comment_line(self):
-        cfg = WorkflowConfig(
-            requests=[
-                RequestConfig(
-                    name="ping",
-                    method="GET",
-                    url=f"http://127.0.0.1:{self.port}/",
-                ),
-            ]
-        )
-        buf = io.StringIO()
-        run(cfg, out=buf)
-        # Make sure we don't print a stray "    # " line when description is unset.
-        for line in buf.getvalue().splitlines():
-            self.assertFalse(line.startswith("    # "), msg=line)
+        path = tempfile.mkstemp(suffix=".toml")[1]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(f"""\
+                [[requests]]
+                name = "ping"
+                method = "GET"
+                url = "http://127.0.0.1:{self.port}/"
+            """))
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            runner.run(cfg, out=buf)
+            # Make sure we don't print a stray "    # " line when description is unset.
+            for line in buf.getvalue().splitlines():
+                self.assertFalse(line.startswith("    # "), msg=line)
+        finally:
+            os.unlink(path)
 
 
 class TestGeneratorDescription(_ServerMixin, unittest.TestCase):

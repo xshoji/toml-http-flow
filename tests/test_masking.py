@@ -1,15 +1,16 @@
-"""Tests for httpflow.masking and its integration in workflow output."""
+"""Tests for httpflow.runtime.mask and its integration in workflow output."""
 
 import io
 import json
 import os
+import tempfile
+import textwrap
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from httpflow import masking
-from httpflow.config import RequestConfig, WorkflowConfig
-from httpflow.workflow import run
+from httpflow import config as cfg_mod
+from httpflow import runner
 
 
 # ----------------------------------------------------------------- env utils
@@ -49,15 +50,19 @@ def _clean_env():
 
 class TestNorm(unittest.TestCase):
     def test_case_separator_insensitive(self):
-        self.assertEqual(masking._norm("API_Key"), "apikey")
-        self.assertEqual(masking._norm("X-Auth-Token"), "xauthtoken")
-        self.assertEqual(masking._norm("api key"), "apikey")
+        from httpflow.runtime.mask import _mask_norm
+
+        self.assertEqual(_mask_norm("API_Key"), "apikey")
+        self.assertEqual(_mask_norm("X-Auth-Token"), "xauthtoken")
+        self.assertEqual(_mask_norm("api key"), "apikey")
 
 
 class TestMaskJson(unittest.TestCase):
     def test_recursive(self):
+        from httpflow.runtime.mask import mask
+
         with _clean_env():
-            out = masking.mask(
+            out = mask(
                 '{"user":"u","password":"p","nested":{"access_token":"t","keep":"k"}}'
             )
         parsed = json.loads(out)
@@ -67,8 +72,10 @@ class TestMaskJson(unittest.TestCase):
         self.assertEqual(parsed["nested"]["keep"], "k")
 
     def test_list_of_dicts(self):
+        from httpflow.runtime.mask import mask
+
         with _clean_env():
-            out = masking.mask(
+            out = mask(
                 '{"items":[{"name":"a","secret":"s1"},{"name":"b","secret":"s2"}]}'
             )
         parsed = json.loads(out)
@@ -76,15 +83,19 @@ class TestMaskJson(unittest.TestCase):
         self.assertEqual(parsed["items"][1]["name"], "b")
 
     def test_disabled(self):
+        from httpflow.runtime.mask import mask
+
         with _clean_env():
             text = '{"password":"p"}'
-            self.assertEqual(masking.mask(text, disabled=True), text)
+            self.assertEqual(mask(text, disabled=True), text)
 
 
 class TestMaskFormUrlencoded(unittest.TestCase):
     def test_basic(self):
+        from httpflow.runtime.mask import mask
+
         with _clean_env():
-            out = masking.mask("user=u&password=p&token=abc")
+            out = mask("user=u&password=p&token=abc")
         self.assertIn("user=u", out)
         self.assertIn("password=***", out)
         self.assertIn("token=***", out)
@@ -92,61 +103,77 @@ class TestMaskFormUrlencoded(unittest.TestCase):
 
 class TestMaskPlainText(unittest.TestCase):
     def test_untouched(self):
+        from httpflow.runtime.mask import mask
+
         with _clean_env():
-            out = masking.mask("just a plain message")
+            out = mask("just a plain message")
         self.assertEqual(out, "just a plain message")
 
 
 class TestMaskHeaders(unittest.TestCase):
     def test_defaults_mask_authorization_and_cookie(self):
+        from httpflow.runtime.mask import mask_value
+
         with _clean_env():
             headers = {
                 "Authorization": "Bearer secret-token",
                 "Cookie": "sid=abc",
                 "Accept": "application/json",
             }
-            out = {k: masking.mask_value(k, v) for k, v in headers.items()}
+            out = {k: mask_value(k, v) for k, v in headers.items()}
         self.assertEqual(out["Authorization"], "***")
         self.assertEqual(out["Cookie"], "***")
         self.assertEqual(out["Accept"], "application/json")
 
     def test_extra_env_adds_x_trace_id(self):
+        from httpflow.runtime.mask import mask_value
+
         with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
             headers = {
                 "Authorization": "Bearer x",
                 "X-Trace-Id": "trace-1",
             }
-            out = {k: masking.mask_value(k, v) for k, v in headers.items()}
+            out = {k: mask_value(k, v) for k, v in headers.items()}
         self.assertEqual(out["Authorization"], "***")
         self.assertEqual(out["X-Trace-Id"], "***")
 
 
 class TestMaskUrl(unittest.TestCase):
     def test_query_token_masked(self):
+        from httpflow.runtime.mask import mask_url
+
         with _clean_env():
-            out = masking.mask_url("https://x/api?token=abc&page=2")
+            out = mask_url("https://x/api?token=abc&page=2")
         self.assertIn("token=***", out)
         self.assertIn("page=2", out)
 
     def test_no_query_unchanged(self):
+        from httpflow.runtime.mask import mask_url
+
         with _clean_env():
             url = "https://x/api"
-            self.assertEqual(masking.mask_url(url), url)
+            self.assertEqual(mask_url(url), url)
 
 
 class TestMaskValue(unittest.TestCase):
     def test_sensitive_name_masked(self):
+        from httpflow.runtime.mask import mask_value
+
         with _clean_env():
-            self.assertEqual(masking.mask_value("token", "abc"), "***")
-            self.assertEqual(masking.mask_value("access_token", "abc"), "***")
+            self.assertEqual(mask_value("token", "abc"), "***")
+            self.assertEqual(mask_value("access_token", "abc"), "***")
 
     def test_non_sensitive_kept(self):
+        from httpflow.runtime.mask import mask_value
+
         with _clean_env():
-            self.assertEqual(masking.mask_value("user_id", 7), 7)
+            self.assertEqual(mask_value("user_id", 7), 7)
 
     def test_extra_env_masks_header_name_too(self):
+        from httpflow.runtime.mask import mask_value
+
         with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
-            self.assertEqual(masking.mask_value("X-Trace-Id", "trace-1"), "***")
+            self.assertEqual(mask_value("X-Trace-Id", "trace-1"), "***")
 
 
 # ----------------------------------------------------------------- workflow integration
@@ -190,24 +217,34 @@ class TestWorkflowMasking(unittest.TestCase):
         cls.server.server_close()
 
     def _run(self, no_mask=False, env=None):
-        cfg = WorkflowConfig(requests=[
-            RequestConfig(
-                name="auth",
-                method="POST",
-                url=f"http://127.0.0.1:{self.port}/auth?token=qparam-secret&keep=ok",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer real-secret",
-                    "X-Trace-Id": "trace-123",
-                },
-                body='{"user":"alice","password":"hunter2"}',
-                capture={"token": "access_token", "user": "user"},
-            ),
-        ])
-        buf = io.StringIO()
-        with _clean_env(), _EnvScope(**(env or {})):
-            store = run(cfg, out=buf, no_mask=no_mask)
-        return buf.getvalue(), store
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""\
+            [[requests]]
+            name = "auth"
+            method = "POST"
+            url = "{base}/auth?token=qparam-secret&keep=ok"
+            headers = [
+                "Content-Type: application/json",
+                "Authorization: Bearer real-secret",
+                "X-Trace-Id: trace-123",
+            ]
+            body = '{{"user":"alice","password":"hunter2"}}'
+            capture = [
+                "token = access_token",
+                "user = user",
+            ]
+        """).encode("utf-8")
+        fd, path = tempfile.mkstemp(suffix=".toml")
+        with os.fdopen(fd, "wb") as f:
+            f.write(toml)
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            with _clean_env(), _EnvScope(**(env or {})):
+                store = runner.run(cfg, out=buf, no_mask=no_mask)
+            return buf.getvalue(), store
+        finally:
+            os.unlink(path)
 
     def test_defaults_mask_everything_sensible(self):
         output, store = self._run()
@@ -264,22 +301,29 @@ class TestWorkflowMasking(unittest.TestCase):
 
     def test_form_body_key_based_masking(self):
         """form body values must be masked by key name, not parsed as JSON/form."""
-        cfg = WorkflowConfig(requests=[
-            RequestConfig(
-                name="login",
-                method="POST",
-                url=f"http://127.0.0.1:{self.port}/auth",
-                body_form={
-                    "password": "hunter2",
-                    "note": "a=b",
-                    "metadata": '{"password":"x"}',
-                },
-            ),
-        ])
-        buf = io.StringIO()
-        with _clean_env():
-            run(cfg, out=buf)
-        output = buf.getvalue()
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""\
+            [[requests]]
+            name = "login"
+            method = "POST"
+            url = "{base}/auth"
+            body_form = [
+                "password = hunter2",
+                "note = a=b",
+                'metadata = {{"password":"x"}}',
+            ]
+        """).encode("utf-8")
+        fd, path = tempfile.mkstemp(suffix=".toml")
+        with os.fdopen(fd, "wb") as f:
+            f.write(toml)
+        try:
+            cfg = cfg_mod.load(path)
+            buf = io.StringIO()
+            with _clean_env():
+                runner.run(cfg, out=buf)
+            output = buf.getvalue()
+        finally:
+            os.unlink(path)
         # Sensitive key masked
         self.assertIn("password = ***", output)
         self.assertNotIn("hunter2", output)
