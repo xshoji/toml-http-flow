@@ -8,4 +8,4 @@
 - 特殊ステップの追加 (`SLEEP` 以外の制御フロー等)
 - `until` の condition で数値比較（`>`, `<`, `>=`, `<=`）や論理演算（`&&`, `||`）
 - `generate --strip-secrets` で機密ヘッダー/フィールドを除外して書き出し
-- `generate --format curl` で curl コマンド列としても書き出せるようにする
+- `generate --format curl` で curl コマンド列としても書き出せるようにする → **bash スクリプト生成（`--format bash`）として実装済み**

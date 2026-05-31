@@ -4,16 +4,12 @@
 `run` は省略可能（後方互換のため、サブコマンド未指定時は `run` 扱い）。
 
 ```bash
-# ワークフローを実行（基本）
-python -m httpflow run -f workflow.toml
-python -m httpflow     -f workflow.toml          # run 省略形
-
-# 変数注入
-python -m httpflow run -f workflow.toml -v env=production -v user_id=123
-
-# 単一の Python スクリプトを生成
+# Python スクリプト生成（既定）
 python -m httpflow generate -f workflow.toml -o workflow.py
-python -m httpflow generate -f workflow.toml    # 標準出力に出力
+python -m httpflow generate -f workflow.toml                 # 標準出力に出力
+
+# bash スクリプト生成
+python -m httpflow generate -f workflow.toml --format bash -o workflow.sh
 ```
 
 ## 6.1 サブコマンド: `run`
@@ -180,10 +176,11 @@ python -m httpflow run -f workflow.toml -s getToken -s getUser
 | 引数               | 必須 | 説明                                              |
 |--------------------|------|---------------------------------------------------|
 | `-f`, `--file`     | ○    | 入力ワークフローTOMLファイルのパス                |
-| `-o`, `--output`   | -    | 出力先 .py ファイル（省略時は標準出力）           |
+| `-o`, `--output`   | -    | 出力先スクリプトファイル（省略時は標準出力）           |
+| `--format`         | -    | 出力形式 `python` または `bash`（既定: `python`） |
 | `-v`, `--var`      | -    | 生成スクリプトの `DEFAULT_VARS` に埋め込む変数（実行時に `-v` で上書き可能） |
 | `--repeat-vars`    | -    | 生成スクリプトの `DEFAULT_REPEAT_VARS` に埋め込む `${repeat.K}` 用リスト（実行時に `--repeat-vars` で上書き可能） |
-| `--shebang`        | -    | 先頭に `#!/usr/bin/env python3` を付与（実行権付き） |
+| `--shebang`        | -    | 先頭に shebang を付与（`python` → `#!/usr/bin/env python3`、`bash` → `#!/usr/bin/env bash`）し、実行権を付与 |
 | `-h`, `--help`     | -    | ヘルプ表示                                        |
 
 ### 6.2.1 埋め込みの挙動

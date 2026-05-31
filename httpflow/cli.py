@@ -69,13 +69,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gen = sub.add_parser("generate", help="emit a standalone runner script")
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
     p_gen.add_argument("-o", "--output", default=None,
-                       help="output .py file (default: stdout)")
+                       help="output script file (default: stdout)")
+    p_gen.add_argument("--format", choices=["python", "bash"], default="python",
+                       help="output format (default: python)")
     p_gen.add_argument("-v", "--var", action="append", default=[],
                        help="default variable embedded in the generated script (repeatable)")
     p_gen.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
                        help="default repeat variables embedded in the generated script (repeatable)")
     p_gen.add_argument("--shebang", action="store_true",
-                       help="prepend #!/usr/bin/env python3 and chmod +x the output file")
+                       help="prepend shebang and chmod +x the output file")
     return parser
 
 
@@ -118,12 +120,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         default_vars = _parse_vars(args.var)
         repeat_vars = _parse_repeat_vars(args.repeat_vars)
         try:
-            script = generator.generate(
-                cfg,
-                default_vars=default_vars,
-                default_repeat_vars=repeat_vars if repeat_vars else None,
-                shebang=args.shebang,
-            )
+            if args.format == "python":
+                script = generator.generate(
+                    cfg,
+                    default_vars=default_vars,
+                    default_repeat_vars=repeat_vars if repeat_vars else None,
+                    shebang=args.shebang,
+                )
+            else:
+                from . import bash_generator
+                script = bash_generator.generate(
+                    cfg,
+                    default_vars=default_vars,
+                    default_repeat_vars=repeat_vars if repeat_vars else None,
+                    shebang=args.shebang,
+                )
         except Exception as e:
             print(f"error generating script: {e}", file=sys.stderr)
             return 1
