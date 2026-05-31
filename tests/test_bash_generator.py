@@ -132,8 +132,8 @@ class TestBashGenerator(unittest.TestCase):
             body = '{"name":"${var.user}","id":"${repeat.id}"}'
         """)
         script = self._generate_and_check(toml)
-        self.assertIn('url="http://example.com/${VAR_env}?id=${REPEAT_id}"', script)
-        self.assertIn('{"name":"${VAR_user}","id":"${REPEAT_id}"}', script)
+        self.assertIn('url="http://example.com/${VAR_ENV}?id=${REPEAT_ID}"', script)
+        self.assertIn('{"name":"${VAR_USER}","id":"${REPEAT_ID}"}', script)
 
     def test_no_bash4_features(self):
         """Ensure no bash 4+ only syntax slips in."""
@@ -305,6 +305,79 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn("mypass", res.stdout)
         self.assertNotIn('"password":"secret"', res.stdout)
 
+    def test_default_vars_embedded_in_bash_script(self):
+        """-v K=V in generate --format bash embeds default VAR_* values."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "echo"
+            method = "POST"
+            url = "http://example.com/${var.env}?id=${repeat.id}"
+            body = '{"name":"${var.user}","id":"${repeat.id}"}'
+        """)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(
+                wf,
+                default_vars={"env": "prod", "user": "alice"},
+                default_repeat_vars={"id": ["1", "2"]},
+            )
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
 
-if __name__ == "__main__":
-    unittest.main()
+            syntax = subprocess.run(
+                ["bash", "-n", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(
+                syntax.returncode, 0,
+                msg=f"syntax error:\n{syntax.stderr}\n--- script ---\n{script}",
+            )
+
+            self.assertIn(': "${VAR_ENV:=prod}"', script)
+            self.assertIn(': "${VAR_USER:=alice}"', script)
+            self.assertIn(': "${REPEAT_ID:=1,2}"', script)
+            # Ensure they are defined *before* main / step functions so they act as defaults
+            defaults_pos = script.find("# ─── defaults")
+            steps_pos = script.find("# ─── step functions")
+            self.assertGreater(defaults_pos, -1)
+            self.assertGreater(steps_pos, -1)
+            self.assertLess(defaults_pos, steps_pos)
+
+    def test_default_vars_overridable_at_runtime(self):
+        """Embedded default vars can be overridden by exporting before running."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/${var.env}"
+        """)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(
+                wf,
+                default_vars={"env": "default_env"},
+            )
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+
+            # Without override: url should contain default value
+            res = subprocess.run(
+                ["bash", "-c", f"source {script_path} >/dev/null; echo 'http://example.com/'\"${{VAR_ENV}}\""],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertIn("default_env", res.stdout)
+
+            # With override
+            res2 = subprocess.run(
+                ["bash", "-c",
+                 f"VAR_ENV=overridden; source {script_path} >/dev/null; echo \"http://example.com/${{VAR_ENV}}\""],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertIn("overridden", res2.stdout)
+

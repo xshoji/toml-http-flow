@@ -132,6 +132,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 script = bash_generator.generate(
                     cfg,
                     shebang=args.shebang,
+                    default_vars=default_vars,
+                    default_repeat_vars=repeat_vars if repeat_vars else None,
                 )
         except Exception as e:
             print(f"error generating script: {e}", file=sys.stderr)
