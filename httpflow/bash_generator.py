@@ -1,8 +1,9 @@
 """Generate a standalone single-file bash runner from a WorkflowSpec.
 
 This is the *simplified* bash generator: no capture, mask, until, repeat,
-nor template rendering engine.  Values are read straight from environment
-variables and expanded by the shell itself.
+nor full template rendering engine.  Values are read straight from environment
+variables and expanded by the shell itself, with only random UUID placeholders
+handled by small bash helpers.
 """
 
 from __future__ import annotations
@@ -42,11 +43,25 @@ def _urlencode_fields(fields: dict[str, str]) -> str:
     return "&".join(parts)
 
 
+def _bash_dq(s: str) -> str:
+    """Double-quote a string for bash while preserving shell expansion."""
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def _render_expr(s: str) -> str:
+    """Return a readable bash expression with random UUID placeholders expanded."""
+    return _bash_dq(
+        s.replace("${random.UUID_HEX}", "$(uuid_hex)")
+        .replace("${random.UUID}", "$(uuid)")
+    )
+
+
 def _emit_http(step: HttpStep, fn: str) -> str:
     """Emit a simple HTTP step as a bash function."""
     out: list[str] = [
         f"{fn}() {{",
-        f'    echo "==> [{step.name}] {step.method.upper()} $url"',
+        f"    url={_render_expr(step.url)}",
+        f'    echo "==> [{step.name}] {step.method.upper()} $(mask "$url")"',
     ]
 
     if step.description:
@@ -61,15 +76,20 @@ def _emit_http(step: HttpStep, fn: str) -> str:
         case TextBody(text=t):
             has_body = True
             body_var = "__BODY"
-            out.append(f'    read -r -d "" {body_var} <<\'EOF\'')
-            out.append(t)
+            out.append(f'    read -r -d "" {body_var} <<EOF')
+            out.append(
+                t.replace("${random.UUID_HEX}", "$(uuid_hex)")
+                .replace("${random.UUID}", "$(uuid)")
+            )
             out.append("EOF")
             # Add trailing newline to match curl --data behaviour
             out.append(f'    {body_var}="${{{body_var}}}$(printf "\\n")"')
+            out.append(f'    echo "> body: $(mask "${body_var}")"')
         case FormBody(fields=f):
             has_body = True
             body_var = "__BODY"
-            out.append(f'    {body_var}={_bash_sq(_urlencode_fields(f))}')
+            out.append(f'    {body_var}={_render_expr(_urlencode_fields(f))}')
+            out.append(f'    echo "> body: $(mask "${body_var}")"')
         case _:
             pass
 
@@ -78,7 +98,10 @@ def _emit_http(step: HttpStep, fn: str) -> str:
     out.append(f'    cmd+=(-X {step.method.upper()})')
 
     for k, v in step.headers.items():
-        out.append(f'    cmd+=(-H {_bash_sq(f"{k}: {v}")})')
+        header_expr = _render_expr(f"{k}: {v}")
+        out.append(f"    header={header_expr}")
+        out.append('    echo "> $(mask "$header")"')
+        out.append('    cmd+=(-H "$header")')
 
     if isinstance(step.body, FormBody):
         out.append('    cmd+=(-H "Content-Type: application/x-www-form-urlencoded")')
@@ -98,12 +121,13 @@ def _emit_sleep(step: SleepStep, fn: str) -> str:
     """Emit a SLEEP step as a bash function."""
     out = [
         f"{fn}() {{",
-        f'    echo "==> [{step.name}] SLEEP {step.seconds}"',
+        f"    seconds={_render_expr(step.seconds)}",
+        f'    echo "==> [{step.name}] SLEEP $seconds"',
     ]
     if step.description:
         for dl in step.description.splitlines():
             out.append(f'    echo "    # {dl}"')
-    out.append(f'    sleep {step.seconds}')
+    out.append('    sleep "$seconds"')
     out.append("}")
     return "\n".join(out)
 
@@ -147,6 +171,20 @@ set -uo pipefail
 
 # Dependencies
 curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
+
+MASK_KEYS='authorization|cookie|set-cookie|password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|auth_token|session_token|api_key|apikey|private_key|pass'
+
+mask() {{
+    sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"'\\1\\3***'"'/Ig'
+}}
+
+uuid() {{
+    python3 -c 'import uuid; print(uuid.uuid4())'
+}}
+
+uuid_hex() {{
+    python3 -c 'import uuid; print(uuid.uuid4().hex)'
+}}
 """
 
     if blocks:

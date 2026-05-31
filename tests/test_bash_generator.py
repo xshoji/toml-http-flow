@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+import uuid
 from pathlib import Path
 
 from httpflow import config as cfg_mod
@@ -59,7 +60,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_create()", script)
-        self.assertIn("read -r -d \"\" __BODY <<'EOF'", script)
+        self.assertIn("read -r -d \"\" __BODY <<EOF", script)
         self.assertIn('{"name":"test"}', script)
         self.assertIn('cmd+=(-d', script)
         self.assertIn('"$__BODY"', script)
@@ -86,7 +87,20 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_wait()", script)
-        self.assertIn("sleep 0.05", script)
+        self.assertIn('seconds="0.05"', script)
+        self.assertIn('sleep "$seconds"', script)
+
+    def test_sleep_step_with_shell_variable(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "wait"
+            method = "SLEEP"
+            url = "${WAIT_SECONDS}"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn('seconds="${WAIT_SECONDS}"', script)
+        self.assertIn('echo "==> [wait] SLEEP $seconds"', script)
+        self.assertIn('sleep "$seconds"', script)
 
     def test_shebang(self):
         toml = textwrap.dedent("""
@@ -149,6 +163,91 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("# health check", script)
+
+    def test_random_uuid_placeholders(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "create"
+            method = "POST"
+            url = "http://example.com/items/${random.UUID_HEX}"
+            headers = ["X-Request-Id: ${random.UUID}"]
+            body = '{"request_id":"${random.UUID}"}'
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("uuid()", script)
+        self.assertIn("uuid_hex()", script)
+        self.assertIn('url="http://example.com/items/$(uuid_hex)"', script)
+        self.assertIn('header="X-Request-Id: $(uuid)"', script)
+        self.assertIn('cmd+=(-H "$header")', script)
+        self.assertIn('{"request_id":"$(uuid)"}', script)
+
+    def test_generated_uuid_helpers_return_valid_values(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", "-c", f"source {script_path} >/dev/null; uuid; uuid_hex"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        uuid_value, uuid_hex_value = res.stdout.splitlines()
+        self.assertEqual(str(uuid.UUID(uuid_value)), uuid_value)
+        self.assertEqual(uuid.UUID(hex=uuid_hex_value).hex, uuid_hex_value)
+
+    def test_masking_is_emitted_for_logs(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "login"
+            method = "POST"
+            url = "http://example.com/auth?token=url-secret&keep=ok"
+            headers = ["Authorization: Bearer header-secret"]
+            body_form = ["user = alice", "password = body-secret"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("mask()", script)
+        self.assertIn('$(mask "$url")', script)
+        self.assertIn('echo "> $(mask "$header")"', script)
+        self.assertIn('echo "> body: $(mask "$__BODY")"', script)
+
+    def test_generated_mask_helper_masks_simple_values(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {script_path} >/dev/null; "
+                    "printf '%s\n' 'token=abc&keep=ok' "
+                    "'Authorization: Bearer secret' "
+                    "'{\"password\":\"p\",\"user\":\"u\"}' | mask",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertIn("token=***", res.stdout)
+        self.assertIn("Authorization: ***", res.stdout)
+        self.assertIn('"password":***', res.stdout)
+        self.assertNotIn("abc", res.stdout)
+        self.assertNotIn("Bearer secret", res.stdout)
 
 
 if __name__ == "__main__":
