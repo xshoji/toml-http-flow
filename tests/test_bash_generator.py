@@ -46,7 +46,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_ping()", script)
-        self.assertIn('curl -sS -L -w "%{http_code}"', script)
+        self.assertIn('curl -sS -L -v -w "%{http_code}"', script)
         self.assertIn('-X GET', script)
 
     def test_post_with_body(self):
@@ -60,7 +60,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_create()", script)
-        self.assertIn("read -r -d \"\" __BODY <<EOF", script)
+        self.assertIn("local __BODY=$(cat << EOF", script)
         self.assertIn('{"name":"test"}', script)
         self.assertIn('cmd+=(-d', script)
         self.assertIn('"$__BODY"', script)
@@ -121,7 +121,19 @@ class TestBashGenerator(unittest.TestCase):
             url = "http://example.com/ping?id=$ITEM_ID"
         """)
         script = self._generate_and_check(toml)
-        self.assertIn('"$url"', script)
+        self.assertIn('cmd+=("$url")', script)
+
+    def test_var_and_repeat_placeholders_become_shell_env_names(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "echo"
+            method = "POST"
+            url = "http://example.com/${var.env}?id=${repeat.id}"
+            body = '{"name":"${var.user}","id":"${repeat.id}"}'
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn('url="http://example.com/${VAR_env}?id=${REPEAT_id}"', script)
+        self.assertIn('{"name":"${VAR_user}","id":"${REPEAT_id}"}', script)
 
     def test_no_bash4_features(self):
         """Ensure no bash 4+ only syntax slips in."""
@@ -235,9 +247,9 @@ class TestBashGenerator(unittest.TestCase):
                     "bash",
                     "-c",
                     f"source {script_path} >/dev/null; "
-                    "printf '%s\n' 'token=abc&keep=ok' "
-                    "'Authorization: Bearer secret' "
-                    "'{\"password\":\"p\",\"user\":\"u\"}' | mask",
+                    "mask 'token=abc&keep=ok'; "
+                    "mask 'Authorization: Bearer secret'; "
+                    "mask '{\"password\":\"p\",\"user\":\"u\"}'",
                 ],
                 capture_output=True, text=True, timeout=10,
             )

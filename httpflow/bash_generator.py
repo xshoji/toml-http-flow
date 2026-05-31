@@ -53,6 +53,8 @@ def _render_expr(s: str) -> str:
     return _bash_dq(
         s.replace("${random.UUID_HEX}", "$(uuid_hex)")
         .replace("${random.UUID}", "$(uuid)")
+        .replace("${var.", "${VAR_")
+        .replace("${repeat.", "${REPEAT_")
     )
 
 
@@ -76,12 +78,14 @@ def _emit_http(step: HttpStep, fn: str) -> str:
         case TextBody(text=t):
             has_body = True
             body_var = "__BODY"
-            out.append(f'    read -r -d "" {body_var} <<EOF')
+            out.append(f'    local {body_var}=$(cat << EOF')
             out.append(
                 t.replace("${random.UUID_HEX}", "$(uuid_hex)")
                 .replace("${random.UUID}", "$(uuid)")
+                .replace("${var.", "${VAR_")
+                .replace("${repeat.", "${REPEAT_")
             )
-            out.append("EOF")
+            out.append("EOF)")
             # Add trailing newline to match curl --data behaviour
             out.append(f'    {body_var}="${{{body_var}}}$(printf "\\n")"')
             out.append(f'    echo "> body: $(mask "${body_var}")"')
@@ -94,7 +98,7 @@ def _emit_http(step: HttpStep, fn: str) -> str:
             pass
 
     # Build curl command line in a bash array for readability
-    out.append('    local -a cmd=(curl -sS -L -w "%{http_code}")')
+    out.append('    local -a cmd=(curl -sS -L -v -w "%{http_code}")')
     out.append(f'    cmd+=(-X {step.method.upper()})')
 
     for k, v in step.headers.items():
@@ -112,7 +116,7 @@ def _emit_http(step: HttpStep, fn: str) -> str:
     out.append(f'    cmd+=("$url")')
 
     # Execute
-    out.append('    "${cmd[@]}"')
+    out.append("    \"${cmd[@]}\" 2>&1 | grep -v '^\\*' |grep -v 'bytes data\\]'")
     out.append("}")
     return "\n".join(out)
 
@@ -175,7 +179,7 @@ curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 MASK_KEYS='authorization|cookie|set-cookie|password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|auth_token|session_token|api_key|apikey|private_key|pass'
 
 mask() {{
-    sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"'\\1\\3***'"'/Ig'
+    echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"'\\1\\3***'"'/Ig'
 }}
 
 uuid() {{

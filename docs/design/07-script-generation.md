@@ -150,7 +150,7 @@ HTTP リクエストには `curl` を利用する。
 | 依存関係       | 生成スクリプトは `bash` / `curl` のみ（`jq` 不要）                          |
 | 自己完結性     | 1ファイルで完結。`httpflow` パッケージには一切依存しない                   |
 | 可読性         | 1 `[[requests]]` ブロック = 1 `step_<name>()` 関数として展開             |
-| 変数展開       | **自前テンプレートエンジンは持たない**。`${random.UUID}` / `${random.UUID_HEX}` だけ bash ヘルパーで展開し、それ以外の `${...}` や `$VAR` はそのままシェルに渡す |
+| 変数展開       | **自前テンプレートエンジンは持たない**。`${random.UUID}` / `${random.UUID_HEX}` は bash ヘルパー、`${var.X}` は `${VAR_X}`、`${repeat.X}` は `${REPEAT_X}` に変換し、それ以外の `${...}` や `$VAR` はそのままシェルに渡す |
 | 未対応機能     | capture / until / repeat / pretty-json / --quiet / -v / --no-mask は生成スクリプトでは実装しない |
 
 ### 8.8.2 生成スクリプトの構造
@@ -169,8 +169,8 @@ workflow.sh
 - ステップ関数名はステップ名を `[A-Za-z0-9_]` に正規化し、衝突時は数字サフィックスで一意化
 - ログ出力時は `authorization` / `password` / `token` などの既定キーワードに対して、`sed` で値部分を `***` に置換する（JSON/form/query の構造保持は保証しない）
 - `${random.UUID}` は `uuid`、`${random.UUID_HEX}` は `uuid_hex` 関数呼び出しとして生成し、参照ごとに新しい UUID v4 を生成する
-- **HTTP ステップ**は関数内で `curl -sS -L -w "%{http_code}"` を `local -a cmd=(...)` 配列で構築して実行
-- **ボディ（text）**は `read -r -d "" __BODY <<'EOF'` による heredocument で渡す（シングルクォート含む値も安全）
+- **HTTP ステップ**は関数内で `curl -sS -L -v -w "%{http_code}"` を `local -a cmd=(...)` 配列で構築し、curl verbose のノイズを `grep -v` で除いて実行
+- **ボディ（text）**は `local __BODY=$(cat << EOF ... EOF)` による heredocument で渡す
 - **ボディ（form）**は urlencode 済み文字列をシングルクォートでインライン化し `Content-Type` ヘッダを自動付与
 - **SLEEP ステップ**は `sleep <seconds>` を実行
 - `main()` は step 呼び出しを1行ずつ並べるだけ（スキップ・並べ替えがコメントアウトで容易）
