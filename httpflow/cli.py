@@ -131,8 +131,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 from . import bash_generator
                 script = bash_generator.generate(
                     cfg,
-                    default_vars=default_vars,
-                    default_repeat_vars=repeat_vars if repeat_vars else None,
                     shebang=args.shebang,
                 )
         except Exception as e:
