@@ -116,7 +116,7 @@ def _emit_http(step: HttpStep, fn: str) -> str:
     out.append(f'    cmd+=("$url")')
 
     # Execute
-    out.append("    \"${cmd[@]}\" 2>&1 | grep -v '^\\*' |grep -v 'bytes data\\]'")
+    out.append("    \"${cmd[@]}\" 2>&1 | grep -v '^\\*' |grep -v 'bytes data\\]' | mask_lines")
     out.append("}")
     return "\n".join(out)
 
@@ -180,6 +180,12 @@ MASK_KEYS='authorization|cookie|set-cookie|password|passwd|pwd|secret|client_sec
 
 mask() {{
     echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"'\\1\\3***'"'/Ig'
+}}
+
+mask_lines() {{
+    while IFS= read -r LINE || [ -n "$LINE" ]; do
+        mask "$LINE"
+    done
 }}
 
 uuid() {{

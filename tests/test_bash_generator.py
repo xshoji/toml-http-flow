@@ -226,9 +226,11 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("mask()", script)
+        self.assertIn("mask_lines()", script)
         self.assertIn('$(mask "$url")', script)
         self.assertIn('echo "> $(mask "$header")"', script)
         self.assertIn('echo "> body: $(mask "$__BODY")"', script)
+        self.assertIn("| mask_lines", script)
 
     def test_generated_mask_helper_masks_simple_values(self):
         toml = textwrap.dedent("""
@@ -260,6 +262,48 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn('"password":***', res.stdout)
         self.assertNotIn("abc", res.stdout)
         self.assertNotIn("Bearer secret", res.stdout)
+
+    def test_mask_lines_masks_curl_like_output(self):
+        """mask_lines should mask sensitive fields in piped curl-like output."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {script_path} >/dev/null; "
+                    "printf '%s\n' "
+                      "\"Authorization: Bearer secret\" "
+                      "\"Set-Cookie: session=abc123\" "
+                      "\"token=url-secret\" "
+                      "\"< HTTP/1.1 200 OK\" "
+                      "\"< password: mypass\" "
+                      "\"{\\\"password\\\":\\\"secret\\\"}\" "
+                    "| mask_lines",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertIn("Authorization: ***", res.stdout)
+        self.assertIn("Set-Cookie: ***", res.stdout)
+        self.assertIn("token=***", res.stdout)
+        self.assertIn('"password":***', res.stdout)
+        self.assertIn("< HTTP/1.1 200 OK", res.stdout)
+        self.assertNotIn("Bearer secret", res.stdout)
+        self.assertNotIn("session=abc123", res.stdout)
+        self.assertNotIn("url-secret", res.stdout)
+        self.assertNotIn("mypass", res.stdout)
+        self.assertNotIn('"password":"secret"', res.stdout)
 
 
 if __name__ == "__main__":
