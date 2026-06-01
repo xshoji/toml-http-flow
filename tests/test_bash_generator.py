@@ -4,10 +4,58 @@ import tempfile
 import textwrap
 import unittest
 import uuid
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from httpflow import config as cfg_mod
 from httpflow import bash_generator
+
+
+class _CaptureHandler(BaseHTTPRequestHandler):
+    seen_auth = ""
+    seen_body = ""
+    me_count = 0
+
+    def _json(self, payload: dict[str, object], *, trace: str = "trace-1") -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Trace-Id", trace)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        type(self).seen_body = self.rfile.read(length).decode("utf-8")
+        if self.path == "/auth":
+            self._json({"access_token": "bash-token", "data": {"id": 7}})
+        elif self.path == "/edge":
+            self._json({"ok": False, "empty": "nil", "items": [{"access-token": "edge-token"}]})
+        else:
+            self._json({"ok": False})
+
+    def do_GET(self):
+        if self.path == "/me":
+            type(self).me_count += 1
+            type(self).seen_auth = self.headers.get("Authorization", "")
+            self._json({"ok": True})
+        elif self.path.startswith("/echo"):
+            self._json({"ok": True})
+        elif self.path == "/redir":
+            self.send_response(302)
+            self.send_header("Location", "/final")
+            self.send_header("X-Trace-Id", "redirect-trace")
+            self.end_headers()
+        elif self.path == "/final":
+            self._json({"ok": True})
+        else:
+            self._json({"ok": False})
+
+    def log_message(self, format, *args):
+        return
 
 
 @unittest.skipUnless(
@@ -15,6 +63,17 @@ from httpflow import bash_generator
     "bash and curl required",
 )
 class TestBashGenerator(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = HTTPServer(("127.0.0.1", 0), _CaptureHandler)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
 
     def _generate_and_check(self, toml_text: str, shebang: bool = False):
         """Generate script, check syntax, return script text."""
@@ -46,7 +105,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_ping()", script)
-        self.assertIn('curl -sS -L -v -w "%{http_code}"', script)
+        self.assertIn('curl -sS -L -D "$__RESP_HEADERS" -o "$__RESP_BODY" -w "%{http_code}"', script)
         self.assertIn('-X GET', script)
 
     def test_post_with_body(self):
@@ -60,7 +119,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_create()", script)
-        self.assertIn("local __BODY=$(cat << EOF", script)
+        self.assertIn("__BODY=$(cat << EOF", script)
         self.assertIn('{"name":"test"}', script)
         self.assertIn('cmd+=(-d', script)
         self.assertIn('"$__BODY"', script)
@@ -148,6 +207,152 @@ class TestBashGenerator(unittest.TestCase):
         for pat in forbidden:
             self.assertNotIn(pat, script, msg=f"bash 4+ feature found: {pat}")
 
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_capture_json_and_reuse_as_var(self):
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.seen_auth = ""
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "auth"
+            method = "POST"
+            url = "{base}/auth"
+            capture = ["token = access_token", "uid = response.body.data.id"]
+
+            [[requests]]
+            name = "me"
+            method = "GET"
+            url = "{base}/me"
+            headers = ["Authorization: Bearer ${{var.token}}", "X-User: ${{var.uid}}"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("jq is required for JSON capture", script)
+        self.assertIn("capture_json VAR_TOKEN", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("* capture token = '***'", res.stdout)
+        self.assertIn("* capture uid = '7'", res.stdout)
+        self.assertEqual(_CaptureHandler.seen_auth, "Bearer bash-token")
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_capture_json_false_null_array_and_hyphen_key(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "edge"
+            method = "POST"
+            url = "{base}/edge"
+            capture = [
+                "ok = ok",
+                "empty = empty",
+                "token = items[0].access-token",
+            ]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn(".[\"items\"]?[0]?[\"access-token\"]?", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("* capture ok = 'false'", res.stdout)
+        self.assertIn("* capture empty = 'nil'", res.stdout)
+        self.assertIn("* capture token = '***'", res.stdout)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_capture_headers_and_request_values(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "echo"
+            method = "POST"
+            url = "{base}/echo?x=1"
+            headers = ["Authorization: Bearer abc"]
+            body = '{{"hello":"world"}}'
+            capture = [
+                "ct = response.header.content-type",
+                "sent_auth = request.header.Authorization",
+                "called = request.url",
+                "sent_body = request.body",
+            ]
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("* capture ct = 'application/json'", res.stdout)
+        self.assertIn("* capture sent_auth = 'Bearer abc'", res.stdout)
+        self.assertIn(f"* capture called = '{base}/echo?x=1'", res.stdout)
+        self.assertIn("* capture sent_body = '{\"hello\":\"world\"}'", res.stdout)
+
+    def test_header_only_capture_does_not_require_jq(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "{base}/echo"
+            capture = ["ct = response.header.Content-Type"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertNotIn("jq --version", script)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_response_header_capture_uses_final_redirect_headers(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "redir"
+            method = "GET"
+            url = "{base}/redir"
+            capture = ["trace = response.header.X-Trace-Id"]
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertIn("tolower($0) ~ /^http", script)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_capture_failure_stops_later_steps(self):
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.me_count = 0
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "auth"
+            method = "POST"
+            url = "{base}/auth"
+            capture = ["missing = nope"]
+
+            [[requests]]
+            name = "me"
+            method = "GET"
+            url = "{base}/me"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("capture failed: missing <- nope", res.stderr)
+        self.assertEqual(_CaptureHandler.me_count, 0)
+
     def test_step_name_collision(self):
         """Duplicate sanitized names get numeric suffixes."""
         toml = textwrap.dedent("""
@@ -206,7 +411,7 @@ class TestBashGenerator(unittest.TestCase):
             script_path = Path(tmp) / "workflow.sh"
             script_path.write_text(script, encoding="utf-8")
             res = subprocess.run(
-                ["bash", "-c", f"source {script_path} >/dev/null; uuid; uuid_hex"],
+                ["bash", "-c", f"source {script_path} >/dev/null || true; uuid; uuid_hex"],
                 capture_output=True, text=True, timeout=10,
             )
 
@@ -230,7 +435,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn('$(mask "$url")', script)
         self.assertIn('echo "> $(mask "$header")"', script)
         self.assertIn('echo "> body: $(mask "$__BODY")"', script)
-        self.assertIn("| mask_lines", script)
+        self.assertIn('mask_lines < "$__RESP_BODY"', script)
 
     def test_generated_mask_helper_masks_simple_values(self):
         toml = textwrap.dedent("""
@@ -248,7 +453,7 @@ class TestBashGenerator(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    f"source {script_path} >/dev/null; "
+                    f"source {script_path} >/dev/null || true; "
                     "mask 'token=abc&keep=ok'; "
                     "mask 'Authorization: Bearer secret'; "
                     "mask '{\"password\":\"p\",\"user\":\"u\"}'",
@@ -280,7 +485,7 @@ class TestBashGenerator(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    f"source {script_path} >/dev/null; "
+                    f"source {script_path} >/dev/null || true; "
                     "printf '%s\n' "
                       "\"Authorization: Bearer secret\" "
                       "\"Set-Cookie: session=abc123\" "
@@ -368,7 +573,7 @@ class TestBashGenerator(unittest.TestCase):
 
             # Without override: url should contain default value
             res = subprocess.run(
-                ["bash", "-c", f"source {script_path} >/dev/null; echo 'http://example.com/'\"${{VAR_ENV}}\""],
+                ["bash", "-c", f"source {script_path} >/dev/null || true; echo 'http://example.com/'\"${{VAR_ENV}}\""],
                 capture_output=True, text=True, timeout=10,
             )
             self.assertIn("default_env", res.stdout)
@@ -376,8 +581,7 @@ class TestBashGenerator(unittest.TestCase):
             # With override
             res2 = subprocess.run(
                 ["bash", "-c",
-                 f"VAR_ENV=overridden; source {script_path} >/dev/null; echo \"http://example.com/${{VAR_ENV}}\""],
+                 f"VAR_ENV=overridden; source {script_path} >/dev/null || true; echo \"http://example.com/${{VAR_ENV}}\""],
                 capture_output=True, text=True, timeout=10,
             )
             self.assertIn("overridden", res2.stdout)
-
