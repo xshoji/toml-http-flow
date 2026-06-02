@@ -54,22 +54,29 @@ def _bash_dq(s: str) -> str:
     return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
-def _expand_placeholders(s: str) -> str:
+def _expand_placeholders(s: str, captured_vars: set[str]) -> str:
     """Expand httpflow template placeholders to bash equivalents.
 
     var.* and repeat.* variable names are upper-cased so that the generated
     bash script references standard-looking environment variables.
+    Captured variables may also be referenced as ``${name}`` without the
+    ``var.`` prefix; those are converted as well.
     """
     s = s.replace("${random.UUID_HEX}", "$(uuid_hex)")
     s = s.replace("${random.UUID}", "$(uuid)")
     s = re.sub(r"\$\{var\.([\w\-]+)\}", lambda m: f"${{{_env_name('VAR', m.group(1))}}}", s)
     s = re.sub(r"\$\{repeat\.([\w\-]+)\}", lambda m: f"${{{_env_name('REPEAT', m.group(1))}}}", s)
+    if captured_vars:
+        def _repl_captured(m: "re.Match[str]") -> str:
+            name = m.group(1)
+            return f"${{{_env_name('VAR', name)}}}" if name in captured_vars else m.group(0)
+        s = re.sub(r"\$\{([\w\-]+)\}", _repl_captured, s)
     return s
 
 
-def _render_expr(s: str) -> str:
+def _render_expr(s: str, captured_vars: set[str]) -> str:
     """Return a readable bash expression with random UUID placeholders expanded."""
-    return _bash_dq(_expand_placeholders(s))
+    return _bash_dq(_expand_placeholders(s, captured_vars))
 
 
 def _capture_path(source: str) -> str:
@@ -128,11 +135,11 @@ def _emit_capture(step: HttpStep) -> list[str]:
     return out
 
 
-def _emit_http(step: HttpStep, fn: str) -> str:
+def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a simple HTTP step as a bash function."""
     out: list[str] = [
         f"{fn}() {{",
-        f"    url={_render_expr(step.url)}",
+        f"    url={_render_expr(step.url, captured_vars)}",
         "    local __BODY=",
         "    local __RESP_HEADERS=$(mktemp)",
         "    local __RESP_BODY=$(mktemp)",
@@ -155,7 +162,7 @@ def _emit_http(step: HttpStep, fn: str) -> str:
             has_body = True
             body_var = "__BODY"
             out.append(f'    {body_var}=$(cat << EOF')
-            out.append(_expand_placeholders(t))
+            out.append(_expand_placeholders(t, captured_vars))
             out.append("EOF)")
             # Add trailing newline to match curl --data behaviour
             out.append(f'    {body_var}="${{{body_var}}}$(printf "\\n")"')
@@ -163,7 +170,7 @@ def _emit_http(step: HttpStep, fn: str) -> str:
         case FormBody(fields=f):
             has_body = True
             body_var = "__BODY"
-            out.append(f'    {body_var}={_render_expr(_urlencode_fields(f))}')
+            out.append(f'    {body_var}={_render_expr(_urlencode_fields(f), captured_vars)}')
             out.append(f'    echo "> body: $(mask "${body_var}")"')
         case _:
             pass
@@ -173,7 +180,7 @@ def _emit_http(step: HttpStep, fn: str) -> str:
     out.append(f'    cmd+=(-X {step.method.upper()})')
 
     for k, v in step.headers.items():
-        header_expr = _render_expr(f"{k}: {v}")
+        header_expr = _render_expr(f"{k}: {v}", captured_vars)
         out.append(f"    header={header_expr}")
         out.append('    echo "> $(mask "$header")"')
         out.append('    printf "%s\\n" "$header" >> "$__REQ_HEADERS"')
@@ -202,11 +209,11 @@ def _emit_http(step: HttpStep, fn: str) -> str:
     return "\n".join(out)
 
 
-def _emit_sleep(step: SleepStep, fn: str) -> str:
+def _emit_sleep(step: SleepStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a SLEEP step as a bash function."""
     out = [
         f"{fn}() {{",
-        f"    seconds={_render_expr(step.seconds)}",
+        f"    seconds={_render_expr(step.seconds, captured_vars)}",
         f'    echo "==> [{step.name}] SLEEP $seconds"',
     ]
     if step.description:
@@ -217,13 +224,13 @@ def _emit_sleep(step: SleepStep, fn: str) -> str:
     return "\n".join(out)
 
 
-def _emit(step: Step, fn: str) -> str:
+def _emit(step: Step, fn: str, captured_vars: set[str]) -> str:
     """Dispatch emitter based on step type."""
     match step:
         case SleepStep():
-            return _emit_sleep(step, fn)
+            return _emit_sleep(step, fn, captured_vars)
         case HttpStep():
-            return _emit_http(step, fn)
+            return _emit_http(step, fn, captured_vars)
         case _:
             raise TypeError(f"unknown step type: {type(step).__name__}")
 
@@ -318,6 +325,12 @@ def generate(
     used: set[str] = set()
     blocks: list[str] = []
     calls: list[str] = []
+    captured_vars: set[str] = set(
+        var
+        for s in spec.steps
+        if isinstance(s, HttpStep)
+        for var in s.capture.keys()
+    )
     has_capture = any(isinstance(s, HttpStep) and bool(s.capture) for s in spec.steps)
     needs_jq = any(
         isinstance(s, HttpStep) and any(_is_json_capture_source(src) for src in s.capture.values())
@@ -326,7 +339,7 @@ def generate(
 
     for s in spec.steps:
         fn = _step_name(s.name, used)
-        blocks.append(_emit(s, fn))
+        blocks.append(_emit(s, fn, captured_vars))
         calls.append(f"    {fn} || exit $?")
 
     shebang_line = "#!/usr/bin/env bash\n" if shebang else ""
