@@ -105,8 +105,8 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_ping()", script)
-        self.assertIn('curl -sS -L -D "$__RESP_HEADERS" -o "$__RESP_BODY" -w "%{http_code}"', script)
-        self.assertIn('-X GET', script)
+        self.assertIn('cmd=(curl -sS -L -D "$resp_headers" -o "$resp_body" -w "%{http_code}")', script)
+        self.assertIn("hf_http_step 'ping' 'GET'", script)
 
     def test_post_with_body(self):
         toml = textwrap.dedent("""
@@ -119,10 +119,9 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_create()", script)
-        self.assertIn("__BODY=$(cat << EOF", script)
+        self.assertIn("body=$(cat << __HF_BODY_step_create", script)
         self.assertIn('{"name":"test"}', script)
-        self.assertIn('cmd+=(-d', script)
-        self.assertIn('"$__BODY"', script)
+        self.assertIn('cmd+=(-d "$body")', script)
 
     def test_form_body(self):
         toml = textwrap.dedent("""
@@ -226,7 +225,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("jq is required for JSON capture", script)
-        self.assertIn("capture_json VAR_TOKEN", script)
+        self.assertIn("VAR_TOKEN\ttoken\tjson\taccess_token", script)
 
         with tempfile.TemporaryDirectory() as tmp:
             script_path = Path(tmp) / "workflow.sh"
@@ -394,7 +393,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("uuid()", script)
         self.assertIn("uuid_hex()", script)
         self.assertIn('url="http://example.com/items/$(uuid_hex)"', script)
-        self.assertIn('header="X-Request-Id: $(uuid)"', script)
+        self.assertIn("X-Request-Id: $(uuid)", script)
         self.assertIn('cmd+=(-H "$header")', script)
         self.assertIn('{"request_id":"$(uuid)"}', script)
 
@@ -433,9 +432,9 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("mask()", script)
         self.assertIn("mask_lines()", script)
         self.assertIn('$(mask "$url")', script)
-        self.assertIn('done < "$__REQ_HEADERS" | mask_lines', script)
-        self.assertIn('printf "%s\\n" "$__BODY" | mask_lines', script)
-        self.assertIn('mask_lines < "$__RESP_BODY"', script)
+        self.assertIn('echo "> $header" | mask_lines', script)
+        self.assertIn('printf "%s\\n" "$body" | mask_lines', script)
+        self.assertIn('mask_lines < "$resp_body"', script)
 
     def test_generated_mask_helper_masks_simple_values(self):
         toml = textwrap.dedent("""

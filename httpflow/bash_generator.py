@@ -113,39 +113,48 @@ def _jq_filter(path: str) -> str:
     return "." + out
 
 
-def _emit_capture(step: HttpStep) -> list[str]:
-    """Emit capture assignments for an HTTP step."""
-    out: list[str] = []
+def _heredoc_name(prefix: str, fn: str) -> str:
+    """Return a unique generated heredoc delimiter for a step function."""
+    return f"__HF_{prefix}_{fn}"
+
+
+def _capture_kind_and_arg(source: str) -> tuple[str, str]:
+    """Return generated bash capture metadata kind and helper argument."""
+    if source.startswith("response.header."):
+        return "response_header", source.removeprefix("response.header.")
+    if source.startswith("request.header."):
+        return "request_header", source.removeprefix("request.header.")
+    if source == "request.url":
+        return "request_url", "-"
+    if source == "request.body":
+        return "request_body", "-"
+    return "json", _jq_filter(_capture_path(source))
+
+
+def _capture_rows(step: HttpStep) -> list[str]:
+    """Emit capture metadata rows for an HTTP step."""
+    rows: list[str] = []
     for var, source in step.capture.items():
-        env = _env_name("VAR", var)
-        q_var = _bash_sq(var)
-        q_source = _bash_sq(source)
-        if source.startswith("response.header."):
-            name = source.removeprefix("response.header.")
-            out.append(f"    capture_header {env} {q_var} {q_source} \"$__RESP_HEADERS\" {_bash_sq(name)} || return $?")
-        elif source.startswith("request.header."):
-            name = source.removeprefix("request.header.")
-            out.append(f"    capture_header {env} {q_var} {q_source} \"$__REQ_HEADERS\" {_bash_sq(name)} || return $?")
-        elif source == "request.url":
-            out.append(f"    capture_value {env} {q_var} {q_source} \"$url\" || return $?")
-        elif source == "request.body":
-            out.append(f"    capture_value {env} {q_var} {q_source} \"$__BODY\" || return $?")
-        else:
-            out.append(f"    capture_json {env} {q_var} {q_source} \"$__RESP_BODY\" {_bash_sq(_jq_filter(_capture_path(source)))} || return $?")
-    return out
+        if any(ch in var or ch in source for ch in "\t\n"):
+            raise ValueError("capture names and sources must not contain tabs or newlines")
+        kind, arg = _capture_kind_and_arg(source)
+        if "\t" in arg or "\n" in arg:
+            raise ValueError("capture helper arguments must not contain tabs or newlines")
+        rows.append("\t".join([_env_name("VAR", var), var, kind, source, arg]))
+    return rows
 
 
 def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a simple HTTP step as a bash function."""
+    body_delim = _heredoc_name("BODY", fn)
+    headers_delim = _heredoc_name("HEADERS", fn)
+    captures_delim = _heredoc_name("CAPTURES", fn)
     out: list[str] = [
         f"{fn}() {{",
-        f"    url={_render_expr(step.url, captured_vars)}",
-        "    local __BODY=",
-        "    local __RESP_HEADERS=$(mktemp)",
-        "    local __RESP_BODY=$(mktemp)",
-        "    local __CURL_ERR=$(mktemp)",
-        "    local __REQ_HEADERS=$(mktemp)",
-        "    trap 'rm -f \"${__RESP_HEADERS:-}\" \"${__RESP_BODY:-}\" \"${__CURL_ERR:-}\" \"${__REQ_HEADERS:-}\"' RETURN",
+        f"    local url={_render_expr(step.url, captured_vars)}",
+        "    local body=",
+        "    local headers_text=",
+        "    local captures_text=",
         f'    echo "==> [{step.name}] {step.method.upper()} $(mask "$url")"',
     ]
 
@@ -153,82 +162,43 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
         for dl in step.description.splitlines():
             out.append(f'    echo "    # {dl}"')
 
-    # Log request line and host
-    out.append('    local __path __host')
-    out.append('    __path=$(echo "$url" | sed -E '"'"'s|^https?://[^/]+||'"'"')')
-    out.append('    [ -z "$__path" ] && __path="/"')
-    out.append('    __host=$(echo "$url" | sed -E '"'"'s|^https?://([^/]+).*|\\1|'"'"')')
-    out.append(f'    echo "> {step.method.upper()} $__path HTTP/1.1"')
-    out.append('    echo "> Host: $__host"')
-
-    # body setup via heredocument or inline form string
-    body_var: str | None = None
     has_body = False
-
     match step.body:
         case TextBody(text=t):
             has_body = True
-            body_var = "__BODY"
-            out.append(f'    {body_var}=$(cat << EOF')
+            out.append(f"    body=$(cat << {body_delim}")
             out.append(_expand_placeholders(t, captured_vars))
-            out.append("EOF)")
-            # Add trailing newline to match curl --data behaviour
-            out.append(f'    {body_var}="${{{body_var}}}$(printf "\\n")"')
+            out.append(f"{body_delim}")
+            out.append(')')
+            out.append('    body="${body}$(printf "\\n")"')
         case FormBody(fields=f):
             has_body = True
-            body_var = "__BODY"
-            out.append(f'    {body_var}={_render_expr(_urlencode_fields(f), captured_vars)}')
+            out.append(f'    body={_render_expr(_urlencode_fields(f), captured_vars)}')
         case _:
             pass
 
-    # Build curl command line in a bash array for readability
-    out.append('    local -a cmd=(curl -sS -L -D "$__RESP_HEADERS" -o "$__RESP_BODY" -w "%{http_code}")')
-    out.append(f'    cmd+=(-X {step.method.upper()})')
-
-    for k, v in step.headers.items():
-        header_expr = _render_expr(f"{k}: {v}", captured_vars)
-        out.append(f"    header={header_expr}")
-        out.append('    printf "%s\\n" "$header" >> "$__REQ_HEADERS"')
-        out.append('    cmd+=(-H "$header")')
-
+    header_lines = [_expand_placeholders(f"{k}: {v}", captured_vars) for k, v in step.headers.items()]
     if isinstance(step.body, FormBody):
-        out.append('    cmd+=(-H "Content-Type: application/x-www-form-urlencoded")')
-        out.append('    printf "%s\\n" "Content-Type: application/x-www-form-urlencoded" >> "$__REQ_HEADERS"')
+        header_lines.append("Content-Type: application/x-www-form-urlencoded")
+    if header_lines:
+        out.append(f"    headers_text=$(cat << {headers_delim}")
+        out.extend(header_lines)
+        out.append(f"{headers_delim}")
+        out.append(')')
 
-    # Print request headers
-    out.append('    while IFS= read -r LINE || [ -n "$LINE" ]; do')
-    out.append('        echo "> $LINE"')
-    out.append('    done < "$__REQ_HEADERS" | mask_lines')
+    capture_lines = _capture_rows(step)
+    if capture_lines:
+        out.append(f"    captures_text=$(cat <<'{captures_delim}'")
+        out.extend(capture_lines)
+        out.append(f"{captures_delim}")
+        out.append(')')
 
-    if has_body and body_var:
-        out.append(f'    echo "> Content-Length: $(printf "%s" "${body_var}" | wc -c)"')
-        out.append('    echo "> "')
-        out.append(f'    printf "%s\\n" "${body_var}" | mask_lines')
-
-    if has_body and body_var:
-        out.append(f'    cmd+=(-d "${body_var}")')
-
-    out.append(f'    cmd+=("$url")')
-
-    # Execute
-    out.append('    local status')
-    out.append('    if ! status=$("${cmd[@]}" 2>"$__CURL_ERR"); then')
-    out.append('        mask_lines < "$__CURL_ERR" >&2')
-    out.append('        return 1')
-    out.append('    fi')
-    out.append(f'    echo "<== [{step.name}] status=$status"')
-
-    # Print response headers
-    out.append('    while IFS= read -r LINE || [ -n "$LINE" ]; do')
-    out.append('        echo "< $LINE"')
-    out.append('    done < "$__RESP_HEADERS" | mask_lines')
-    out.append('    echo "< "')
-    out.append('    mask_lines < "$__RESP_BODY"')
-    if step.capture:
-        out.extend(_emit_capture(step))
+    out.append(
+        f"    hf_http_step {_bash_sq(step.name)} {_bash_sq(step.method.upper())} \"$url\" "
+        f"{1 if has_body else 0} \"$body\" \"$headers_text\" \"$captures_text\""
+    )
     out.append("}")
     return "\n".join(out)
-
 
 def _emit_sleep(step: SleepStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a SLEEP step as a bash function."""
@@ -326,6 +296,130 @@ capture_header() {
     fi
     capture_value "$env_name" "$display_name" "$source" "$value"
 }
+
+capture_header_text() {
+    local env_name=$1
+    local display_name=$2
+    local source=$3
+    local headers_text=$4
+    local header_name=$5
+    local value
+    if ! value=$(printf '%s\n' "$headers_text" | awk -v name="$header_name" '
+        BEGIN { want=tolower(name) ":"; found=0; value="" }
+        /^[[:space:]]*$/ { next }
+        { line=$0; sub(/\r$/, "", line); lower=tolower(line) }
+        index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
+        END { if (!found) exit 1; print value }
+    '); then
+        echo "capture failed: $display_name <- $source" >&2
+        return 1
+    fi
+    capture_value "$env_name" "$display_name" "$source" "$value"
+}
+'''
+
+
+def _http_helpers(has_capture: bool) -> str:
+    """Return bash helper functions used by generated HTTP steps."""
+    capture_dispatch = r'''
+
+hf_run_captures() {
+    local captures_text=$1
+    local url=$2
+    local body=$3
+    local req_headers_text=$4
+    local resp_headers_file=$5
+    local resp_body_file=$6
+    local env_name display_name kind source arg
+
+    while IFS=$'\t' read -r env_name display_name kind source arg; do
+        [ -z "${env_name:-}" ] && continue
+        case "$kind" in
+            json)
+                capture_json "$env_name" "$display_name" "$source" "$resp_body_file" "$arg" || return $?
+                ;;
+            response_header)
+                capture_header "$env_name" "$display_name" "$source" "$resp_headers_file" "$arg" || return $?
+                ;;
+            request_header)
+                capture_header_text "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
+                ;;
+            request_url)
+                capture_value "$env_name" "$display_name" "$source" "$url" || return $?
+                ;;
+            request_body)
+                capture_value "$env_name" "$display_name" "$source" "$body" || return $?
+                ;;
+            *)
+                echo "capture failed: $display_name <- $source" >&2
+                return 1
+                ;;
+        esac
+    done <<< "$captures_text"
+}
+''' if has_capture else ""
+    return r'''
+''' + capture_dispatch + r'''
+hf_http_step() {
+    local step_name=$1
+    local method=$2
+    local url=$3
+    local has_body=$4
+    local body=$5
+    local headers_text=$6
+    local captures_text=$7
+    local resp_headers resp_body curl_err path host line header status
+    local -a cmd
+
+    resp_headers=$(mktemp)
+    resp_body=$(mktemp)
+    curl_err=$(mktemp)
+
+    path=$(echo "$url" | sed -E 's|^https?://[^/]+||')
+    [ -z "$path" ] && path="/"
+    host=$(echo "$url" | sed -E 's|^https?://([^/]+).*|\1|')
+    echo "> $method $path HTTP/1.1"
+    echo "> Host: $host"
+
+    cmd=(curl -sS -L -D "$resp_headers" -o "$resp_body" -w "%{http_code}")
+    cmd+=(-X "$method")
+
+    while IFS= read -r header || [ -n "$header" ]; do
+        [ -z "$header" ] && continue
+        echo "> $header" | mask_lines
+        cmd+=(-H "$header")
+    done <<< "$headers_text"
+
+    if [ "$has_body" = "1" ]; then
+        echo "> Content-Length: $(printf "%s" "$body" | wc -c)"
+        echo "> "
+        printf "%s\n" "$body" | mask_lines
+        cmd+=(-d "$body")
+    fi
+    cmd+=("$url")
+
+    if ! status=$("${cmd[@]}" 2>"$curl_err"); then
+        mask_lines < "$curl_err" >&2
+        rm -f "$resp_headers" "$resp_body" "$curl_err"
+        return 1
+    fi
+
+    echo "<== [$step_name] status=$status"
+    while IFS= read -r line || [ -n "$line" ]; do
+        echo "< $line"
+    done < "$resp_headers" | mask_lines
+    echo "< "
+    mask_lines < "$resp_body"
+
+    if [ -n "$captures_text" ]; then
+        hf_run_captures "$captures_text" "$url" "$body" "$headers_text" "$resp_headers" "$resp_body" || {
+            rm -f "$resp_headers" "$resp_body" "$curl_err"
+            return 1
+        }
+    fi
+
+    rm -f "$resp_headers" "$resp_body" "$curl_err"
+}
 '''
 
 
@@ -410,6 +504,7 @@ uuid_hex() {{
     uuid | sed "s/-//g"
 }}
 {_capture_helpers() if has_capture else ''}
+{_http_helpers(has_capture)}
 {defaults_block}"""
 
     if blocks:
