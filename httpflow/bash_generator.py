@@ -153,6 +153,14 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
         for dl in step.description.splitlines():
             out.append(f'    echo "    # {dl}"')
 
+    # Log request line and host
+    out.append('    local __path __host')
+    out.append('    __path=$(echo "$url" | sed -E '"'"'s|^https?://[^/]+||'"'"')')
+    out.append('    [ -z "$__path" ] && __path="/"')
+    out.append('    __host=$(echo "$url" | sed -E '"'"'s|^https?://([^/]+).*|\\1|'"'"')')
+    out.append(f'    echo "> {step.method.upper()} $__path HTTP/1.1"')
+    out.append('    echo "> Host: $__host"')
+
     # body setup via heredocument or inline form string
     body_var: str | None = None
     has_body = False
@@ -166,12 +174,10 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
             out.append("EOF)")
             # Add trailing newline to match curl --data behaviour
             out.append(f'    {body_var}="${{{body_var}}}$(printf "\\n")"')
-            out.append(f'    echo "> body: $(mask "${body_var}")"')
         case FormBody(fields=f):
             has_body = True
             body_var = "__BODY"
             out.append(f'    {body_var}={_render_expr(_urlencode_fields(f), captured_vars)}')
-            out.append(f'    echo "> body: $(mask "${body_var}")"')
         case _:
             pass
 
@@ -182,13 +188,22 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     for k, v in step.headers.items():
         header_expr = _render_expr(f"{k}: {v}", captured_vars)
         out.append(f"    header={header_expr}")
-        out.append('    echo "> $(mask "$header")"')
         out.append('    printf "%s\\n" "$header" >> "$__REQ_HEADERS"')
         out.append('    cmd+=(-H "$header")')
 
     if isinstance(step.body, FormBody):
         out.append('    cmd+=(-H "Content-Type: application/x-www-form-urlencoded")')
         out.append('    printf "%s\\n" "Content-Type: application/x-www-form-urlencoded" >> "$__REQ_HEADERS"')
+
+    # Print request headers
+    out.append('    while IFS= read -r LINE || [ -n "$LINE" ]; do')
+    out.append('        echo "> $LINE"')
+    out.append('    done < "$__REQ_HEADERS" | mask_lines')
+
+    if has_body and body_var:
+        out.append(f'    echo "> Content-Length: $(printf "%s" "${body_var}" | wc -c)"')
+        out.append('    echo "> "')
+        out.append(f'    printf "%s\\n" "${body_var}" | mask_lines')
 
     if has_body and body_var:
         out.append(f'    cmd+=(-d "${body_var}")')
@@ -202,6 +217,12 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     out.append('        return 1')
     out.append('    fi')
     out.append(f'    echo "<== [{step.name}] status=$status"')
+
+    # Print response headers
+    out.append('    while IFS= read -r LINE || [ -n "$LINE" ]; do')
+    out.append('        echo "< $LINE"')
+    out.append('    done < "$__RESP_HEADERS" | mask_lines')
+    out.append('    echo "< "')
     out.append('    mask_lines < "$__RESP_BODY"')
     if step.capture:
         out.extend(_emit_capture(step))
@@ -378,11 +399,15 @@ mask_lines() {{
 }}
 
 uuid() {{
-    python3 -c 'import uuid; print(uuid.uuid4())'
+  if command -v uuidgen &>/dev/null; then
+    uuidgen |awk '{{print tolower($1)}}'
+  else
+    perl -e 'open(my$f,"<:raw","/dev/urandom");read($f,my$b,16);vec($b,13,4)=4;vec($b,16,2)=2;printf"%s-%s-%s-%s-%s\n",unpack"H8 H4 H4 H4 H12",$b'
+  fi
 }}
 
 uuid_hex() {{
-    python3 -c 'import uuid; print(uuid.uuid4().hex)'
+    uuid | sed "s/-//g"
 }}
 {_capture_helpers() if has_capture else ''}
 {defaults_block}"""

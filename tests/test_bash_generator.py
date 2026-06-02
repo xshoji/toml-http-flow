@@ -433,8 +433,8 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("mask()", script)
         self.assertIn("mask_lines()", script)
         self.assertIn('$(mask "$url")', script)
-        self.assertIn('echo "> $(mask "$header")"', script)
-        self.assertIn('echo "> body: $(mask "$__BODY")"', script)
+        self.assertIn('done < "$__REQ_HEADERS" | mask_lines', script)
+        self.assertIn('printf "%s\\n" "$__BODY" | mask_lines', script)
         self.assertIn('mask_lines < "$__RESP_BODY"', script)
 
     def test_generated_mask_helper_masks_simple_values(self):
