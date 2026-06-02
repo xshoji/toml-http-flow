@@ -136,6 +136,31 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn('Content-Type: application/x-www-form-urlencoded', script)
         self.assertIn('user=alice&pass=secret', script)
 
+    def test_form_body_does_not_duplicate_user_content_type(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "login"
+            method = "POST"
+            url = "http://example.com/auth"
+            headers = ["Content-Type: application/x-www-form-urlencoded"]
+            body_form = ["user = alice", "pass = secret"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertEqual(script.count('Content-Type: application/x-www-form-urlencoded'), 1)
+
+    def test_form_body_content_type_detection_is_case_insensitive(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "login"
+            method = "POST"
+            url = "http://example.com/auth"
+            headers = ["content-type: application/x-www-form-urlencoded"]
+            body_form = ["user = alice", "pass = secret"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertNotIn('Content-Type: application/x-www-form-urlencoded', script)
+        self.assertIn('content-type: application/x-www-form-urlencoded', script)
+
     def test_sleep_step(self):
         toml = textwrap.dedent("""
             [[requests]]

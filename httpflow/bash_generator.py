@@ -79,6 +79,11 @@ def _render_expr(s: str, captured_vars: set[str]) -> str:
     return _bash_dq(_expand_placeholders(s, captured_vars))
 
 
+def _has_header(headers: dict[str, str], name: str) -> bool:
+    """Return True when headers already define *name* case-insensitively."""
+    return any(k.lower() == name.lower() for k in headers)
+
+
 def _capture_path(source: str) -> str:
     """Return JSON path part for response-body capture source."""
     return source.removeprefix("response.body.")
@@ -178,7 +183,7 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
             pass
 
     header_lines = [_expand_placeholders(f"{k}: {v}", captured_vars) for k, v in step.headers.items()]
-    if isinstance(step.body, FormBody):
+    if isinstance(step.body, FormBody) and not _has_header(step.headers, "Content-Type"):
         header_lines.append("Content-Type: application/x-www-form-urlencoded")
     if header_lines:
         out.append(f"    headers_text=$(cat << {headers_delim}")
