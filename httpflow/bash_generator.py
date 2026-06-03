@@ -425,6 +425,7 @@ hf_http_step() {
     if ! "${cmd[@]}" \
         | grep -v '^\({\|}\) \[.*bytes data\]' \
         | grep -v '^\*' \
+        | sed -e 's/\* Closing.*//' -e 's/\* Connection.*//' \
         | while IFS= read -r line || [ -n "$line" ]; do
             case "$line" in
                 "< HTTP/"*)
