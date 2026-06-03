@@ -393,7 +393,7 @@ hf_http_step() {
     local headers_text=$6
     local captures_text=$7
     local description=$8
-    local trace_file path host line header status
+    local trace_file line header status
     local -a cmd
 
     echo "==> $(hf_now) [$step_name] $method $(mask "$url")"
@@ -406,23 +406,15 @@ hf_http_step() {
     trace_file="$HF_TMPDIR/${step_name}.curl.trace"
     : > "$trace_file"
 
-    path=$(echo "$url" | sed -E 's|^https?://[^/]+||')
-    [ -z "$path" ] && path="/"
-    host=$(echo "$url" | sed -E 's|^https?://([^/]+).*|\1|')
-    printf "> %s %s HTTP/1.1\n" "$method" "$path" | tee -a "$trace_file" | mask_lines
-    printf "> Host: %s\n" "$host" | tee -a "$trace_file" | mask_lines
-
     cmd=(curl -sS -L -v --no-buffer --stderr -)
     cmd+=(-X "$method")
 
     while IFS= read -r header || [ -n "$header" ]; do
         [ -z "$header" ] && continue
-        printf "> %s\n" "$header" | tee -a "$trace_file" | mask_lines
         cmd+=(-H "$header")
     done <<< "$headers_text"
 
     if [ "$has_body" = "1" ]; then
-        printf "> Content-Length: %s\n" "$(printf "%s" "$body" | wc -c)" | tee -a "$trace_file" | mask_lines
         printf "> [request body echoed by httpflow; curl -v omits it]\n" | tee -a "$trace_file" | mask_lines
         printf "%s" "$body" | sed 's/^/> /' | tee -a "$trace_file" | mask_lines
         printf "\n" | tee -a "$trace_file" | mask_lines
@@ -430,7 +422,7 @@ hf_http_step() {
     fi
     cmd+=("$url")
 
-    if ! "${cmd[@]}" | grep -v '^\({\|}\) \[.*bytes data\]' | tee -a "$trace_file" | mask_lines; then
+    if ! "${cmd[@]}" | grep -v '^\({\|}\) \[.*bytes data\]' | grep -v '^\*' | tee -a "$trace_file" | mask_lines; then
         return 1
     fi
     status=$(hf_trace_status "$trace_file") || status="unknown"

@@ -107,6 +107,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("step_ping()", script)
         self.assertIn('cmd=(curl -sS -L -v --no-buffer --stderr -)', script)
         self.assertIn("grep -v '^\\({\\|}\\) \\[.*bytes data\\]'", script)
+        self.assertIn("grep -v '^\\*'", script)
         self.assertIn('tee -a "$trace_file"', script)
         self.assertNotIn('-D "$resp_headers" -o "$resp_body"', script)
         self.assertIn("hf_http_step 'ping' 'GET'", script)
@@ -506,7 +507,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("mask()", script)
         self.assertIn("mask_lines()", script)
         self.assertIn('$(mask "$url")', script)
-        self.assertIn('printf "> %s\\n" "$header" | tee -a "$trace_file" | mask_lines', script)
+        self.assertNotIn('printf "> %s\\n" "$header"', script)
         self.assertIn('printf "%s" "$body" | sed', script)
         self.assertIn('tee -a "$trace_file" | mask_lines', script)
 
