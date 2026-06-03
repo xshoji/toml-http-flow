@@ -147,6 +147,31 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn('{"name":"test"}', script)
         self.assertIn('cmd+=(-d "$body")', script)
 
+    def test_post_body_is_inserted_at_curl_request_response_boundary(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "create"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"name":"test"}}'
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        lines = res.stdout.splitlines()
+        boundary_idx = lines.index("> ")
+        self.assertEqual(lines[boundary_idx + 1], "> [request body echoed by httpflow; curl -v omits it]")
+        self.assertEqual(lines[boundary_idx + 2], '> {"name":"test"}')
+        self.assertEqual(lines[boundary_idx + 3], "<== > ")
+        self.assertTrue(lines[boundary_idx + 4].startswith("< HTTP/"))
+
     def test_form_body(self):
         toml = textwrap.dedent("""
             [[requests]]

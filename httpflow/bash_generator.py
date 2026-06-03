@@ -386,6 +386,19 @@ hf_trace_response_body() {
     ' "$1"
 }
 
+hf_insert_body_before_response() {
+    local has_body=$1
+    local body=$2
+    local status_line=$3
+
+    if [ "$has_body" = "1" ]; then
+        printf "> [request body echoed by httpflow; curl -v omits it]\n"
+        printf "%s" "$body" | sed 's/^/> /'
+        printf "\n"
+    fi
+    printf "<== %s\n" "$status_line"
+}
+
 hf_http_step() {
     local step_name=$1
     local method=$2
@@ -417,14 +430,26 @@ hf_http_step() {
     done <<< "$headers_text"
 
     if [ "$has_body" = "1" ]; then
-        printf "> [request body echoed by httpflow; curl -v omits it]\n" | tee -a "$trace_file" | mask_lines
-        printf "%s" "$body" | sed 's/^/> /' | tee -a "$trace_file" | mask_lines
-        printf "\n" | tee -a "$trace_file" | mask_lines
         cmd+=(-d "$body")
     fi
     cmd+=("$url")
 
-    if ! "${cmd[@]}" | grep -v '^\({\|}\) \[.*bytes data\]' | grep -v '^\*' | tee -a "$trace_file" | mask_lines; then
+    if ! "${cmd[@]}" \
+        | grep -v '^\({\|}\) \[.*bytes data\]' \
+        | grep -v '^\*' \
+        | while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                ">"|"> "|$'> \r')
+                    printf "%s\n" "$line"
+                    hf_insert_body_before_response "$has_body" "$body" "$line"
+                    ;;
+                *)
+                    printf "%s\n" "$line"
+                    ;;
+            esac
+        done \
+        | tee -a "$trace_file" \
+        | mask_lines; then
         return 1
     fi
     status=$(hf_trace_status "$trace_file") || status="unknown"
