@@ -386,19 +386,6 @@ hf_trace_response_body() {
     ' "$1"
 }
 
-hf_insert_body_before_response() {
-    local has_body=$1
-    local body=$2
-    local status_line=$3
-
-    if [ "$has_body" = "1" ]; then
-        printf "> [request body echoed by httpflow; curl -v omits it]\n"
-        printf "%s" "$body" | sed 's/^/> /'
-        printf "\n"
-    fi
-    printf "<== %s\n" "$status_line"
-}
-
 hf_http_step() {
     local step_name=$1
     local method=$2
@@ -410,6 +397,7 @@ hf_http_step() {
     local description=$8
     local trace_file line header status
     local -a cmd
+    local boundary_inserted=0
 
     echo "==> $(hf_now) [$step_name] $method $(mask "$url")"
     if [ -n "$description" ]; then
@@ -439,9 +427,21 @@ hf_http_step() {
         | grep -v '^\*' \
         | while IFS= read -r line || [ -n "$line" ]; do
             case "$line" in
+                "< HTTP/"*)
+                    if [ "$boundary_inserted" = "0" ]; then
+                        boundary_inserted=1
+                        status=$(printf '%s' "$line" | awk '{print $3}')
+                        printf "<== %s [%s] status=%s\n" "$(hf_now)" "$step_name" "$status"
+                    fi
+                    printf "%s\n" "$line"
+                    ;;
                 ">"|"> "|$'> \r')
                     printf "%s\n" "$line"
-                    hf_insert_body_before_response "$has_body" "$body" "$line"
+                    if [ "$has_body" = "1" ]; then
+                        printf "> [request body echoed by httpflow; curl -v omits it]\n"
+                        printf "%s" "$body" | sed 's/^/> /'
+                        printf "\n"
+                    fi
                     ;;
                 *)
                     printf "%s\n" "$line"
@@ -452,9 +452,6 @@ hf_http_step() {
         | mask_lines; then
         return 1
     fi
-    status=$(hf_trace_status "$trace_file") || status="unknown"
-
-    echo "<== $(hf_now) [$step_name] status=$status"
 
     if [ -n "$captures_text" ]; then
         hf_run_captures "$captures_text" "$url" "$body" "$headers_text" "$trace_file" || {
