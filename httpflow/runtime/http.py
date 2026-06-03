@@ -17,7 +17,7 @@ from .mask import mask, mask_url, mask_value
 
 # Matches dotted or indexed path segments (e.g. data.items[0].id)
 PATH_TOKEN = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
-LOG_INDENT = ""
+LOG_INDENT = "  "
 
 
 def extract(body: Any, path: str) -> Any:
