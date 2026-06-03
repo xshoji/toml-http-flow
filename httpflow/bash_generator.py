@@ -430,8 +430,7 @@ hf_http_step() {
                 "< HTTP/"*)
                     if [ "$boundary_inserted" = "0" ]; then
                         boundary_inserted=1
-                        status=$(printf '%s' "$line" | awk '{print $3}')
-                        printf "<== %s [%s] status=%s\n" "$(hf_now)" "$step_name" "$status"
+                        printf "<== %s [%s]\n" "$(hf_now)" "$step_name"
                     fi
                     printf "%s\n" "$line"
                     ;;
