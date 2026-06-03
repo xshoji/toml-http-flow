@@ -403,7 +403,7 @@ hf_http_step() {
         done <<< "$description"
     fi
 
-    trace_file="$HF_TMPDIR/${step_name}.curl.trace"
+    trace_file=$(mktemp "$HF_TMPDIR/hf_trace.XXXXXX")
     : > "$trace_file"
 
     cmd=(curl -sS -L -v --no-buffer --stderr -)

@@ -625,6 +625,27 @@ class TestBashGenerator(unittest.TestCase):
             self.assertGreater(steps_pos, -1)
             self.assertLess(defaults_pos, steps_pos)
 
+    def test_slash_in_step_name_runs_successfully(self):
+        """Step names containing '/' must not break temp file creation."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "api/v1/me"
+            method = "GET"
+            url = "{base}/me"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("step_api_v1_me()", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True, timeout=10
+            )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("[api/v1/me] GET", res.stdout)
+
     def test_default_vars_overridable_at_runtime(self):
         """Embedded default vars can be overridden by exporting before running."""
         toml = textwrap.dedent("""
