@@ -105,8 +105,31 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_ping()", script)
-        self.assertIn('cmd=(curl -sS -L -D "$resp_headers" -o "$resp_body" -w "%{http_code}")', script)
+        self.assertIn('cmd=(curl -sS -L -v --no-buffer --stderr -)', script)
+        self.assertIn("grep -v '^\\({\\|}\\) \\[.*bytes data\\]'", script)
+        self.assertIn('tee -a "$trace_file"', script)
+        self.assertNotIn('-D "$resp_headers" -o "$resp_body"', script)
         self.assertIn("hf_http_step 'ping' 'GET'", script)
+
+    def test_http_summary_lines_include_timestamps(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/echo"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        ts = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}"
+        self.assertRegex(res.stdout, rf"==> {ts} \[ping\] GET {base}/echo")
+        self.assertRegex(res.stdout, rf"<== {ts} \[ping\] status=200")
 
     def test_post_with_body(self):
         toml = textwrap.dedent("""
@@ -171,7 +194,9 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertIn("step_wait()", script)
         self.assertIn('seconds="0.05"', script)
+        self.assertIn('echo "==> $(hf_now) [wait] SLEEP $seconds"', script)
         self.assertIn('sleep "$seconds"', script)
+        self.assertIn('echo "<== $(hf_now) [wait] done"', script)
 
     def test_sleep_step_with_shell_variable(self):
         toml = textwrap.dedent("""
@@ -182,7 +207,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn('seconds="${WAIT_SECONDS}"', script)
-        self.assertIn('echo "==> [wait] SLEEP $seconds"', script)
+        self.assertIn('echo "==> $(hf_now) [wait] SLEEP $seconds"', script)
         self.assertIn('sleep "$seconds"', script)
 
     def test_shebang(self):
@@ -348,7 +373,7 @@ class TestBashGenerator(unittest.TestCase):
             script_path.write_text(script, encoding="utf-8")
             res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
 
-        self.assertIn("tolower($0) ~ /^http", script)
+        self.assertIn('/^< HTTP\\// { found=0; value=""; next }', script)
 
     @unittest.skipUnless(shutil.which("jq"), "jq required")
     def test_capture_failure_stops_later_steps(self):
@@ -403,7 +428,31 @@ class TestBashGenerator(unittest.TestCase):
             description = "health check"
         """)
         script = self._generate_and_check(toml)
-        self.assertIn("# health check", script)
+        self.assertIn("hf_http_step 'ping' 'GET'", script)
+        self.assertIn("'health check'", script)
+
+    def test_description_is_printed_after_http_start_line(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/echo"
+            description = "health check"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        start = res.stdout.index("[ping] GET")
+        desc = res.stdout.index("    # health check")
+        detail = res.stdout.index("> GET /echo HTTP/1.1")
+        self.assertLess(start, desc)
+        self.assertLess(desc, detail)
 
     def test_random_uuid_placeholders(self):
         toml = textwrap.dedent("""
@@ -457,9 +506,9 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("mask()", script)
         self.assertIn("mask_lines()", script)
         self.assertIn('$(mask "$url")', script)
-        self.assertIn('echo "> $header" | mask_lines', script)
-        self.assertIn('printf "%s\\n" "$body" | mask_lines', script)
-        self.assertIn('mask_lines < "$resp_body"', script)
+        self.assertIn('printf "> %s\\n" "$header" | tee -a "$trace_file" | mask_lines', script)
+        self.assertIn('printf "%s" "$body" | sed', script)
+        self.assertIn('tee -a "$trace_file" | mask_lines', script)
 
     def test_generated_mask_helper_masks_simple_values(self):
         toml = textwrap.dedent("""

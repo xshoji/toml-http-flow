@@ -171,7 +171,8 @@ workflow.sh
 - ステップ関数名はステップ名を `[A-Za-z0-9_]` に正規化し、衝突時は数字サフィックスで一意化
 - ログ出力時は `authorization` / `password` / `token` などの既定キーワードに対して、`sed` で値部分を `***` に置換する（JSON/form/query の構造保持は保証しない）
 - `${random.UUID}` は `uuid`、`${random.UUID_HEX}` は `uuid_hex` 関数呼び出しとして生成し、参照ごとに新しい UUID v4 を生成する
-- **HTTP ステップ**は関数内で `curl -sS -L -D "$__RESP_HEADERS" -o "$__RESP_BODY" -w "%{http_code}"` を `local -a cmd=(...)` 配列で構築し、レスポンスヘッダー・ボディ・ステータスを分離して実行
+- **HTTP ステップ**は関数内で `curl -sS -L -v --no-buffer --stderr -` を `local -a cmd=(...)` 配列で構築し、`grep -v '^\({\|}\) \[.*bytes data\]'` で curl の転送量メタ行を除外してから、`tee` で標準出力と一時 trace ファイルへ同時に出力する。capture はこの trace ファイルから最終レスポンスのステータス・ヘッダー・ボディを best-effort で抽出する
+- `curl -v` はリクエストボディを出力しないため、ボディがある場合は curl 実行前に httpflow がラベル付きでボディを出力し、同じ trace ファイルに保存する
 - **ボディ（text）**は `local __BODY=$(cat << EOF ... EOF)` による heredocument で渡す
 - **ボディ（form）**は urlencode 済み文字列をシングルクォートでインライン化し `Content-Type` ヘッダを自動付与
 - **SLEEP ステップ**は `sleep <seconds>` を実行

@@ -160,12 +160,7 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
         "    local body=",
         "    local headers_text=",
         "    local captures_text=",
-        f'    echo "==> [{step.name}] {step.method.upper()} $(mask "$url")"',
     ]
-
-    if step.description:
-        for dl in step.description.splitlines():
-            out.append(f'    echo "    # {dl}"')
 
     has_body = False
     match step.body:
@@ -200,7 +195,8 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
 
     out.append(
         f"    hf_http_step {_bash_sq(step.name)} {_bash_sq(step.method.upper())} \"$url\" "
-        f"{1 if has_body else 0} \"$body\" \"$headers_text\" \"$captures_text\""
+        f"{1 if has_body else 0} \"$body\" \"$headers_text\" \"$captures_text\" "
+        f"{_bash_sq(step.description or '')}"
     )
     out.append("}")
     return "\n".join(out)
@@ -210,12 +206,13 @@ def _emit_sleep(step: SleepStep, fn: str, captured_vars: set[str]) -> str:
     out = [
         f"{fn}() {{",
         f"    seconds={_render_expr(step.seconds, captured_vars)}",
-        f'    echo "==> [{step.name}] SLEEP $seconds"',
+        f'    echo "==> $(hf_now) [{step.name}] SLEEP $seconds"',
     ]
     if step.description:
         for dl in step.description.splitlines():
-            out.append(f'    echo "    # {dl}"')
+            out.append(f'    echo "# {dl}"')
     out.append('    sleep "$seconds"')
+    out.append(f'    echo "<== $(hf_now) [{step.name}] done"')
     out.append("}")
     return "\n".join(out)
 
@@ -267,10 +264,10 @@ capture_json() {
     local env_name=$1
     local display_name=$2
     local source=$3
-    local body_file=$4
+    local trace_file=$4
     local filter=$5
     local value
-    if ! value=$(jq -r "$filter" "$body_file"); then
+    if ! value=$(hf_trace_response_body "$trace_file" | jq -r "$filter"); then
         echo "capture failed: $display_name <- $source" >&2
         return 1
     fi
@@ -285,17 +282,18 @@ capture_header() {
     local env_name=$1
     local display_name=$2
     local source=$3
-    local header_file=$4
+    local trace_file=$4
     local header_name=$5
     local value
     if ! value=$(awk -v name="$header_name" '
         BEGIN { want=tolower(name) ":"; found=0; value="" }
-        tolower($0) ~ /^http\// { found=0; value=""; next }
-        /^[[:space:]]*$/ { next }
-        { line=$0; sub(/\r$/, "", line); lower=tolower(line) }
+        /^< HTTP\// { found=0; value=""; next }
+        !/^< / { next }
+        /^< ?\r?$/ { next }
+        { line=substr($0, 3); sub(/\r$/, "", line); lower=tolower(line) }
         index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
         END { if (!found) exit 1; print value }
-    ' "$header_file"); then
+    ' "$trace_file"); then
         echo "capture failed: $display_name <- $source" >&2
         return 1
     fi
@@ -333,18 +331,17 @@ hf_run_captures() {
     local url=$2
     local body=$3
     local req_headers_text=$4
-    local resp_headers_file=$5
-    local resp_body_file=$6
+    local trace_file=$5
     local env_name display_name kind source arg
 
     while IFS=$'\t' read -r env_name display_name kind source arg; do
         [ -z "${env_name:-}" ] && continue
         case "$kind" in
             json)
-                capture_json "$env_name" "$display_name" "$source" "$resp_body_file" "$arg" || return $?
+                capture_json "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
                 ;;
             response_header)
-                capture_header "$env_name" "$display_name" "$source" "$resp_headers_file" "$arg" || return $?
+                capture_header "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
                 ;;
             request_header)
                 capture_header_text "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
@@ -365,6 +362,28 @@ hf_run_captures() {
 ''' if has_capture else ""
     return r'''
 ''' + capture_dispatch + r'''
+hf_trace_status() {
+    awk '
+        /^< HTTP\// { status=$3 }
+        END { if (status == "") exit 1; print status }
+    ' "$1"
+}
+
+hf_trace_response_body() {
+    awk '
+        /^< HTTP\// { in_headers=1; n=0; seen=1; next }
+        in_headers && /^< ?\r?$/ { in_headers=0; n=0; next }
+        !in_headers && seen { lines[++n]=$0 }
+        END {
+            while (n > 0 && lines[n] ~ /^\* /) n--
+            for (i = 1; i <= n; i++) {
+                sub(/\* [^\n\r]*\r?$/, "", lines[i])
+                print lines[i]
+            }
+        }
+    ' "$1"
+}
+
 hf_http_step() {
     local step_name=$1
     local method=$2
@@ -373,57 +392,56 @@ hf_http_step() {
     local body=$5
     local headers_text=$6
     local captures_text=$7
-    local resp_headers resp_body curl_err path host line header status
+    local description=$8
+    local trace_file path host line header status
     local -a cmd
 
-    resp_headers=$(mktemp)
-    resp_body=$(mktemp)
-    curl_err=$(mktemp)
+    echo "==> $(hf_now) [$step_name] $method $(mask "$url")"
+    if [ -n "$description" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            echo "    # $line"
+        done <<< "$description"
+    fi
+
+    trace_file="$HF_TMPDIR/${step_name}.curl.trace"
+    : > "$trace_file"
 
     path=$(echo "$url" | sed -E 's|^https?://[^/]+||')
     [ -z "$path" ] && path="/"
     host=$(echo "$url" | sed -E 's|^https?://([^/]+).*|\1|')
-    echo "> $method $path HTTP/1.1"
-    echo "> Host: $host"
+    printf "> %s %s HTTP/1.1\n" "$method" "$path" | tee -a "$trace_file" | mask_lines
+    printf "> Host: %s\n" "$host" | tee -a "$trace_file" | mask_lines
 
-    cmd=(curl -sS -L -D "$resp_headers" -o "$resp_body" -w "%{http_code}")
+    cmd=(curl -sS -L -v --no-buffer --stderr -)
     cmd+=(-X "$method")
 
     while IFS= read -r header || [ -n "$header" ]; do
         [ -z "$header" ] && continue
-        echo "> $header" | mask_lines
+        printf "> %s\n" "$header" | tee -a "$trace_file" | mask_lines
         cmd+=(-H "$header")
     done <<< "$headers_text"
 
     if [ "$has_body" = "1" ]; then
-        echo "> Content-Length: $(printf "%s" "$body" | wc -c)"
-        echo "> "
-        printf "%s\n" "$body" | mask_lines
+        printf "> Content-Length: %s\n" "$(printf "%s" "$body" | wc -c)" | tee -a "$trace_file" | mask_lines
+        printf "> [request body echoed by httpflow; curl -v omits it]\n" | tee -a "$trace_file" | mask_lines
+        printf "%s" "$body" | sed 's/^/> /' | tee -a "$trace_file" | mask_lines
+        printf "\n" | tee -a "$trace_file" | mask_lines
         cmd+=(-d "$body")
     fi
     cmd+=("$url")
 
-    if ! status=$("${cmd[@]}" 2>"$curl_err"); then
-        mask_lines < "$curl_err" >&2
-        rm -f "$resp_headers" "$resp_body" "$curl_err"
+    if ! "${cmd[@]}" | grep -v '^\({\|}\) \[.*bytes data\]' | tee -a "$trace_file" | mask_lines; then
         return 1
     fi
+    status=$(hf_trace_status "$trace_file") || status="unknown"
 
-    echo "<== [$step_name] status=$status"
-    while IFS= read -r line || [ -n "$line" ]; do
-        echo "< $line"
-    done < "$resp_headers" | mask_lines
-    echo "< "
-    mask_lines < "$resp_body"
+    echo "<== $(hf_now) [$step_name] status=$status"
 
     if [ -n "$captures_text" ]; then
-        hf_run_captures "$captures_text" "$url" "$body" "$headers_text" "$resp_headers" "$resp_body" || {
-            rm -f "$resp_headers" "$resp_body" "$curl_err"
+        hf_run_captures "$captures_text" "$url" "$body" "$headers_text" "$trace_file" || {
             return 1
         }
     fi
-
-    rm -f "$resp_headers" "$resp_body" "$curl_err"
 }
 '''
 
@@ -497,6 +515,16 @@ mask_lines() {{
     done
 }}
 
+hf_now() {{
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import datetime; n = datetime.datetime.now(); print(n.strftime("%Y-%m-%d %H:%M:%S.") + f"{{n.microsecond // 1000:03d}}")'
+    elif date '+%Y-%m-%d %H:%M:%S.%3N' | grep -Eq '[0-9]{{3}}$'; then
+        date '+%Y-%m-%d %H:%M:%S.%3N'
+    else
+        date '+%Y-%m-%d %H:%M:%S.000'
+    fi
+}}
+
 uuid() {{
   if command -v uuidgen &>/dev/null; then
     uuidgen |awk '{{print tolower($1)}}'
@@ -526,6 +554,9 @@ uuid_hex() {{
 
 # ─── main ───────────────────────────────────────────────────────────
 main() {{
+    HF_TMPDIR=$(mktemp -d)
+    export HF_TMPDIR
+    trap 'rm -rf "$HF_TMPDIR"' EXIT
 {calls_src}
 }}
 
