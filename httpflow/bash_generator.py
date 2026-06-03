@@ -518,7 +518,17 @@ set -uo pipefail
 curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 {('jq --version >/dev/null || { echo "jq is required for JSON capture" >&2; exit 1; }' if needs_jq else '')}
 
-MASK_KEYS='authorization|cookie|set-cookie|password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|auth_token|session_token|api_key|apikey|private_key|pass'
+MASK_KEYS_DEFAULT='authorization|cookie|set-cookie|password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|auth_token|session_token|api_key|apikey|private_key|pass'
+
+_hf_init_mask_keys() {{
+    local extra="${{HTTPFLOW_MASK_EXTRA:-}}"
+    if [ -n "$extra" ]; then
+        extra=$(printf '%s' "$extra" | tr ',' '|')
+        MASK_KEYS="$MASK_KEYS_DEFAULT|$extra"
+    else
+        MASK_KEYS="$MASK_KEYS_DEFAULT"
+    fi
+}}
 
 mask() {{
     echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"'\\1\\3***'"'/Ig'
@@ -572,6 +582,7 @@ main() {{
     HF_TMPDIR=$(mktemp -d)
     export HF_TMPDIR
     trap 'rm -rf "$HF_TMPDIR"' EXIT
+    _hf_init_mask_keys
 {calls_src}
 }}
 
