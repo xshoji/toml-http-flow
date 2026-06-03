@@ -401,7 +401,7 @@ hf_http_step() {
     echo "==> $(hf_now) [$step_name] $method $(mask "$url")"
     if [ -n "$description" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
-            echo "    # $line"
+            echo "# $line"
         done <<< "$description"
     fi
 
