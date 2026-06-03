@@ -185,6 +185,22 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn('Content-Type: application/x-www-form-urlencoded', script)
         self.assertIn('content-type: application/x-www-form-urlencoded', script)
 
+    def test_env_placeholders_use_shell_environment_variables(self):
+        """${env.NAME} placeholders become ${NAME} in generated bash."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "env"
+            method = "POST"
+            url = "http://example.com/${env.USER}"
+            headers = ["X-User: ${env.USER}"]
+            body = '{"user":"${env.USER}"}'
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn('local url="http://example.com/${USER}"', script)
+        self.assertIn("X-User: ${USER}", script)
+        self.assertIn('{"user":"${USER}"}', script)
+        self.assertNotIn("${env.USER}", script)
+
     def test_sleep_step(self):
         toml = textwrap.dedent("""
             [[requests]]

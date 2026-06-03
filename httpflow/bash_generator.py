@@ -59,11 +59,13 @@ def _expand_placeholders(s: str, captured_vars: set[str]) -> str:
 
     var.* and repeat.* variable names are upper-cased so that the generated
     bash script references standard-looking environment variables.
+    env.* variable names are emitted as regular shell environment variables.
     Captured variables may also be referenced as ``${name}`` without the
     ``var.`` prefix; those are converted as well.
     """
     s = s.replace("${random.UUID_HEX}", "$(uuid_hex)")
     s = s.replace("${random.UUID}", "$(uuid)")
+    s = re.sub(r"\$\{env\.([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: f"${{{m.group(1)}}}", s)
     s = re.sub(r"\$\{var\.([\w\-]+)\}", lambda m: f"${{{_env_name('VAR', m.group(1))}}}", s)
     s = re.sub(r"\$\{repeat\.([\w\-]+)\}", lambda m: f"${{{_env_name('REPEAT', m.group(1))}}}", s)
     if captured_vars:
