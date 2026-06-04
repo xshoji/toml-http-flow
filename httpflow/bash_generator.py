@@ -249,7 +249,7 @@ capture_log() {
     if printf '%s\n' "$name" | grep -Eiq "^($MASK_KEYS)$"; then
         value="***"
     fi
-    printf "    * capture %s = '%s'\n" "$name" "$value"
+    printf "* capture %s = '%s'\n" "$name" "$value"
 }
 
 capture_value() {
@@ -438,6 +438,7 @@ hf_http_step() {
                 ">"|"> "|$'> \r')
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
+                        printf "> [request body echoed by httpflow; curl -v omits it]\n"
                         printf "%s" "$body" | sed 's/^/> /'
                         printf "\n"
                     fi
@@ -520,18 +521,19 @@ curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 
 MASK_KEYS_DEFAULT='authorization|cookie|set-cookie|password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|auth_token|session_token|api_key|apikey|private_key|pass'
 
-_hf_init_mask_keys() {{
-    local extra="${{HTTPFLOW_MASK_EXTRA:-}}"
-    if [ -n "$extra" ]; then
-        extra=$(printf '%s' "$extra" | tr ',' '|')
-        MASK_KEYS="$MASK_KEYS_DEFAULT|$extra"
-    else
-        MASK_KEYS="$MASK_KEYS_DEFAULT"
-    fi
-}}
+MASK_KEYS=$(
+  mask_key_default="$MASK_KEYS_DEFAULT"
+  extra="${{HTTPFLOW_MASK_EXTRA:-}}"
+  if [ -n "$extra" ]; then
+      extra=$(printf '%s' "$extra" | tr ',' '|')
+      printf '%s' "$mask_key_default|$extra"
+  else
+      printf '%s' "$mask_key_default"
+  fi
+)
 
 mask() {{
-    echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"'\\1\\3***'"'/Ig'
+    echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"$(printf '\\\\1\\\\3***')"'/Ig'
 }}
 
 mask_lines() {{
@@ -582,7 +584,6 @@ main() {{
     HF_TMPDIR=$(mktemp -d)
     export HF_TMPDIR
     trap 'rm -rf "$HF_TMPDIR"' EXIT
-    _hf_init_mask_keys
 {calls_src}
 }}
 
