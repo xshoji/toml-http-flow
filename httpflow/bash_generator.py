@@ -120,11 +120,6 @@ def _jq_filter(path: str) -> str:
     return "." + out
 
 
-def _heredoc_name(prefix: str, fn: str) -> str:
-    """Return a unique generated heredoc delimiter for a step function."""
-    return f"__HF_{prefix}_{fn}"
-
-
 def _capture_kind_and_arg(source: str) -> tuple[str, str]:
     """Return generated bash capture metadata kind and helper argument."""
     if source.startswith("response.header."):
@@ -153,9 +148,6 @@ def _capture_rows(step: HttpStep) -> list[str]:
 
 def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a simple HTTP step as a bash function."""
-    body_delim = _heredoc_name("BODY", fn)
-    headers_delim = _heredoc_name("HEADERS", fn)
-    captures_delim = _heredoc_name("CAPTURES", fn)
     out: list[str] = [
         f"{fn}() {{",
         f"    local url={_render_expr(step.url, captured_vars)}",
@@ -168,9 +160,9 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     match step.body:
         case TextBody(text=t):
             has_body = True
-            out.append(f"    body=$(cat << {body_delim}")
+            out.append("    body=$(cat << EOT")
             out.append(_expand_placeholders(t, captured_vars))
-            out.append(f"{body_delim}")
+            out.append("EOT")
             out.append(')')
             out.append('    body="${body}$(printf "\\n")"')
         case FormBody(fields=f):
@@ -183,16 +175,16 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     if isinstance(step.body, FormBody) and not _has_header(step.headers, "Content-Type"):
         header_lines.append("Content-Type: application/x-www-form-urlencoded")
     if header_lines:
-        out.append(f"    headers_text=$(cat << {headers_delim}")
+        out.append("    headers_text=$(cat << EOT")
         out.extend(header_lines)
-        out.append(f"{headers_delim}")
+        out.append("EOT")
         out.append(')')
 
     capture_lines = _capture_rows(step)
     if capture_lines:
-        out.append(f"    captures_text=$(cat <<'{captures_delim}'")
+        out.append("    captures_text=$(cat <<'EOT'")
         out.extend(capture_lines)
-        out.append(f"{captures_delim}")
+        out.append("EOT")
         out.append(')')
 
     out.append(
@@ -364,13 +356,6 @@ hf_run_captures() {
 ''' if has_capture else ""
     return r'''
 ''' + capture_dispatch + r'''
-hf_trace_status() {
-    awk '
-        /^< HTTP\// { status=$3 }
-        END { if (status == "") exit 1; print status }
-    ' "$1"
-}
-
 hf_trace_response_body() {
     awk '
         /^< HTTP\// { in_headers=1; n=0; seen=1; next }

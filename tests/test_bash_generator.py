@@ -143,7 +143,8 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_create()", script)
-        self.assertIn("body=$(cat << __HF_BODY_step_create", script)
+        self.assertIn("body=$(cat << EOT", script)
+        self.assertNotIn("__HF_BODY_step_create", script)
         self.assertIn('{"name":"test"}', script)
         self.assertIn('cmd+=(-d "$body")', script)
 
