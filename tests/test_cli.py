@@ -26,6 +26,7 @@ class TestCLISmoke(unittest.TestCase):
         self.assertIn("--quiet", res.stdout)
         self.assertIn("--pretty-json", res.stdout)
         self.assertIn("--no-mask", res.stdout)
+        self.assertIn("--blank-line", res.stdout)
 
     def test_generate_help(self):
         res = self._run(["generate", "--help"])

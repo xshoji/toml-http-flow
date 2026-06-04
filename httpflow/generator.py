@@ -274,8 +274,10 @@ def _emit_run_step_call(
 def _emit_sleep_step(step: SleepStep, func_name: str) -> str:
     """Sleep step: a single ``run_step(...)`` call."""
     return "\n".join([
-        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
+        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
         f'    """[[requests]] name = {step.name!r} — SLEEP {step.seconds}"""',
+        "    for _ in range(blank_line):",
+        "        print()",
         _emit_run_step_call(
             step.name,
             "SLEEP",
@@ -301,8 +303,10 @@ def _emit_http_step(step: HttpStep, func_name: str) -> str:
     """Plain HTTP step: docstring + a single ``run_step(...)`` call."""
     body, body_form = _body_parts(step)
     return "\n".join([
-        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
+        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
         f'    """[[requests]] name = {step.name!r} — {step.method.upper()} {step.url}"""',
+        "    for _ in range(blank_line):",
+        "        print()",
         _emit_run_step_call(
             step.name,
             step.method,
@@ -322,8 +326,10 @@ def _emit_until_step(step: HttpStep, func_name: str) -> str:
     assert step.until is not None
     body, body_form = _body_parts(step)
     return "\n".join([
-        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False):",
+        f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
         f'    """[[requests]] name = {step.name!r} — {step.method.upper()} {step.url}"""',
+        "    for _ in range(blank_line):",
+        "        print()",
         "    def attempt():",
         _emit_run_step_call(
             step.name,
@@ -384,11 +390,12 @@ def generate(
     step_blocks: list[str] = []
     step_calls: list[str] = []
 
-    for step in spec.steps:
+    for index, step in enumerate(spec.steps):
         fn = _sanitize_ident(step.name, used)
         step_blocks.append(_emit_step(step, fn))
         step_calls.append(
-            f"{fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)"
+            f"{fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, "
+            f"no_mask=args.no_mask, blank_line=args.blank_line if {index} > 0 else 0)"
         )
 
     if not step_blocks:

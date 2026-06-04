@@ -75,6 +75,7 @@ def run(
     no_mask: bool = False,
     repeat_vars: dict[str, list[str]] | None = None,
     steps: list[str] | None = None,
+    blank_line: int = 0,
     out=None,
 ) -> dict[str, Any]:
     """Run every step in ``spec`` and return the final variable store.
@@ -107,7 +108,7 @@ def run(
             )
         _run_once(
             spec, store, quiet=quiet, pretty_json=pretty_json,
-            no_mask=no_mask, out=out,
+            no_mask=no_mask, blank_line=blank_line, out=out,
         )
 
     return store
@@ -120,10 +121,14 @@ def _run_once(
     quiet: bool,
     pretty_json: bool,
     no_mask: bool,
+    blank_line: int,
     out,
 ) -> None:
     """Execute every step in ``spec`` exactly once against ``store``."""
-    for step in spec.steps:
+    for index, step in enumerate(spec.steps):
+        if blank_line and index > 0:
+            for _ in range(blank_line):
+                print(file=out)
         match step:
             case SleepStep():
                 run_step(

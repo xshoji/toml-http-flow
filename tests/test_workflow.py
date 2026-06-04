@@ -210,6 +210,25 @@ class TestWorkflow(unittest.TestCase):
         output = buf.getvalue()
         self.assertLess(output.index("[getToken]"), output.index("[getUser]"))
 
+    def test_blank_line_separates_step_logs(self):
+        base = f"http://127.0.0.1:{self.port}"
+        path = self._write(textwrap.dedent(f"""\
+            [[requests]]
+            name = "one"
+            method = "GET"
+            url = "{base}/me"
+
+            [[requests]]
+            name = "two"
+            method = "GET"
+            url = "{base}/me"
+        """))
+        cfg = cfg_mod.load(path)
+        buf = io.StringIO()
+        runner.run(cfg, out=buf, blank_line=2, quiet=True)
+        output = buf.getvalue()
+        self.assertRegex(output, r"\[one\][\s\S]*\n\n\n==> .*\[two\]")
+
     def test_step_selection_unknown_name_fails(self):
         base = f"http://127.0.0.1:{self.port}"
         path = self._write(textwrap.dedent(f"""\

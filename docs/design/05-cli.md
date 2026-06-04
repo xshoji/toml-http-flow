@@ -22,6 +22,7 @@ python -m httpflow generate -f workflow.toml --format bash -o workflow.sh
 | `-q`, `--quiet`    | -    | 詳細出力を抑制し1ステップ1行のサマリのみ出す（**デフォルトは詳細表示ON**）         |
 | `--pretty-json`    | -    | リクエスト/レスポンスの body が JSON のとき、インデント2スペースで整形して出力する |
 | `--no-mask`        | -    | センシティブフィールドのマスキングを無効化する（**デフォルトはマスキングON**）       |
+| `--blank-line N`   | -    | ステップ間の標準出力ログを `N` 行の空行で区切る（未指定時は0）                    |
 | `--repeat-vars`    | △    | `${repeat.K}` 用のカンマ区切り値リスト（複数指定可）。詳細は §6.1.3              |
 | `-h`, `--help`     | -    | ヘルプ表示                                                                         |
 
@@ -60,6 +61,7 @@ python -m httpflow generate -f workflow.toml --format bash -o workflow.sh
 - urllib が自動付与する `Host`, `Content-Length`, `User-Agent`, `Accept-Encoding` は推定値で出力する。
 - レスポンスのステータスライン（`< HTTP/1.1 200 OK`）を出力する。
 - `--quiet` 指定時は `==>` / `<==` の2行（タイムスタンプ付き）と `description`（指定時）のみ出力する。
+- `--blank-line N` 指定時は、ステップ間（前ステップの出力完了後、次ステップ開始前）に空行を `N` 行出力する。
 - `--pretty-json` 指定時、リクエスト/レスポンスの body が JSON としてパースできる場合は
   `json.dumps(..., indent=2, ensure_ascii=False)` で整形して `>` / `<` プリフィックス付きで出力する。
   JSON でない（フォーム/プレーンテキスト等）場合は通常通り未加工で出力する。

@@ -61,6 +61,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="pretty-print JSON request/response bodies with 2-space indent")
     p_run.add_argument("--no-mask", action="store_true",
                        help="disable masking of sensitive fields in log output (masking is ON by default)")
+    p_run.add_argument("--blank-line", type=int, default=0, metavar="N",
+                       help="separate step log output with N blank lines")
     p_run.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
                        help="comma-separated values for ${repeat.K} (repeatable). "
                             "All --repeat-vars must have the same number of values; "
@@ -110,7 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             runner.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json,
                        no_mask=args.no_mask, repeat_vars=repeat_vars,
-                       steps=args.step or None)
+                       steps=args.step or None, blank_line=args.blank_line)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
