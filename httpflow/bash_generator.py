@@ -533,7 +533,7 @@ MASK_KEYS=$(
 )
 
 mask() {{
-    echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+"?/'"$(printf '\\\\1\\\\3***')"'/Ig'
+    echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+( [^& ,}}"]+)?"?/'"$(printf '\\\\1\\\\3***')"'/Ig'
 }}
 
 mask_lines() {{

@@ -572,6 +572,7 @@ class TestBashGenerator(unittest.TestCase):
                     f"source {script_path} >/dev/null || true; "
                     "mask 'token=abc&keep=ok'; "
                     "mask 'Authorization: Bearer secret'; "
+                    "mask 'authorization: Bearer 06a84af6-4f9f-4b84-bfe2-529e310eea12'; "
                     "mask '{\"password\":\"p\",\"user\":\"u\"}'",
                 ],
                 capture_output=True, text=True, timeout=10,
@@ -580,9 +581,11 @@ class TestBashGenerator(unittest.TestCase):
         self.assertEqual(res.returncode, 0, msg=res.stderr)
         self.assertIn("token=***", res.stdout)
         self.assertIn("Authorization: ***", res.stdout)
+        self.assertIn("authorization: ***", res.stdout)
         self.assertIn('"password":***', res.stdout)
         self.assertNotIn("abc", res.stdout)
-        self.assertNotIn("Bearer secret", res.stdout)
+        self.assertNotIn("secret", res.stdout)
+        self.assertNotIn("06a84af6", res.stdout)
 
     def test_mask_lines_masks_curl_like_output(self):
         """mask_lines should mask sensitive fields in piped curl-like output."""
