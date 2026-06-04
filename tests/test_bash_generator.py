@@ -702,6 +702,30 @@ class TestBashGenerator(unittest.TestCase):
             self.assertGreater(steps_pos, -1)
             self.assertLess(defaults_pos, steps_pos)
 
+
+    def test_required_var_check_fails_with_export_hint(self):
+        """Generated bash fails early when required ${var.*} env is empty."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/${var.user}"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn('if [ -z "${VAR_USER:-}" ]; then', script)
+        self.assertIn('Export it before running: export VAR_USER=<value>', script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True, timeout=10
+            )
+
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("error: missing required variable: user", res.stderr)
+        self.assertIn("export VAR_USER=<value>", res.stderr)
+
     def test_slash_in_step_name_runs_successfully(self):
         """Step names containing '/' must not break temp file creation."""
         base = f"http://127.0.0.1:{self.port}"
@@ -722,6 +746,35 @@ class TestBashGenerator(unittest.TestCase):
             )
         self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
         self.assertIn("[api/v1/me] GET", res.stdout)
+
+
+    def test_blank_line_env_inserts_lines_between_steps(self):
+        """HTTPFLOW_BLANK_LINE behaves like --blank-line for generated bash."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "one"
+            method = "GET"
+            url = "{base}/echo"
+
+            [[requests]]
+            name = "two"
+            method = "GET"
+            url = "{base}/echo"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"', script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", "-c", f"HTTPFLOW_BLANK_LINE=2 bash {script_path}"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("\n\n\n==>", res.stdout)
 
     def test_default_vars_overridable_at_runtime(self):
         """Embedded default vars can be overridden by exporting before running."""
