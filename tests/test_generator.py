@@ -491,7 +491,8 @@ class TestGenerator(unittest.TestCase):
                 capture_output=True, text=True, timeout=10,
             )
             self.assertEqual(missing.returncode, 1)
-            self.assertIn("missing required -v/--var for: ['user']", missing.stderr)
+            self.assertIn("missing required variable(s): user", missing.stderr)
+            self.assertIn('Example: --var "user=<value>"', missing.stderr)
             self.assertNotIn("==>", missing.stdout)
 
     def test_generated_help_omits_required_vars_block_when_none_required(self):

@@ -122,7 +122,7 @@ class TestWorkflow(unittest.TestCase):
         """))
         cfg = cfg_mod.load(path)
 
-        with self.assertRaisesRegex(ValueError, "missing required -v/--var"):
+        with self.assertRaisesRegex(ValueError, "missing required variable\(s\): user"):
             runner.run(cfg, out=io.StringIO())
 
     # --- curl -vvv detailed output assertions ---

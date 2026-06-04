@@ -11,7 +11,14 @@ def build_repeat_iterations(
     repeat_vars = dict(repeat_vars or {})
     missing = required - set(repeat_vars)
     if missing:
-        raise ValueError(f"--repeat-vars missing for: {sorted(missing)}")
+        examples = " ".join(
+            f'--repeat-vars "{name}=value1,value2,value3"'
+            for name in sorted(missing)
+        )    
+        raise ValueError(
+            f"missing required repeat variable(s): {', '.join(sorted(missing))}\n"
+            f"Example: {examples}"
+        )       
     if not repeat_vars:
         return [{}]
     lengths = {k: len(v) for k, v in repeat_vars.items()}

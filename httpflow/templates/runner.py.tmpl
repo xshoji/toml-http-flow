@@ -65,7 +65,11 @@ def validate_required_vars(store):
     """Return an error message if required -v parameters are missing."""
     missing = [k for k in REQUIRED_VARS if k not in store["vars"]]
     if missing:
-        return f"missing required -v/--var for: {missing}"
+        examples = " ".join(f'--var "{name}=<value>"' for name in missing)
+        return (
+            f"missing required variable(s): {', '.join(missing)}\n"
+            f"Example: {examples}"
+        )
     return None
 
 

@@ -51,8 +51,11 @@ def validate_required_vars(
     """Raise ValueError if required ``${var.*}`` parameters are missing."""
     missing = collect_var_names(spec) - set(vars_ or {})
     if missing:
-        raise ValueError(f"missing required -v/--var for: {sorted(missing)}")
-
+        examples = " ".join(f'--var "{name}=<value>"' for name in sorted(missing))    
+        raise ValueError(
+            f"missing required variable(s): {', '.join(sorted(missing))}\n"
+            f"Example: {examples}"
+        )
 
 def select_steps(spec: WorkflowSpec, names: list[str]) -> WorkflowSpec:
     """Return a new spec keeping only the named steps, in TOML order."""
