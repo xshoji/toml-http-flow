@@ -108,9 +108,9 @@ class TestWorkflow(unittest.TestCase):
         ts = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}"
         output = buf.getvalue()
         self.assertRegex(output, rf"==> {ts} \[getToken\] POST ")
-        self.assertRegex(output, rf"<== {ts} \[getToken\] status=200")
+        self.assertRegex(output, rf"<== {ts} \[getToken\]")
         self.assertRegex(output, rf"==> {ts} \[getUser\] GET ")
-        self.assertRegex(output, rf"<== {ts} \[getUser\] status=200")
+        self.assertRegex(output, rf"<== {ts} \[getUser\]")
 
     def test_missing_required_var_fails_before_request(self):
         base = f"http://127.0.0.1:{self.port}"
@@ -181,7 +181,7 @@ class TestWorkflow(unittest.TestCase):
         buf = io.StringIO()
         store = runner.run(cfg, out=buf, steps=["getUser"])
         output = buf.getvalue()
-        self.assertIn("[getUser] status=200", output)
+        self.assertIn("[getUser]", output)
         self.assertNotIn("[getToken]", output)
         # getToken's capture must not have run.
         self.assertNotIn("token", store["vars"])
@@ -239,7 +239,7 @@ class TestWorkflow(unittest.TestCase):
         # Selecting only getUser must not require ${var.user}.
         buf = io.StringIO()
         runner.run(cfg, out=buf, steps=["getUser"])
-        self.assertIn("[getUser] status=200", buf.getvalue())
+        self.assertIn("[getUser]", buf.getvalue())
 
     def test_capture_response_header(self):
         base = f"http://127.0.0.1:{self.port}"
@@ -368,9 +368,9 @@ class TestWorkflow(unittest.TestCase):
         output = buf.getvalue()
         self.assertEqual(store["vars"]["message"], "not found")
         self.assertIn("<== ", output)
-        self.assertIn("[missing] status=404", output)
+        self.assertIn("[missing]", output)
         self.assertIn('"error": "not found"', output)
-        self.assertIn("[getUser] status=200", output)
+        self.assertIn("[getUser]", output)
 
 
 if __name__ == "__main__":

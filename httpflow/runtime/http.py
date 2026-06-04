@@ -259,7 +259,7 @@ def run_step(
         _log_request(method, url, headers, body_bytes, body_form, pretty_json, no_mask=no_mask, out=out)
 
     status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
-    print(f"<== {_now()} [{name}] status={status}", file=out)
+    print(f"<== {_now()} [{name}]", file=out)
     if not quiet:
         _log_response(status, reason, resp_headers, text, pretty_json, no_mask=no_mask, out=out)
 

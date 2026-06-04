@@ -45,7 +45,7 @@ python -m httpflow generate -f workflow.toml --format bash -o workflow.sh
     > ...
     >
     > <body 1行ずつ>
-<== 2026-05-19 23:35:49.456 [<step_name>] status=<code>
+<== 2026-05-19 23:35:49.456 [<step_name>]
     < HTTP/1.1 200 OK
     < Header-Key: value
     < ...
