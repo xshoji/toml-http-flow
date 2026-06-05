@@ -412,14 +412,10 @@ hf_trace_response_body() {
 jq_or_cat() {
     local input
     input=$(cat)
-    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ]; then
+    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ] || ! echo "$input" | jq . > /dev/null 2>&1; then
         echo "$input"
-        return 0
-    fi
-    if echo "$input" | jq . > /dev/null 2>&1; then
-        echo "$input" | jq .
     else
-        echo "$input"
+        echo "$input" | jq .
     fi
 }
 
