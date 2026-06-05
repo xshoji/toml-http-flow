@@ -148,6 +148,11 @@ def _capture_rows(step: HttpStep) -> list[str]:
     return rows
 
 
+def _collect_required_var_names(spec: WorkflowSpec, captured_vars: set[str]) -> set[str]:
+    """Return required explicit vars, excluding values captured earlier."""
+    return collect_var_names(spec) - captured_vars
+
+
 def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a simple HTTP step as a bash function."""
     out: list[str] = [
@@ -404,6 +409,27 @@ hf_trace_response_body() {
     ' "$1"
 }
 
+jq_or_cat() {
+    local input
+    input=$(cat)
+    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ]; then
+        echo "$input"
+        return 0
+    fi
+    if echo "$input" | jq . > /dev/null 2>&1; then
+        echo "$input" | jq .
+    else
+        echo "$input"
+    fi
+}
+
+hf_prefix_lines() {
+    local prefix=$1
+    while IFS= read -r line || [ -n "$line" ]; do
+        printf "%s%s\n" "$prefix" "$line"
+    done
+}
+
 hf_http_step() {
     local step_name=$1
     local method=$2
@@ -458,12 +484,12 @@ hf_http_step() {
                 ">"|"> "|$'> \r')
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
-                        printf "%s" "$body" | sed 's/^/> /'
-                        printf "\n"
+                        printf "> [request body echoed by httpflow; curl -v omits it]\n"
+                        printf "%s" "$body" | jq_or_cat | hf_prefix_lines "> "
                     fi
                     ;;
                 *)
-                    printf "%s\n" "$line"
+                    printf "%s\n" "$line" | jq_or_cat | hf_prefix_lines ""
                     ;;
             esac
         done \
@@ -532,7 +558,7 @@ def generate(
     if defaults_block:
         defaults_block = f"\n# ─── defaults (can be overridden by exporting beforehand) ───────────\n{defaults_block}\n"
 
-    required_vars_block = _required_var_check(sorted(collect_var_names(spec) - set(default_vars)))
+    required_vars_block = _required_var_check(sorted(_collect_required_var_names(spec, captured_vars) - set(default_vars)))
 
     mask_keys_default = "|".join(sorted(_MASK_DEFAULTS))
     bash_mask_keys_default = _bash_mask_key_pattern(mask_keys_default)
@@ -615,6 +641,23 @@ uuid_hex() {{
 
 # ─── main ───────────────────────────────────────────────────────────
 main() {{
+    for arg in "$@"; do
+        case "$arg" in
+            --pretty-json)
+                HTTPFLOW_PRETTY_JSON=1
+                ;;
+            -h|--help)
+                echo "usage: $0 [--pretty-json]"
+                exit 0
+                ;;
+            *)
+                echo "error: unknown argument: $arg" >&2
+                exit 1
+                ;;
+        esac
+    done
+    export HTTPFLOW_PRETTY_JSON=${{HTTPFLOW_PRETTY_JSON:-}}
+
     HF_TMPDIR=$(mktemp -d)
     export HF_TMPDIR
     trap 'rm -rf "$HF_TMPDIR"' EXIT

@@ -551,7 +551,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("mask_lines()", script)
         self.assertIn('$(mask "$url")', script)
         self.assertNotIn('printf "> %s\\n" "$header"', script)
-        self.assertIn('printf "%s" "$body" | sed', script)
+        self.assertIn('printf "%s" "$body" | jq_or_cat | hf_prefix_lines "> "', script)
         self.assertIn("sed -E", script)
         self.assertNotIn("perl -pe", script)
         self.assertIn("MASK_KEYS_DEFAULT='[aA]uthorization|[cC]ookie", script)
@@ -702,6 +702,28 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("token=foo", res.stdout)
         self.assertIn("Authorization: Bearer bar", res.stdout)
         self.assertNotIn("***", res.stdout)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_pretty_json_argument_formats_bash_response_body(self):
+        """Generated bash accepts --pretty-json at runtime."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/echo"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("jq_or_cat()", script)
+        self.assertIn("--pretty-json", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path), "--pretty-json"], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn('{\n  "ok": true\n}', res.stdout)
 
     def test_default_vars_embedded_in_bash_script(self):
         """-v K=V in generate --format bash embeds default VAR_* values."""
