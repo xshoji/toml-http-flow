@@ -237,6 +237,7 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertIn("step_wait()", script)
         self.assertIn('seconds="0.05"', script)
+        self.assertIn('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"', script)
         self.assertIn('echo "==> $(hf_now) [wait] SLEEP $seconds"', script)
         self.assertIn('sleep "$seconds"', script)
         self.assertIn('echo "<== $(hf_now) [wait] done"', script)
@@ -661,6 +662,33 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn("foo", res.stdout)
         self.assertNotIn("Bearer bar", res.stdout)
 
+    def test_no_mask_env_var_disables_masking_in_bash_script(self):
+        """HTTPFLOW_NO_MASK disables masking in generated bash output."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                [
+                    "bash", "-c",
+                    f"HTTPFLOW_NO_MASK=1; source {script_path} >/dev/null || true; "
+                    "mask 'token=foo'; "
+                    "printf '%s\n' 'Authorization: Bearer bar' | mask_lines",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertIn("token=foo", res.stdout)
+        self.assertIn("Authorization: Bearer bar", res.stdout)
+        self.assertNotIn("***", res.stdout)
+
     def test_default_vars_embedded_in_bash_script(self):
         """-v K=V in generate --format bash embeds default VAR_* values."""
         toml = textwrap.dedent("""
@@ -763,7 +791,8 @@ class TestBashGenerator(unittest.TestCase):
             url = "{base}/echo"
         """)
         script = self._generate_and_check(toml)
-        self.assertIn('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"', script)
+        self.assertEqual(script.count('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"'), 1)
+        self.assertIn('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"\n\n    echo "==>', script)
 
         with tempfile.TemporaryDirectory() as tmp:
             script_path = Path(tmp) / "workflow.sh"

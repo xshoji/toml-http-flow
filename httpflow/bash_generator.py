@@ -201,6 +201,7 @@ def _emit_sleep(step: SleepStep, fn: str, captured_vars: set[str]) -> str:
     out = [
         f"{fn}() {{",
         f"    seconds={_render_expr(step.seconds, captured_vars)}",
+        '    hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"',
         f'    echo "==> $(hf_now) [{step.name}] SLEEP $seconds"',
     ]
     if step.description:
@@ -297,31 +298,27 @@ capture_header() {
     local source=$3
     local input_source=$4
     local header_name=$5
-    local value
+    local value mode
     if [ -f "$input_source" ]; then
-        if ! value=$(awk -v name="$header_name" '
-            BEGIN { want=tolower(name) ":"; found=0; value="" }
-            /^< HTTP\// { found=0; value=""; next }
-            !/^< / { next }
-            /^< ?\r?$/ { next }
-            { line=substr($0, 3); sub(/\r$/, "", line); lower=tolower(line) }
-            index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
-            END { if (!found) exit 1; print value }
-        ' "$input_source"); then
-            echo "capture failed: $display_name <- $source" >&2
-            return 1
-        fi
+        mode=trace
+        input_source=$(cat "$input_source")
     else
-        if ! value=$(printf '%s\n' "$input_source" | awk -v name="$header_name" '
+        mode=text
+    fi
+    if ! value=$(awk -v name="$header_name" -v mode="$mode" '
             BEGIN { want=tolower(name) ":"; found=0; value="" }
+            mode == "trace" && /^< HTTP\// { found=0; value=""; next }
+            mode == "trace" && !/^< / { next }
+            mode == "trace" && /^< ?\r?$/ { next }
+            mode == "trace" { line=substr($0, 3) }
+            mode != "trace" { line=$0 }
             /^[[:space:]]*$/ { next }
-            { line=$0; sub(/\r$/, "", line); lower=tolower(line) }
+            { sub(/\r$/, "", line); lower=tolower(line) }
             index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
             END { if (!found) exit 1; print value }
-        '); then
-            echo "capture failed: $display_name <- $source" >&2
-            return 1
-        fi
+        ' <<< "$input_source"); then
+        echo "capture failed: $display_name <- $source" >&2
+        return 1
     fi
     capture_value "$env_name" "$display_name" "$source" "$value"
 }
@@ -395,6 +392,8 @@ hf_http_step() {
     local trace_file line header status
     local -a cmd
     local boundary_inserted=0
+
+    hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
     echo "==> $(hf_now) [$step_name] $method $(mask "$url")"
     if [ -n "$description" ]; then
@@ -490,8 +489,6 @@ def generate(
     for s in spec.steps:
         fn = _step_name(s.name, used)
         blocks.append(_emit(s, fn, captured_vars))
-        if calls:
-            calls.append('    hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"')
         calls.append(f"    {fn} || exit $?")
 
     shebang_line = "#!/usr/bin/env bash\n" if shebang else ""
@@ -534,6 +531,10 @@ MASK_KEYS=$(
 )
 
 mask() {{
+    if [ -n "${{HTTPFLOW_NO_MASK:-}}" ]; then
+        echo "$1"
+        return 0
+    fi
     echo "$1" | sed -E 's/("?('"$MASK_KEYS"')"?)([[:space:]]*[:=][[:space:]]*|=)"?[^& ,}}"]+( [^& ,}}"]+)?"?/'"$(printf '\\\\1\\\\3***')"'/Ig'
 }}
 
