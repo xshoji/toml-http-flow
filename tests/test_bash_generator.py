@@ -552,6 +552,10 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn('$(mask "$url")', script)
         self.assertNotIn('printf "> %s\\n" "$header"', script)
         self.assertIn('printf "%s" "$body" | sed', script)
+        self.assertIn("sed -E", script)
+        self.assertNotIn("perl -pe", script)
+        self.assertIn("MASK_KEYS_DEFAULT='[aA]uthorization|[cC]ookie", script)
+        self.assertNotIn("mask_key_pattern()", script)
         self.assertIn('tee -a "$trace_file"', script)
         self.assertIn("mask_lines", script)
 
@@ -571,8 +575,9 @@ class TestBashGenerator(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    f"source {script_path} >/dev/null || true; "
-                    "mask 'token=abc&keep=ok'; "
+                    f"HTTPFLOW_NO_MASK=; source {script_path} >/dev/null || true; "
+                    "mask 'token=abc'; "
+                    "mask 'Token=ABC'; "
                     "mask 'Authorization: Bearer secret'; "
                     "mask 'authorization: Bearer 06a84af6-4f9f-4b84-bfe2-529e310eea12'; "
                     "mask '{\"password\":\"p\",\"user\":\"u\"}'",
@@ -582,10 +587,12 @@ class TestBashGenerator(unittest.TestCase):
 
         self.assertEqual(res.returncode, 0, msg=res.stderr)
         self.assertIn("token=***", res.stdout)
+        self.assertIn("Token=***", res.stdout)
         self.assertIn("Authorization: ***", res.stdout)
         self.assertIn("authorization: ***", res.stdout)
         self.assertIn('"password":***', res.stdout)
         self.assertNotIn("abc", res.stdout)
+        self.assertNotIn("ABC", res.stdout)
         self.assertNotIn("secret", res.stdout)
         self.assertNotIn("06a84af6", res.stdout)
 
@@ -647,8 +654,9 @@ class TestBashGenerator(unittest.TestCase):
             res = subprocess.run(
                 [
                     "bash", "-c",
-                    f"HTTPFLOW_MASK_EXTRA=trace-id; source {script_path} >/dev/null || true; "
+                    f"HTTPFLOW_MASK_EXTRA='[tT]race-id' HTTPFLOW_NO_MASK=; source {script_path} >/dev/null || true; "
                     "mask 'trace-id=secret'; "
+                    "mask 'Trace-id=Secret'; "
                     "mask 'token=foo'; "
                     "mask 'Authorization: Bearer bar'",
                 ],
@@ -656,9 +664,11 @@ class TestBashGenerator(unittest.TestCase):
             )
         self.assertEqual(res.returncode, 0, msg=res.stderr)
         self.assertIn("trace-id=***", res.stdout)
+        self.assertIn("Trace-id=***", res.stdout)
         self.assertIn("token=***", res.stdout)
         self.assertIn("Authorization: ***", res.stdout)
         self.assertNotIn("secret", res.stdout)
+        self.assertNotIn("Secret", res.stdout)
         self.assertNotIn("foo", res.stdout)
         self.assertNotIn("Bearer bar", res.stdout)
 
