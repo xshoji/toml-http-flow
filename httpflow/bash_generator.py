@@ -235,19 +235,25 @@ def _bash_default_assignment(name: str, value: str) -> str:
 
 
 def _bash_mask_key_pattern(keys: str) -> str:
-    """Return bash sed regex where each key's first letter is case-insensitive."""
+    """Return bash sed regex where each hyphen part's first letter is case-insensitive."""
     parts: list[str] = []
     for key in keys.split("|"):
         if not key:
             continue
-        first = key[0]
-        rest = key[1:]
-        lower = first.lower()
-        upper = first.upper()
-        if lower != upper:
-            parts.append(f"[{lower}{upper}]{rest}")
-        else:
-            parts.append(key)
+        key_parts: list[str] = []
+        for key_part in key.split("-"):
+            if not key_part:
+                key_parts.append(key_part)
+                continue
+            first = key_part[0]
+            rest = key_part[1:]
+            lower = first.lower()
+            upper = first.upper()
+            if lower != upper:
+                key_parts.append(f"[{lower}{upper}]{rest}")
+            else:
+                key_parts.append(key_part)
+        parts.append("-".join(key_parts))
     return "|".join(parts)
 
 

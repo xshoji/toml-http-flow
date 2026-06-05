@@ -555,6 +555,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("sed -E", script)
         self.assertNotIn("perl -pe", script)
         self.assertIn("MASK_KEYS_DEFAULT='[aA]uthorization|[cC]ookie", script)
+        self.assertIn("[sS]et-[cC]ookie", script)
         self.assertNotIn("mask_key_pattern()", script)
         self.assertIn('tee -a "$trace_file"', script)
         self.assertIn("mask_lines", script)
@@ -580,6 +581,7 @@ class TestBashGenerator(unittest.TestCase):
                     "mask 'Token=ABC'; "
                     "mask 'Authorization: Bearer secret'; "
                     "mask 'authorization: Bearer 06a84af6-4f9f-4b84-bfe2-529e310eea12'; "
+                    "mask 'Set-Cookie: session=set-cookie-secret'; "
                     "mask '{\"password\":\"p\",\"user\":\"u\"}'",
                 ],
                 capture_output=True, text=True, timeout=10,
@@ -590,10 +592,12 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("Token=***", res.stdout)
         self.assertIn("Authorization: ***", res.stdout)
         self.assertIn("authorization: ***", res.stdout)
+        self.assertIn("Set-Cookie: ***", res.stdout)
         self.assertIn('"password":***', res.stdout)
         self.assertNotIn("abc", res.stdout)
         self.assertNotIn("ABC", res.stdout)
         self.assertNotIn("secret", res.stdout)
+        self.assertNotIn("set-cookie-secret", res.stdout)
         self.assertNotIn("06a84af6", res.stdout)
 
     def test_mask_lines_masks_curl_like_output(self):
