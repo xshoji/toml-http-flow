@@ -295,40 +295,33 @@ capture_header() {
     local env_name=$1
     local display_name=$2
     local source=$3
-    local trace_file=$4
+    local input_source=$4
     local header_name=$5
     local value
-    if ! value=$(awk -v name="$header_name" '
-        BEGIN { want=tolower(name) ":"; found=0; value="" }
-        /^< HTTP\// { found=0; value=""; next }
-        !/^< / { next }
-        /^< ?\r?$/ { next }
-        { line=substr($0, 3); sub(/\r$/, "", line); lower=tolower(line) }
-        index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
-        END { if (!found) exit 1; print value }
-    ' "$trace_file"); then
-        echo "capture failed: $display_name <- $source" >&2
-        return 1
-    fi
-    capture_value "$env_name" "$display_name" "$source" "$value"
-}
-
-capture_header_text() {
-    local env_name=$1
-    local display_name=$2
-    local source=$3
-    local headers_text=$4
-    local header_name=$5
-    local value
-    if ! value=$(printf '%s\n' "$headers_text" | awk -v name="$header_name" '
-        BEGIN { want=tolower(name) ":"; found=0; value="" }
-        /^[[:space:]]*$/ { next }
-        { line=$0; sub(/\r$/, "", line); lower=tolower(line) }
-        index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
-        END { if (!found) exit 1; print value }
-    '); then
-        echo "capture failed: $display_name <- $source" >&2
-        return 1
+    if [ -f "$input_source" ]; then
+        if ! value=$(awk -v name="$header_name" '
+            BEGIN { want=tolower(name) ":"; found=0; value="" }
+            /^< HTTP\// { found=0; value=""; next }
+            !/^< / { next }
+            /^< ?\r?$/ { next }
+            { line=substr($0, 3); sub(/\r$/, "", line); lower=tolower(line) }
+            index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
+            END { if (!found) exit 1; print value }
+        ' "$input_source"); then
+            echo "capture failed: $display_name <- $source" >&2
+            return 1
+        fi
+    else
+        if ! value=$(printf '%s\n' "$input_source" | awk -v name="$header_name" '
+            BEGIN { want=tolower(name) ":"; found=0; value="" }
+            /^[[:space:]]*$/ { next }
+            { line=$0; sub(/\r$/, "", line); lower=tolower(line) }
+            index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
+            END { if (!found) exit 1; print value }
+        '); then
+            echo "capture failed: $display_name <- $source" >&2
+            return 1
+        fi
     fi
     capture_value "$env_name" "$display_name" "$source" "$value"
 }
@@ -357,7 +350,7 @@ hf_run_captures() {
                 capture_header "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
                 ;;
             request_header)
-                capture_header_text "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
+                capture_header "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
                 ;;
             request_url)
                 capture_value "$env_name" "$display_name" "$source" "$url" || return $?
