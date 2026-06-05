@@ -413,7 +413,7 @@ hf_http_step() {
     local headers_text=$6
     local captures_text=$7
     local description=$8
-    local trace_file line header status
+    local trace_file line header
     local -a cmd
     local boundary_inserted=0
 
