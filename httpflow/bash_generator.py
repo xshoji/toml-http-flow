@@ -480,7 +480,7 @@ hf_http_step() {
                 ">"|"> "|$'> \r')
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
-                        printf "> [request body echoed by httpflow; curl -v omits it]\n"
+                        # request body echoed by this script; curl -v omits it
                         printf "%s" "$body" | jq_or_cat | hf_prefix_lines "> "
                     fi
                     ;;
