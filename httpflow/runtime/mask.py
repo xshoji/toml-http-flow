@@ -9,18 +9,49 @@ from typing import Any
 
 _MASK_PLACEHOLDER = "***"
 _MASK_DEFAULTS = frozenset({
-    "authorization", "proxyauthorization", "cookie", "setcookie",
-    "xapikey", "xauthtoken", "xaccesstoken",
-    "xcsrftoken", "xxsrftoken",
-    "xsessiontoken", "xsessionid", "xsecretkey",
-    "password", "passwd", "pwd",
-    "secret", "clientsecret",
-    "token", "accesstoken", "refreshtoken", "idtoken",
-    "authtoken", "sessiontoken",
-    "apikey", "privatekey",
-    "auth", "session", "sessionid",
-    "creditcard", "cardnumber", "cvv", "cvc", "pin", "ssn",
+    "Authorization",
+    "Proxy-Authorization",
+    "Cookie",
+    "Set-Cookie",
+    "X-Api-Key",
+    "X-Auth-Token",
+    "X-Access-Token",
+    "X-Csrf-Token",
+    "X-Xsrf-Token",
+    "X-Session-Token",
+    "X-Session-Id",
+    "X-Secret-Key",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "client_secret",
+    "token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "auth_token",
+    "session_token",
+    "api_key",
+    "private_key",
+    "auth",
+    "session",
+    "session_id",
+    "credit_card",
+    "card_number",
+    "cvv",
+    "cvc",
+    "pin",
+    "ssn",
 })
+
+
+def _mask_defaults_normalized() -> frozenset[str]:
+    """Return the normalized forms of the built-in mask defaults."""
+    return frozenset(
+        _mask_norm(name)
+        for name in _MASK_DEFAULTS
+    )
 
 
 def _mask_norm(name: str) -> str:
@@ -28,7 +59,7 @@ def _mask_norm(name: str) -> str:
 
 
 def _mask_targets() -> set[str]:
-    base = set(_MASK_DEFAULTS)
+    base = set(_mask_defaults_normalized())
     raw = os.environ.get("HTTPFLOW_MASK_EXTRA", "")
     base |= {_mask_norm(item) for item in raw.split(",") if item.strip()}
     return base
