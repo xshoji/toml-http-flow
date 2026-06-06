@@ -63,4 +63,3 @@ python3 -c "import py_compile; py_compile.compile('/tmp/g.py', doraise=True)"
 
 - `python3 generated.py` が `httpflow` パッケージを import せずに動く
 - `--no-mask` / `--pretty-json` 等のフラグが生成スクリプトでも有効
-- `--repeat-vars` が生成スクリプトで正しく反復実行される

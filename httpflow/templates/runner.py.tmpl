@@ -16,12 +16,6 @@ import sys
 DEFAULT_VARS = {{DEFAULT_VARS}}
 REQUIRED_VARS = {{REQUIRED_VARS}}
 
-# ─── default repeat variables (override with --repeat-vars at runtime) ─
-DEFAULT_REPEAT_VARS = {{DEFAULT_REPEAT_VARS}}
-
-# ─── repeat iteration helpers ──────────────────────────────────────────
-{{REPEAT_HELPERS}}
-
 # ─── steps (one function per [[requests]] block) ────────────────────
 {{STEP_FUNCTIONS}}
 
@@ -38,26 +32,6 @@ def _default_vars_help():
     if REQUIRED_VARS:
         lines.append("  * Required parameters (referenced by ${var.*} but not embedded)")
         lines.extend(f"    - {k}" for k in REQUIRED_VARS)
-    return "\n".join(lines)
-
-
-def _default_repeat_vars_help():
-    """Return help text listing optional --repeat-vars parameters."""
-    lines = [
-        "comma-separated values for ${repeat.K} (repeatable).",
-        "All --repeat-vars must share the same number of values; the workflow is executed once per index.",
-    ]
-    if DEFAULT_REPEAT_VARS:
-        lines.append("  * DEFAULT_REPEAT_VARS (optional parameters)")
-        lines.extend(f"    - {k}={','.join(v)}" for k, v in DEFAULT_REPEAT_VARS.items())
-    try:
-        required_repeat_vars = REQUIRED_REPEAT_VARS
-    except NameError:
-        required_repeat_vars = set()
-    missing = sorted(required_repeat_vars - set(DEFAULT_REPEAT_VARS))
-    if missing:
-        lines.append("  * Required parameters (referenced by ${repeat.*} but not embedded)")
-        lines.extend(f"    - {k}" for k in missing)
     return "\n".join(lines)
 
 
@@ -88,7 +62,6 @@ def main():
                    help="disable masking of sensitive fields in log output (masking is ON by default)")
     p.add_argument("--blank-line", type=int, default=0, metavar="N",
                    help="separate step log output with N blank lines")
-{{ARGPARSE_REPEAT}}
     args = p.parse_args()
 
     store = {"vars": dict(DEFAULT_VARS), "repeat": {}}

@@ -7,7 +7,6 @@ from typing import Any, Iterator
 
 from .model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
 from .runtime.http import run_step
-from .runtime.repeat import build_repeat_iterations
 from .runtime.until import poll_until
 from .template import find_repeat_names, find_var_names
 
@@ -76,7 +75,6 @@ def run(
     quiet: bool = False,
     pretty_json: bool = False,
     no_mask: bool = False,
-    repeat_vars: dict[str, list[str]] | None = None,
     steps: list[str] | None = None,
     blank_line: int = 0,
     out=None,
@@ -90,9 +88,6 @@ def run(
     if steps:
         spec = select_steps(spec, steps)
 
-    required_repeat = collect_repeat_names(spec)
-    iterations = build_repeat_iterations(repeat_vars, required_repeat)
-
     store: dict[str, Any] = {
         "vars": dict(vars_ or {}),
         "repeat": {},
@@ -101,18 +96,10 @@ def run(
 
     out = sys.stdout if out is None else out
 
-    total = len(iterations)
-    for idx, repeat_iter in enumerate(iterations, start=1):
-        store["repeat"] = dict(repeat_iter)
-        if repeat_iter:
-            print(
-                f"=== repeat iteration {idx}/{total} {repeat_iter} ===",
-                file=out,
-            )
-        _run_once(
-            spec, store, quiet=quiet, pretty_json=pretty_json,
-            no_mask=no_mask, blank_line=blank_line, out=out,
-        )
+    _run_once(
+        spec, store, quiet=quiet, pretty_json=pretty_json,
+        no_mask=no_mask, blank_line=blank_line, out=out,
+    )
 
     return store
 

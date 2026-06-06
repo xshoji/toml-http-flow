@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from . import __version__
 from . import config as config_mod
 from . import generator, runner
-from .runtime.repeat import parse_repeat_args
 
 
 def _parse_vars(items: list[str]) -> dict[str, str]:
@@ -25,18 +24,6 @@ def _parse_vars(items: list[str]) -> dict[str, str]:
             raise SystemExit(f"-v/--var has empty key: {kv!r}")
         out[k] = v
     return out
-
-
-def _parse_repeat_vars(items: list[str]) -> dict[str, list[str]]:
-    """Parse ``--repeat-vars "name=v1,v2,v3"`` arguments into a dict.
-
-    The same key supplied twice is rejected; whitespace around the key and
-    each comma-separated value is trimmed.
-    """
-    try:
-        return parse_repeat_args(items)
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -63,11 +50,6 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="disable masking of sensitive fields in log output (masking is ON by default)")
     p_run.add_argument("--blank-line", type=int, default=0, metavar="N",
                        help="separate step log output with N blank lines")
-    p_run.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
-                       help="comma-separated values for ${repeat.K} (repeatable). "
-                            "All --repeat-vars must have the same number of values; "
-                            "the workflow is executed once per index.")
-
     p_gen = sub.add_parser("generate", help="emit a standalone runner script")
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
     p_gen.add_argument("-o", "--output", default=None,
@@ -76,8 +58,6 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="output format (default: python)")
     p_gen.add_argument("-v", "--var", action="append", default=[],
                        help="default variable embedded in the generated script (repeatable)")
-    p_gen.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
-                       help="default repeat variables embedded in the generated script (repeatable)")
     p_gen.add_argument("--shebang", action="store_true",
                        help="prepend shebang and chmod +x the output file")
     return parser
@@ -108,11 +88,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "run":
         vars_ = _parse_vars(args.var)
-        repeat_vars = _parse_repeat_vars(args.repeat_vars)
         try:
             runner.run(cfg, vars_, quiet=args.quiet, pretty_json=args.pretty_json,
-                       no_mask=args.no_mask, repeat_vars=repeat_vars,
-                       steps=args.step or None, blank_line=args.blank_line)
+                       no_mask=args.no_mask, steps=args.step or None,
+                       blank_line=args.blank_line)
         except Exception as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
@@ -120,13 +99,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "generate":
         default_vars = _parse_vars(args.var)
-        repeat_vars = _parse_repeat_vars(args.repeat_vars)
         try:
             if args.format == "python":
                 script = generator.generate(
                     cfg,
                     default_vars=default_vars,
-                    default_repeat_vars=repeat_vars if repeat_vars else None,
                     shebang=args.shebang,
                 )
             else:
@@ -135,7 +112,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     cfg,
                     shebang=args.shebang,
                     default_vars=default_vars,
-                    default_repeat_vars=repeat_vars if repeat_vars else None,
                 )
         except Exception as e:
             print(f"error generating script: {e}", file=sys.stderr)

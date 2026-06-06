@@ -6,8 +6,7 @@ import re
 
 from .runtime.core import PATTERN, TemplateError, render, render_mapping
 
-# Matches ``${repeat.<name>}`` references, used by the workflow runner to
-# decide which repeat variables must be supplied via ``--repeat-vars``.
+# Matches ``${repeat.<name>}`` references.
 REPEAT_PATTERN = re.compile(r"\$\{repeat\.([\w\-]+)\}")
 VAR_PATTERN = re.compile(r"\$\{var\.([\w\-]+)\}")
 

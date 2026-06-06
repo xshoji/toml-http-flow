@@ -30,7 +30,7 @@ Read this before changing any code.
 | [httpflow/model.py](httpflow/model.py) | Normalised workflow models (`WorkflowSpec`, `HttpStep`, `SleepStep`, etc.) | Kept free of runtime helpers to avoid circular deps |
 | [httpflow/runner.py](httpflow/runner.py) | Step execution engine / variable store / repeat iteration | Same `collect_*` logic used by the generator; keep them in sync |
 | [httpflow/runtime/](httpflow/runtime/) | Shared helpers used by both the package and generated scripts (`core`, `http`, `mask`, `until`, `repeat`) | When fixing logic here, always fix the generator template too |
-| [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{STEP_FUNCTIONS}}` `{{STEP_CALLS}}` `{{DEFAULT_VARS}}` `{{VERSION}}` `{{GENERATED_AT}}` `{{UNTIL_HELPERS}}` `{{REPEAT_HELPERS}}` `{{ARGPARSE_REPEAT}}` `{{MAIN_REPEAT_SETUP}}` |
+| [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{STEP_FUNCTIONS}}` `{{STEP_CALLS}}` `{{DEFAULT_VARS}}` `{{VERSION}}` `{{GENERATED_AT}}` `{{UNTIL_HELPERS}}` `{{MAIN_REPEAT_SETUP}}` |
 | [tests/](tests/) | `unittest`-based tests | Follow the convention of standing up a local mock with `http.server` |
 
 ## On the duplicated runtime helpers

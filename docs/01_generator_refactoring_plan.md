@@ -38,8 +38,7 @@ httpflow/runtime/
 ├── core.py
 ├── mask.py
 ├── http.py
-├── until.py
-└── repeat.py
+└── until.py
 ```
   
 Suggested split:
@@ -50,7 +49,6 @@ Suggested split:
 | `runtime/mask.py` | masking constants, `mask`, `mask_url`, `mask_value` |
 | `runtime/http.py` | `PATH_TOKEN`, `extract`, `do_request`, logging helpers, `run_step` |
 | `runtime/until.py` | `eval_until`, `poll_until`, until condition constants/helpers |
-| `runtime/repeat.py` | `parse_repeat_args`, `build_repeat_iterations`, `build_repeat_iterations_from_args`, repeat merge helpers |
   
 Keep `httpflow/embedded_runtime.py` temporarily as a compatibility re-export shim. The generator should stop using it as the embedding source.
   
@@ -66,7 +64,6 @@ Initial coarse feature set:
   - current `run_step` handles both HTTP and `SLEEP`
   - `http` depends on `core` and `mask`
 - any HTTP step has `until` → `until`
-- collected `${repeat.*}` names are non-empty → `repeat`
   
 Avoid micro-feature splitting in the first pass. Do not initially split by capture, form bodies, pretty JSON, masking, env vars, or random UUID.
   
@@ -80,14 +77,13 @@ _RUNTIME_DEPS = {
     "mask": (),
     "http": ("core", "mask"),
     "until": ("core",),
-    "repeat": (),
 }
 ```
   
 Resolve dependencies in deterministic order:
   
 ```text
-core → mask → http → until → repeat
+core → mask → http → until
 ```
   
 ### Flattening source
@@ -123,8 +119,6 @@ Update the section label to something like:
   
 `{{UNTIL_HELPERS}}` can remain as a comment/glue placeholder for now, but the actual `poll_until` implementation should come from selected `runtime/until.py` only when needed.
   
-`{{REPEAT_HELPERS}}` should not define generic repeat functions if `runtime/repeat.py` is selected. It should only provide generated constants/comments such as `REQUIRED_REPEAT_VARS`.
-  
 ## Implementation phases
   
 ### Phase 0: design docs
@@ -154,15 +148,14 @@ Suggested import changes:
 - `template.py` → `from .runtime.core import ...`
 - `httpclient.py` → `from .runtime.http import do_request, extract`
 - `until.py` → `from .runtime.until import eval_until`
-- `cli.py` → `from .runtime.repeat import parse_repeat_args`
-- `runner.py` → `from .runtime.http import run_step`, `from .runtime.repeat import build_repeat_iterations`, `from .runtime.until import poll_until`
+- `runner.py` → `from .runtime.http import run_step`, `from .runtime.until import poll_until`
 - `masking.py` → delegate/re-export from `runtime.mask`
   
 ### Phase 2: generator flattening
   
 1. Replace `_EMBEDDED_RUNTIME_PATH` with `_RUNTIME_DIR`.
 2. Add feature detection, dependency resolution, source stripping, and module flattening helpers.
-3. Build runtime helpers after repeat/until detection is known.
+3. Build runtime helpers after until detection is known.
 4. Replace `{{RUNTIME_HELPERS}}` in the template.
 5. Ensure generated scripts compile.
 6. Ensure generated scripts contain no package or relative imports.
@@ -182,7 +175,7 @@ Recommended cases:
    - `def parse_repeat_args`
    - `def build_repeat_iterations`
    - `--repeat-vars`
-4. Workflow with `${repeat.*}` includes repeat helpers and CLI option.
+4. Workflow with `${repeat.*}` does **not** include removed CLI option or helpers.
 5. Generated script never contains:
    - `import httpflow`
    - `from httpflow`
@@ -201,7 +194,7 @@ Possible follow-ups:
 - strip type annotations from generated runtime output
 - merge duplicate stdlib imports in generated output
   
-These are secondary. The main size win comes from omitting unused `until` and `repeat` modules.
+These are secondary. The main size win comes from omitting unused `until` modules.
   
 ## Validation commands
   

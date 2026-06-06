@@ -50,7 +50,6 @@ runner.py.tmpl
 **flatten のルール**:
 
 - ワークフローに `until` を使う step があれば `runtime/until.py` を含める
-- `${repeat.*}` 参照があれば `runtime/repeat.py` を含める
 - step が存在すれば `runtime/http.py`（これは `core` と `mask` に依存する）を含める
 - `from __future__ import annotations` と `httpflow/runtime/` 内の相対 import は除去する
 - `import httpflow` や `from httpflow ...` は絶対に残さない
@@ -89,12 +88,9 @@ runner.py.tmpl
    - `{{STEP_CALLS}}`: `main()` 内に並べる `step_xxx(store, ...)` の列
    - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数
    - `{{REQUIRED_VARS}}`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に無い変数名
-   - `{{DEFAULT_REPEAT_VARS}}`: `--repeat-vars` で渡されたデフォルト repeat 変数（辞書形式、値はリスト）
    - `{{GENERATED_AT}}`: 生成タイムスタンプ
    - `{{VERSION}}`: 本ツールのバージョン
    - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `poll_until` を含むヘルパ群（未使用時は省略）
-   - `{{REPEAT_HELPERS}}`: `${repeat.*}` 参照時のみヘルパ群（未使用時は省略）
-   - `{{ARGPARSE_REPEAT}}`: `--repeat-vars` 引数の定義（未使用時は空文字）
    - `{{MAIN_REPEAT_SETUP}}`: repeat 使用時の反復処理、未使用時は `store['repeat'] = {}`
    - 生成スクリプトの `main()` は `-v` を `store["vars"]` に反映した直後、step 呼び出し前に `REQUIRED_VARS` の不足を検証する
 6. 出力先（`-o` または stdout）に書き出す
@@ -113,7 +109,6 @@ runner.py.tmpl
 | `run_step`      | `runtime.http`                         | `runtime/http.py` 平滑化  |
 | `eval_until`    | `runtime.until`                        | `runtime/until.py` 平滑化 |
 | `mask` / `mask_url` / `mask_value` | `runtime.mask`         | `runtime/mask.py` 平滑化  |
-| `parse_repeat_args` / `build_repeat_iterations` | `runtime.repeat` | `runtime/repeat.py` 平滑化 |
 
 本体側の `template.py` / `httpclient.py` / `masking.py` / `until.py` は、
 原則として `httpflow.runtime.*` へ thin wrapper として delegate する。

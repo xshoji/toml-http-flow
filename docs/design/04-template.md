@@ -43,7 +43,7 @@ ${repeat.<variable_name>}
 
 ワークフロー全体を「実行時に与えた値リストの数だけ」繰り返し実行する
 仕組み。`${repeat.X}` を1箇所でも使ったTOMLでは、CLI実行時に
-`--repeat-vars "X=v1,v2,v3"` の指定が **必須** になる。
+`${repeat.X}` は実行時の `repeat` 名前空間を参照する。CLI による繰り返し値注入は提供しない。
 詳細は [05-cli.md §6.1.3](05-cli.md) と
 [06-workflow-flow.md](06-workflow-flow.md) を参照。
 
@@ -58,8 +58,7 @@ url    = "https://api.example.com/echo?id=${repeat.id}&label=${repeat.label}"
 
 ```bash
 python -m httpflow run -f workflow.toml \
-    --repeat-vars "id=1,2,3" \
-    --repeat-vars "label=a,b,c"
+    # 必要に応じて生成スクリプト側で repeat 値を設定する
 ```
 
 → `(id=1, label=a)` → `(id=2, label=b)` → `(id=3, label=c)` の3回、

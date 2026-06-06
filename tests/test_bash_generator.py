@@ -742,7 +742,6 @@ class TestBashGenerator(unittest.TestCase):
             script = bash_generator.generate(
                 wf,
                 default_vars={"env": "prod", "user": "alice"},
-                default_repeat_vars={"id": ["1", "2"]},
             )
             script_path = tmp_path / "workflow.sh"
             script_path.write_text(script, encoding="utf-8")
@@ -758,7 +757,6 @@ class TestBashGenerator(unittest.TestCase):
 
             self.assertIn(': "${VAR_ENV:=prod}"', script)
             self.assertIn(': "${VAR_USER:=alice}"', script)
-            self.assertIn(': "${REPEAT_ID:=1,2}"', script)
             # Ensure they are defined *before* main / step functions so they act as defaults
             defaults_pos = script.find("# ─── defaults")
             steps_pos = script.find("# ─── step functions")

@@ -372,7 +372,7 @@ Available namespaces:
 
 - `<name>` — shorthand for a captured value or injected variable in `store["vars"]`
 - `var.<name>` — variables in `store["vars"]` (including CLI `-v key=value` and captured values)
-- `repeat.<name>` — variables provided by `--repeat-vars`
+- `repeat.<name>` — values in the runtime repeat namespace (set programmatically or by editing generated scripts)
 - `env.<name>` — environment variables
 - `random.UUID` / `random.UUID_HEX` — generated UUID values
 

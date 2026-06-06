@@ -23,7 +23,6 @@ python -m httpflow generate -f workflow.toml --format bash -o workflow.sh
 | `--pretty-json`    | -    | リクエスト/レスポンスの body が JSON のとき、インデント2スペースで整形して出力する |
 | `--no-mask`        | -    | センシティブフィールドのマスキングを無効化する（**デフォルトはマスキングON**）       |
 | `--blank-line N`   | -    | ステップ間の標準出力ログを `N` 行の空行で区切る（未指定時は0）                    |
-| `--repeat-vars`    | △    | `${repeat.K}` 用のカンマ区切り値リスト（複数指定可）。詳細は §6.1.3              |
 | `-h`, `--help`     | -    | ヘルプ表示                                                                         |
 
 `${var.K}` 形式で明示参照され、`-v K=...` で与えられていない変数は必須パラメタとして扱う。
@@ -125,32 +124,6 @@ JSON / form として解釈できない plain-text body はそのまま出力す
 `httpflow` 本体が無くても同じ挙動になる。
 生成スクリプトでも `--no-mask` 引数で無効化できる。
 
-### 6.1.3 ワークフローの繰り返し実行（`--repeat-vars`）
-
-TOML側に `${repeat.<name>}` 参照が1つでも存在する場合、CLI実行時に
-**`--repeat-vars "name=v1,v2,v3"` の指定が必須**になる。
-
-```bash
-python -m httpflow run -f workflow.toml \
-    --repeat-vars "id=1,2,3" \
-    --repeat-vars "label=a,b,c"
-```
-
-- 値はカンマで分割し、前後の空白はトリムされる（空要素は許可しない）。
-- 複数の `--repeat-vars` を併用する場合、すべてのキーで
-  **カンマ分割後の要素数が一致している必要がある**（不一致はエラー）。
-- 同じキーを2回指定するとエラーになる。
-- 実行は要素数 `N` 回ループする。`i` 回目（1-origin）の各リクエストでは
-  `${repeat.id}` → 第 `i` 要素、`${repeat.label}` → 第 `i` 要素のように
-  各キーの **同じインデックスの値** で置換される。
-- 反復の境界に `=== repeat iteration i/N {...} ===` 行が出力される。
-- `store["vars"]` （`-v` で渡した値と capture 結果）は全イテレーションで共有される。
-  同じキーを capture した場合は後の値で上書きされる。
-- TOML側に `${repeat.X}` が無く、かつ `--repeat-vars` も指定しない場合は
-  従来通り1回だけ実行する（後方互換）。
-- TOML側に `${repeat.X}` があるのに `--repeat-vars` で `X` が与えられない
-  とエラー（`--repeat-vars missing for: ['X']`）。
-
 ### 6.1.4 ステップを指定して実行（`--step`）
 
 `-s` / `--step` でステップ名（TOMLの `name`）を指定すると、**指定したステップだけを実行**する。
@@ -171,7 +144,6 @@ python -m httpflow run -f workflow.toml -s getToken -s getUser
   対象に行う。選択外のステップでしか参照されない変数は要求されない。
 - 選択したステップが、選択外の先行ステップの `capture` 結果に依存する場合は、
   その値を `-v` で明示的に渡す必要がある。
-- `--repeat-vars` と併用した場合、各イテレーションで選択されたステップのみが実行される。
 
 ## 6.2 サブコマンド: `generate`
 
@@ -181,10 +153,9 @@ python -m httpflow run -f workflow.toml -s getToken -s getUser
 | `-o`, `--output`   | -    | 出力先スクリプトファイル（省略時は標準出力）           |
 | `--format`         | -    | 出力形式 `python` または `bash`（既定: `python`） |
 | `-v`, `--var`      | -    | 生成スクリプトの `DEFAULT_VARS` に埋め込む変数（実行時に `-v` で上書き可能） |
-| `--repeat-vars`    | -    | 生成スクリプトの `DEFAULT_REPEAT_VARS` に埋め込む `${repeat.K}` 用リスト（実行時に `--repeat-vars` で上書き可能） |
 | `--shebang`        | -    | 先頭に shebang を付与（`python` → `#!/usr/bin/env python3`、`bash` → `#!/usr/bin/env bash`）し、実行権を付与 |
 | `-h`, `--help`     | -    | ヘルプ表示                                        |
 
 ### 6.2.1 埋め込みの挙動
 
-`-v` / `--repeat-vars` を `generate` に渡した場合、その値は生成スクリプトに**デフォルト値として埋め込まれる**。埋め込まれた値は、実行時に同名の引数で上書き可能。
+`-v` を `generate` に渡した場合、その値は生成スクリプトに**デフォルト値として埋め込まれる**。埋め込まれた値は、実行時に同名の引数で上書き可能。

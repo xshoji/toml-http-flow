@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import __version__
 from .model import FormBody, HttpStep, SleepStep, Step, TextBody, WorkflowSpec
-from .runner import collect_repeat_names, collect_var_names
+from .runner import collect_var_names
 
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "runner.py.tmpl"
@@ -26,27 +26,7 @@ _RUNTIME_DEPS: dict[str, tuple[str, ...]] = {
     "mask": (),
     "http": ("core", "mask"),
     "until": ("core",),
-    "repeat": (),
 }
-
-_NO_REPEAT_HELPERS = '''\
-# (no ${repeat.*} references — helpers omitted)
-REQUIRED_REPEAT_VARS = set()
-'''
-
-_ARGPARSE_REPEAT = '''    p.add_argument("--repeat-vars", action="append", default=[], metavar="K=V1,V2,...",
-                   help=_default_repeat_vars_help())'''
-
-_MAIN_REPEAT_SETUP = '''    try:
-        iterations = build_repeat_iterations_from_args(args.repeat_vars, DEFAULT_REPEAT_VARS, REQUIRED_REPEAT_VARS)
-    except ValueError as exc:
-        raise SystemExit(f"error: {exc}") from exc
-    total = len(iterations)
-
-    for _idx, _repeat_iter in enumerate(iterations, start=1):
-        store["repeat"] = dict(_repeat_iter)
-        if _repeat_iter:
-            print(f"=== repeat iteration {_idx}/{total} {_repeat_iter} ===")'''
 
 _MAIN_NO_REPEAT_SETUP = "    store['repeat'] = {}"
 
@@ -155,7 +135,7 @@ def _resolve_runtime_modules(features: set[str]) -> list[str]:
         seen.add(name)
         resolved.append(name)
 
-    for name in ("core", "mask", "http", "until", "repeat"):
+    for name in ("core", "mask", "http", "until"):
         if name in features:
             add(name)
     return resolved
@@ -362,23 +342,10 @@ def _emit_step(step: Step, func_name: str) -> str:
 # ---------------------------------------------------------------- public API
 
 
-def _list_dict_literal(d: dict[str, list[str]], indent: str = "    ") -> str:
-    if not d:
-        return "{}"
-    inner = indent + "    "
-    lines = ["{"]
-    for k, v in d.items():
-        items = ", ".join(repr(x) for x in v)
-        lines.append(f"{inner}{k!r}: [" + items + "],")
-    lines.append(f"{indent}}}")
-    return "\n".join(lines)
-
-
 def generate(
     spec: WorkflowSpec,
     *,
     default_vars: dict[str, str] | None = None,
-    default_repeat_vars: dict[str, list[str]] | None = None,
     shebang: bool = False,
 ) -> str:
     """Return the source of a self-contained runner script."""
@@ -412,51 +379,20 @@ def generate(
     if any(isinstance(step, HttpStep) and step.until is not None for step in spec.steps):
         features.add("until")
 
-    # Required ${repeat.<name>} variables
-    required_repeat = sorted(collect_repeat_names(spec))
-    needs_repeat = bool(required_repeat)
-    if needs_repeat:
-        features.add("repeat")
-
-    if required_repeat:
-        repeat_lit = "{" + ", ".join(repr(n) for n in required_repeat) + "}"
-    else:
-        repeat_lit = "set()"
-
     has_until = "until" in features
     until_helpers = (
         "# (poll_until is provided by runtime helpers)"
         if has_until else "# (no until blocks — helpers omitted)"
     )
-    repeat_helpers = (
-        "# Names referenced by ${repeat.<name>} in the source TOML. Each one MUST be\n"
-        "# supplied at runtime via --repeat-vars NAME=v1,v2,... unless it is embedded\n"
-        f"# in DEFAULT_REPEAT_VARS below.\nREQUIRED_REPEAT_VARS = {repeat_lit}"
-        if needs_repeat else _NO_REPEAT_HELPERS
+    main_repeat_setup = _MAIN_NO_REPEAT_SETUP
+    step_calls_src = (
+        "    # === Workflow ===\n"
+        "    # Comment out a line to skip that step. "
+        "Reorder lines to change execution order.\n"
+        + "\n".join(
+            f"    {line}" for line in step_calls_src.splitlines()
+        )
     )
-    argparse_repeat = _ARGPARSE_REPEAT if needs_repeat else ""
-    main_repeat_setup = _MAIN_REPEAT_SETUP if needs_repeat else _MAIN_NO_REPEAT_SETUP
-
-    # Indent step calls for repeat loop nesting
-    if needs_repeat:
-        step_calls_src = "\n".join(
-            f"        {line}" for line in step_calls_src.splitlines()
-        )
-        step_calls_src = (
-            "        # === Workflow ===\n"
-            "        # Comment out a line to skip that step. "
-            "Reorder lines to change execution order.\n"
-            + step_calls_src
-        )
-    else:
-        step_calls_src = (
-            "    # === Workflow ===\n"
-            "    # Comment out a line to skip that step. "
-            "Reorder lines to change execution order.\n"
-            + "\n".join(
-                f"    {line}" for line in step_calls_src.splitlines()
-            )
-        )
 
     runtime_helpers = _flatten_modules(features)
 
@@ -467,10 +403,7 @@ def generate(
         .replace("{{RUNTIME_HELPERS}}", runtime_helpers)
         .replace("{{DEFAULT_VARS}}", _dict_literal(default_vars, indent=""))
         .replace("{{REQUIRED_VARS}}", _list_literal(_collect_required_var_names(spec, default_vars), indent=""))
-        .replace("{{DEFAULT_REPEAT_VARS}}", _list_dict_literal(dict(default_repeat_vars or {}), indent=""))
         .replace("{{UNTIL_HELPERS}}", until_helpers)
-        .replace("{{REPEAT_HELPERS}}", repeat_helpers)
-        .replace("{{ARGPARSE_REPEAT}}", argparse_repeat)
         .replace("{{MAIN_REPEAT_SETUP}}", main_repeat_setup)
         .replace("{{STEP_FUNCTIONS}}", step_functions_src)
         .replace("{{STEP_CALLS}}", step_calls_src)

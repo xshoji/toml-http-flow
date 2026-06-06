@@ -508,7 +508,6 @@ def generate(
     *,
     shebang: bool = False,
     default_vars: dict[str, str] | None = None,
-    default_repeat_vars: dict[str, list[str]] | None = None,
 ) -> str:
     """Generate a minimal bash script from *spec*.
 
@@ -545,10 +544,6 @@ def generate(
     if default_vars:
         for k, v in sorted(default_vars.items()):
             default_lines.append(_bash_default_assignment(_env_name("VAR", k), v))
-    if default_repeat_vars:
-        for k, vals in sorted(default_repeat_vars.items()):
-            joined = ",".join(vals)
-            default_lines.append(_bash_default_assignment(_env_name("REPEAT", k), joined))
 
     defaults_block = "\n".join(default_lines)
     if defaults_block:

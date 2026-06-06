@@ -16,7 +16,6 @@ httpflow/
 │   ├── mask.py          # mask / mask_url / mask_value
 │   ├── http.py          # do_request / extract / run_step / ログ出力
 │   ├── until.py         # eval_until / poll_until
-│   └── repeat.py        # parse_repeat_args / build_repeat_iterations
 ├── templates/
 │   └── runner.py.tmpl   # 生成スクリプトの枠（placeholder のみ）
 └── tests/
@@ -82,7 +81,6 @@ class WorkflowSpec:
 | `runtime/mask.py` | `mask` / `mask_url` / `mask_value` | -- |
 | `runtime/http.py` | `do_request` / `extract` / `run_step` / ログ出力 | `core`, `mask` |
 | `runtime/until.py` | `eval_until` / `poll_until` | `core` |
-| `runtime/repeat.py` | `parse_repeat_args` / `build_repeat_iterations` | -- |
 
 **ルール**:
 
@@ -100,7 +98,6 @@ class WorkflowSpec:
 - 各ステップ実行前にテンプレート展開 (`run_step` 内で実施)
 - 実行後に `capture` の結果を変数ストアの `<key>` に保存
 - 後続ステップで参照可能にする
-- `repeat_vars` による反復実行
 - `until` 条件付きポーリング対応
 - **責務は「実行順序と store 更新」のみ**。出力整形はすべて `runtime.http.run_step` に委譲
 
@@ -115,7 +112,7 @@ class WorkflowSpec:
 
 ## 3.6 httpflow/cli.py
 
-- `argparse` で `-f`, `-v`, `--repeat-vars` をパース
+- `argparse` で `-f`, `-v` をパース
 - `-v key=value` を複数回受け取り `vars` 名前空間に格納
 - `config.load()` で `WorkflowSpec` を読み込み、`runner.run()` / `generator.generate()` に渡す
 - 例外をキャッチして非ゼロ終了コードで終了
