@@ -28,8 +28,6 @@ _RUNTIME_DEPS: dict[str, tuple[str, ...]] = {
     "until": ("core",),
 }
 
-_MAIN_NO_REPEAT_SETUP = "    store['repeat'] = {}"
-
 
 # ---------------------------------------------------------------- generated-script cleanup
 
@@ -255,7 +253,7 @@ def _emit_sleep_step(step: SleepStep, func_name: str) -> str:
     """Sleep step: a single ``run_step(...)`` call."""
     return "\n".join([
         f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
-        f'    """[[requests]] name = {step.name!r} — SLEEP {step.seconds}"""',
+        f'    """[[requests]] name = {step.name!r} \u2014 SLEEP {step.seconds}"""',
         "    for _ in range(blank_line):",
         "        print()",
         _emit_run_step_call(
@@ -284,7 +282,7 @@ def _emit_http_step(step: HttpStep, func_name: str) -> str:
     body, body_form = _body_parts(step)
     return "\n".join([
         f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
-        f'    """[[requests]] name = {step.name!r} — {step.method.upper()} {step.url}"""',
+        f'    """[[requests]] name = {step.name!r} \u2014 {step.method.upper()} {step.url}"""',
         "    for _ in range(blank_line):",
         "        print()",
         _emit_run_step_call(
@@ -307,7 +305,7 @@ def _emit_until_step(step: HttpStep, func_name: str) -> str:
     body, body_form = _body_parts(step)
     return "\n".join([
         f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
-        f'    """[[requests]] name = {step.name!r} — {step.method.upper()} {step.url}"""',
+        f'    """[[requests]] name = {step.name!r} \u2014 {step.method.upper()} {step.url}"""',
         "    for _ in range(blank_line):",
         "        print()",
         "    def attempt():",
@@ -382,9 +380,8 @@ def generate(
     has_until = "until" in features
     until_helpers = (
         "# (poll_until is provided by runtime helpers)"
-        if has_until else "# (no until blocks — helpers omitted)"
+        if has_until else "# (no until blocks \u2014 helpers omitted)"
     )
-    main_repeat_setup = _MAIN_NO_REPEAT_SETUP
     step_calls_src = (
         "    # === Workflow ===\n"
         "    # Comment out a line to skip that step. "
@@ -404,7 +401,6 @@ def generate(
         .replace("{{DEFAULT_VARS}}", _dict_literal(default_vars, indent=""))
         .replace("{{REQUIRED_VARS}}", _list_literal(_collect_required_var_names(spec, default_vars), indent=""))
         .replace("{{UNTIL_HELPERS}}", until_helpers)
-        .replace("{{MAIN_REPEAT_SETUP}}", main_repeat_setup)
         .replace("{{STEP_FUNCTIONS}}", step_functions_src)
         .replace("{{STEP_CALLS}}", step_calls_src)
     )

@@ -420,25 +420,6 @@ class TestGenerator(unittest.TestCase):
 
             self.assertIn("(no until blocks", script)
 
-    def test_unused_repeat_helpers_omitted(self):
-        """When no ${repeat.*} is referenced, no extra repeat section should be emitted."""
-        toml_text = textwrap.dedent(f"""
-            [[requests]]
-            name = "ping"
-            method = "GET"
-            url = "http://127.0.0.1:1/ping"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-            compile(script, "<generated>", "exec")
-
-            self.assertNotIn("--repeat-vars", script)
-
     def test_default_vars_embedded(self):
         """-v K=V sets DEFAULT_VARS; script runs without args and can be overridden."""
         base = f"http://127.0.0.1:{self.port}"
@@ -662,29 +643,6 @@ class TestGenerator(unittest.TestCase):
         self.assertIn("def eval_until", script)
         self.assertIn("def poll_until", script)
         self.assertIn("_UNTIL_OPS", script)
-        # until-only workflow should not include argparse --repeat-vars
-        self.assertNotIn('p.add_argument("--repeat-vars"', script)
-
-    def test_generated_script_omits_repeat_var_helpers(self):
-        """Workflow with ${repeat.*} does not include removed repeat-var helpers."""
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "ping"
-            method = "GET"
-            url = "http://127.0.0.1:1/ping?id=${repeat.id}"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        compile(script, "<generated>", "exec")
-        self.assertNotIn("def parse_repeat_args", script)
-        self.assertNotIn("def build_repeat_iterations_from_args", script)
-        self.assertNotIn("--repeat-vars", script)
 
     def test_generated_script_never_contains_httpflow_imports(self):
         """Generated script must be free of any httpflow or relative package imports."""
@@ -692,7 +650,7 @@ class TestGenerator(unittest.TestCase):
             [[requests]]
             name = "ping"
             method = "GET"
-            url = "http://127.0.0.1:1/ping?id=${repeat.id}"
+            url = "http://127.0.0.1:1/ping?id=${var.id}"
         """).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as tmp:

@@ -64,7 +64,7 @@ def main():
                    help="separate step log output with N blank lines")
     args = p.parse_args()
 
-    store = {"vars": dict(DEFAULT_VARS), "repeat": {}}
+    store = {"vars": dict(DEFAULT_VARS)}
     for kv in args.var:
         if "=" not in kv:
             print(f"error: -v/--var requires key=value, got: {kv!r}", file=sys.stderr)
@@ -77,7 +77,6 @@ def main():
         print(f"error: {error}", file=sys.stderr)
         return 1
 
-{{MAIN_REPEAT_SETUP}}
 {{STEP_CALLS}}
 
     return 0

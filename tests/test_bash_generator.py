@@ -275,17 +275,17 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertIn('cmd+=("$url")', script)
 
-    def test_var_and_repeat_placeholders_become_shell_env_names(self):
+    def test_var_placeholders_become_shell_env_names(self):
         toml = textwrap.dedent("""
             [[requests]]
             name = "echo"
             method = "POST"
-            url = "http://example.com/${var.env}?id=${repeat.id}"
-            body = '{"name":"${var.user}","id":"${repeat.id}"}'
+            url = "http://example.com/${var.env}?id=${var.id}"
+            body = '{"name":"${var.user}","id":"${var.id}"}'
         """)
         script = self._generate_and_check(toml)
-        self.assertIn('url="http://example.com/${VAR_ENV}?id=${REPEAT_ID}"', script)
-        self.assertIn('{"name":"${VAR_USER}","id":"${REPEAT_ID}"}', script)
+        self.assertIn('url="http://example.com/${VAR_ENV}?id=${VAR_ID}"', script)
+        self.assertIn('{"name":"${VAR_USER}","id":"${VAR_ID}"}', script)
 
     def test_no_bash4_features(self):
         """Ensure no bash 4+ only syntax slips in."""
@@ -731,8 +731,8 @@ class TestBashGenerator(unittest.TestCase):
             [[requests]]
             name = "echo"
             method = "POST"
-            url = "http://example.com/${var.env}?id=${repeat.id}"
-            body = '{"name":"${var.user}","id":"${repeat.id}"}'
+            url = "http://example.com/${var.env}?id=${var.id}"
+            body = '{"name":"${var.user}","id":"${var.id}"}'
         """)
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

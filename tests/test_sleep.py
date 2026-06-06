@@ -110,12 +110,12 @@ url = "${var.delay}"
         assert isinstance(step, SleepStep)
         self.assertEqual(step.seconds, "${var.delay}")
 
-    def test_toml_sleep_accepts_template_repeat(self):
+    def test_toml_sleep_accepts_template_var(self):
         toml = b"""
 [[requests]]
 name = "wait"
 method = "SLEEP"
-url = "${repeat.delay}"
+url = "${var.delay}"
 """
         path = self._write(toml)
         wf = cfg_mod.load(path)
@@ -123,7 +123,7 @@ url = "${repeat.delay}"
         step = wf.steps[0]
         self.assertIsInstance(step, SleepStep)
         assert isinstance(step, SleepStep)
-        self.assertEqual(step.seconds, "${repeat.delay}")
+        self.assertEqual(step.seconds, "${var.delay}")
 
 
 if __name__ == "__main__":

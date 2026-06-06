@@ -8,7 +8,7 @@ from typing import Any, Iterator
 from .model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
 from .runtime.http import run_step
 from .runtime.until import poll_until
-from .template import find_repeat_names, find_var_names
+from .template import find_var_names
 
 
 def _iter_template_strings(spec: WorkflowSpec) -> Iterator[str]:
@@ -31,11 +31,6 @@ def _iter_template_strings(spec: WorkflowSpec) -> Iterator[str]:
                         pass
                 if step.until is not None:
                     yield step.until.condition
-
-
-def collect_repeat_names(spec: WorkflowSpec) -> set[str]:
-    """Return every ``${repeat.<name>}`` referenced anywhere in ``spec``."""
-    return {n for s in _iter_template_strings(spec) for n in find_repeat_names(s)}
 
 
 def collect_var_names(spec: WorkflowSpec) -> set[str]:
@@ -82,15 +77,13 @@ def run(
     """Run every step in ``spec`` and return the final variable store.
 
     When ``steps`` is given, only the named steps are executed (in TOML
-    order); validation of required vars and repeat names then applies to
-    that subset only.
+    order); validation of required vars then applies to that subset only.
     """
     if steps:
         spec = select_steps(spec, steps)
 
     store: dict[str, Any] = {
         "vars": dict(vars_ or {}),
-        "repeat": {},
     }
     validate_required_vars(spec, store["vars"])
 

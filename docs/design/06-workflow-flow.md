@@ -7,7 +7,7 @@
    - `body` と form body の相互排他をモデル型で表現
 5. 変数ストアの初期化:
    ```python
-   store = {"vars": {...}, "repeat": {}}
+   store = {"vars": {...}}
    ```
 6. `${var.<name>}` 参照の検出と `-v/--var` の検証:
    1. `WorkflowSpec` 中の明示的な `${var.X}` を全て列挙

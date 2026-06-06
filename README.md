@@ -372,7 +372,6 @@ Available namespaces:
 
 - `<name>` — shorthand for a captured value or injected variable in `store["vars"]`
 - `var.<name>` — variables in `store["vars"]` (including CLI `-v key=value` and captured values)
-- `repeat.<name>` — values in the runtime repeat namespace (set programmatically or by editing generated scripts)
 - `env.<name>` — environment variables
 - `random.UUID` / `random.UUID_HEX` — generated UUID values
 
@@ -423,7 +422,6 @@ toml-http-flow/
     ├── test_httpclient.py
     ├── test_masking.py
     ├── test_pretty_json.py
-    ├── test_repeat.py
     ├── test_sleep.py
     ├── test_template.py
     ├── test_until.py

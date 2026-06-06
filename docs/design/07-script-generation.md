@@ -65,9 +65,8 @@ runner.py.tmpl
 | `mask`    | --        |
 | `http`    | `core`, `mask` |
 | `until`   | `core`    |
-| `repeat`  | --        |
 
-解決順は常に `core → mask → http → until → repeat` とする。
+解決順は常に `core → mask → http → until` とする。
 
 ## 8.4 生成アルゴリズム
 
@@ -91,7 +90,6 @@ runner.py.tmpl
    - `{{GENERATED_AT}}`: 生成タイムスタンプ
    - `{{VERSION}}`: 本ツールのバージョン
    - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `poll_until` を含むヘルパ群（未使用時は省略）
-   - `{{MAIN_REPEAT_SETUP}}`: repeat 使用時の反復処理、未使用時は `store['repeat'] = {}`
    - 生成スクリプトの `main()` は `-v` を `store["vars"]` に反映した直後、step 呼び出し前に `REQUIRED_VARS` の不足を検証する
 6. 出力先（`-o` または stdout）に書き出す
 7. `--shebang` 指定時は先頭に `#!/usr/bin/env python3` を付け、`chmod +x` 相当を実施
@@ -145,8 +143,8 @@ HTTP リクエストには `curl` を利用する。
 | 依存関係       | 生成スクリプトは `bash` / `curl` を利用する。capture または実行時 `--pretty-json` 指定時は JSON 処理に `jq` も利用する |
 | 自己完結性     | 1ファイルで完結。`httpflow` パッケージには一切依存しない                   |
 | 可読性         | 1 `[[requests]]` ブロック = 1 `step_<name>()` 関数として展開             |
-| 変数展開       | **自前テンプレートエンジンは持たない**。`${random.UUID}` / `${random.UUID_HEX}` は bash ヘルパー、`${var.X}` は `${VAR_X}`、`${repeat.X}` は `${REPEAT_X}` に変換し、それ以外の `${...}` や `$VAR` はそのままシェルに渡す |
-| 未対応機能     | until / repeat / --quiet / -v / --no-mask は生成スクリプトでは実装しない |
+| 変数展開       | **自前テンプレートエンジンは持たない**。`${random.UUID}` / `${random.UUID_HEX}` は bash ヘルパー、`${var.X}` は `${VAR_X}` に変換し、それ以外の `${...}` や `$VAR` はそのままシェルに渡す |
+| 未対応機能     | until / --quiet / -v / --no-mask は生成スクリプトでは実装しない |
 
 ### 8.8.2 生成スクリプトの構造
 

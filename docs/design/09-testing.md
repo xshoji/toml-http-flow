@@ -7,7 +7,7 @@
 - **template**: 各種記法の展開、ネスト参照、未定義変数のエラー
 - **config**: 正常 TOML のパース、排他フィールドのバリデーション
 - **httpclient**: `http.server` でローカルモックを起動し、E2E で検証
-- **runner**: 複数ステップ間の変数受け渡し、`repeat` 反復、SLEEP ステップ
+- **runner**: 複数ステップ間の変数受け渡し、SLEEP ステップ
 - **until**: `==` / `!=` / `~` / `in` 各オペレータの評価
 - **masking**: ヘッダー・ボディ・URL クエリ・capture 値のマスキング
 

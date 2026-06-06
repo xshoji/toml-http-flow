@@ -78,7 +78,7 @@ TOML file
 - `evaluate_until`
 - `mask_value` / `mask_url`
 - request / response 表示補助
-- repeat 展開補助
+- request / response 表示補助
 
 本体実行では import して使う。
 
@@ -172,10 +172,9 @@ Phase 3: HTTP 送信処理の共通化
 - [x] HTTP 送信・response 取り扱いの中核実装が1箇所になる
 - [x] 外部APIに依存しないテストで同等性を確認できる
 
-Phase 4: until / repeat / masking / reporting の整理
+Phase 4: until / masking / reporting の整理
 
 - [x] until 条件評価を共通 helper に寄せる
-- [x] repeat 展開の共通化範囲を決める
 - [x] masking 処理を共通 helper に寄せる
 - [x] request / response 表示整形を runner から分離する
 - [x] verbose / pretty-json / no-mask の parity test を追加する

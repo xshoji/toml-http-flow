@@ -35,36 +35,7 @@ ${var.<variable_name>}
 url = "https://api.${var.env}.example.com/user"
 ```
 
-## 5.3 repeat変数の参照
-
-```
-${repeat.<variable_name>}
-```
-
-ワークフロー全体を「実行時に与えた値リストの数だけ」繰り返し実行する
-仕組み。`${repeat.X}` を1箇所でも使ったTOMLでは、CLI実行時に
-`${repeat.X}` は実行時の `repeat` 名前空間を参照する。CLI による繰り返し値注入は提供しない。
-詳細は [05-cli.md §6.1.3](05-cli.md) と
-[06-workflow-flow.md](06-workflow-flow.md) を参照。
-
-例:
-
-```toml
-[[requests]]
-name   = "echo"
-method = "GET"
-url    = "https://api.example.com/echo?id=${repeat.id}&label=${repeat.label}"
-```
-
-```bash
-python -m httpflow run -f workflow.toml \
-    # 必要に応じて生成スクリプト側で repeat 値を設定する
-```
-
-→ `(id=1, label=a)` → `(id=2, label=b)` → `(id=3, label=c)` の3回、
-ワークフロー全体が実行される。
-
-## 5.4 環境変数の参照
+## 5.3 環境変数の参照
 
 ```
 ${env.<environment_variable_name>}
@@ -127,7 +98,7 @@ url = "https://api.example.com/x?args=${token}"
 ## 5.8 実装方針
 
 `re.sub` のコールバックで置換する。
-値は `store["vars"]` / `store["repeat"]` / `env.*` / `random.*` を単一のルックアップ関数で解決する。
+値は `store["vars"]` / `env.*` / `random.*` を単一のルックアップ関数で解決する。
 
 ```python
 import re
@@ -179,7 +150,6 @@ def render(text: str, store: dict) -> str:
 ```python
 store = {
     "vars": {"env": "production", "token": "abc123"},
-    "repeat": {},
 }
 render("Bearer ${token}", store)
 # → "Bearer abc123"

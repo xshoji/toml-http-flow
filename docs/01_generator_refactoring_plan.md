@@ -13,7 +13,7 @@ The target architecture is:
   
 ## Current issues
   
-Current generation embeds the monolithic `httpflow/embedded_runtime.py` source into every generated script. Even when a workflow does not use `until` or `${repeat.*}`, the generated script can still include generic helpers for those features.
+Current generation embeds the monolithic `httpflow/embedded_runtime.py` source into every generated script. Even when a workflow does not use `until`, the generated script can still include generic helpers for those features.
   
 Relevant files:
   
@@ -171,17 +171,12 @@ Recommended cases:
    - `def poll_until`
    - `_UNTIL_OPS`
 2. Workflow with `until` includes those helpers.
-3. Workflow without `${repeat.*}` omits:
-   - `def parse_repeat_args`
-   - `def build_repeat_iterations`
-   - `--repeat-vars`
-4. Workflow with `${repeat.*}` does **not** include removed CLI option or helpers.
-5. Generated script never contains:
+3. Generated script never contains:
    - `import httpflow`
    - `from httpflow`
    - `from .`
-6. Empty or minimal workflow still compiles.
-7. Existing generated-script execution tests still pass from outside the repository.
+4. Empty or minimal workflow still compiles.
+5. Existing generated-script execution tests still pass from outside the repository.
   
 ### Phase 4: optional readability cleanup
   
@@ -224,7 +219,7 @@ TOML
 
 python3 -m httpflow generate -f /tmp/httpflow_no_until.toml -o /tmp/no_until.py
 python3 -m py_compile /tmp/no_until.py
-! grep -E 'from httpflow|import httpflow|from \.|def eval_until|_UNTIL_OPS|def poll_until|def parse_repeat_args|def build_repeat_iterations' /tmp/no_until.py
+! grep -E 'from httpflow|import httpflow|from \.|def eval_until|_UNTIL_OPS|def poll_until' /tmp/no_until.py
 ```
   
 Manual until check:
@@ -247,23 +242,7 @@ python3 -m py_compile /tmp/until.py
 grep -E 'def eval_until|def poll_until|_UNTIL_OPS' /tmp/until.py
 ! grep -E 'from httpflow|import httpflow|from \.' /tmp/until.py
 ```
-  
-Manual repeat check:
-  
-```bash
-cat >/tmp/httpflow_repeat.toml <<'TOML'
-[[requests]]
-name = "ping"
-method = "GET"
-url = "http://127.0.0.1:1/ping?id=${repeat.id}"
-TOML
 
-python3 -m httpflow generate -f /tmp/httpflow_repeat.toml -o /tmp/repeat.py
-python3 -m py_compile /tmp/repeat.py
-grep -E 'def parse_repeat_args|def build_repeat_iterations_from_args|--repeat-vars' /tmp/repeat.py
-! grep -E 'from httpflow|import httpflow|from \.' /tmp/repeat.py
-```
-  
 ## Risks and guardrails
   
 | Risk | Guardrail |
