@@ -468,13 +468,22 @@ hf_trace_response_body() {
 jq_or_cat() {
     local input trimmed
     input=$(cat)
-    trimmed=$(echo "$input" | sed 's/^[[:space:]]*//' | head -c1)
-    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ] \
-        || [ "$trimmed" != "{" ] && [ "$trimmed" != "[" ] \
-        || ! echo "$input" | jq . > /dev/null 2>&1; then
-        echo "$input"
+    trimmed=$(printf '%s' "$input" | sed 's/^[[:space:]]*//' | head -c1)
+
+    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ]; then
+        printf '%s\n' "$input"
+        return 0
+    fi
+
+    if [ "$trimmed" != "{" ] && [ "$trimmed" != "[" ]; then
+        printf '%s\n' "$input"
+        return 0
+    fi
+
+    if printf '%s\n' "$input" | jq . > /dev/null 2>&1; then
+        printf '%s\n' "$input" | jq .
     else
-        echo "$input" | jq .
+        printf '%s\n' "$input"
     fi
 }
 
@@ -669,7 +678,7 @@ def generate(
         blocks.append(_emit(s, fn, captured_vars))
         calls.append(f"    {fn} || exit $?")
 
-    shebang_line = "#!/usr/bin/env bash\n" if shebang else ""
+    shebang_line = "#!/usr/bin/env bash\n"
 
     # Build default variable assignments
     default_lines: list[str] = []
@@ -783,9 +792,12 @@ main() {{
     done
     export HTTPFLOW_PRETTY_JSON=${{HTTPFLOW_PRETTY_JSON:-}}
 
-    HF_TMPDIR=$(mktemp -d)
+    HF_TMPDIR=$(mktemp -d) || {{
+        echo "error: failed to create temporary directory" >&2
+        exit 1
+    }}
     export HF_TMPDIR
-    trap 'rm -rf "$HF_TMPDIR"' EXIT
+    trap 'rm -rf -- "$HF_TMPDIR"' EXIT SIGINT
 {calls_src}
 }}
 
