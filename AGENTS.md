@@ -33,6 +33,69 @@ Read this before changing any code.
 | [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{STEP_FUNCTIONS}}` `{{STEP_CALLS}}` `{{DEFAULT_VARS}}` `{{VERSION}}` `{{GENERATED_AT}}` `{{UNTIL_HELPERS}}` `{{MAIN_REPEAT_SETUP}}` |
 | [tests/](tests/) | `unittest`-based tests | Follow the convention of standing up a local mock with `http.server` |
 
+## Project layout
+
+```
+toml-http-flow/
+├── pyproject.toml
+├── README.md
+├── AGENTS.md
+├── docs/
+│   ├── spec.md
+│   └── design/
+│       ├── 01-overview.md
+│       ├── 02-architecture.md
+│       ├── 03-toml-spec.md
+│       ├── 04-template.md
+│       ├── 05-cli.md
+│       ├── 06-workflow-flow.md
+│       ├── 07-script-generation.md
+│       ├── 08-error-handling.md
+│       ├── 09-testing.md
+│       ├── 10-go-python-diff.md
+│       └── 11-extension-points.md
+├── httpflow/
+│   ├── __init__.py
+│   ├── __main__.py          # entry point for `python -m httpflow`
+│   ├── cli.py               # CLI argument parsing and dispatch
+│   ├── config.py            # TOML → WorkflowSpec loader / validation
+│   ├── model.py             # WorkflowSpec / HttpStep / SleepStep / Body union
+│   ├── runner.py            # step execution engine and variable store
+│   ├── embedded_runtime.py  # source-of-truth helpers shared with generated scripts
+│   ├── generator.py         # WorkflowSpec → standalone .py emitter
+│   ├── httpclient.py        # urllib HTTP client (embedded_runtime wrapper)
+│   ├── template.py          # ${...} expansion engine (embedded_runtime wrapper)
+│   ├── masking.py           # log output masking (embedded_runtime wrapper)
+│   ├── until.py             # until condition evaluator (embedded_runtime wrapper)
+│   ├── workflow.py          # backward-compatible shim → runner
+│   └── templates/
+│       └── runner.py.tmpl   # frame template for generated scripts (placeholders only)
+└── tests/
+    ├── __init__.py
+    ├── test_cli.py
+    ├── test_config.py
+    ├── test_description.py
+    ├── test_generator.py
+    ├── test_httpclient.py
+    ├── test_masking.py
+    ├── test_pretty_json.py
+    ├── test_sleep.py
+    ├── test_template.py
+    ├── test_until.py
+    └── test_workflow.py
+```
+
+### Key modules
+
+| Module | Responsibility |
+|---|---|
+| `config.py` | TOML parsing → normalized `WorkflowSpec`. No longer returns raw `WorkflowConfig` for `load()`. |
+| `model.py` | `WorkflowSpec`, `HttpStep`, `SleepStep`, `Body` union (`TextBody` / `FormBody`). |
+| `runner.py` | Execution engine: iteration order, store updates, step branching. |
+| `embedded_runtime.py` | Source-of-truth helpers (`render`, `extract`, `do_request`, `run_step`, `mask_*`, `eval_until`) used by both the package and the generated script. |
+| `generator.py` | Thin emitter: `WorkflowSpec` → Python source. No long runtime strings. |
+| `workflow.py` | Backward-compatible shim that re-exports from `runner`. |
+
 ## On the duplicated runtime helpers
 
 Functions equivalent to `render` / `extract` / `do_request` exist in **both
