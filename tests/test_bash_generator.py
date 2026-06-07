@@ -182,10 +182,9 @@ class TestBashGenerator(unittest.TestCase):
         self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
         lines = res.stdout.splitlines()
         boundary_idx = lines.index("> ")
-        self.assertEqual(lines[boundary_idx + 1], "> [request body echoed by httpflow; curl -v omits it]")
-        self.assertEqual(lines[boundary_idx + 2], '> {"name":"test"}')
-        self.assertRegex(lines[boundary_idx + 3], r"^<== \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[create\]")
-        self.assertTrue(lines[boundary_idx + 4].startswith("< HTTP/"))
+        self.assertEqual(lines[boundary_idx + 1], '> {"name":"test"}')
+        self.assertRegex(lines[boundary_idx + 2], r"^<== \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[create\]")
+        self.assertTrue(lines[boundary_idx + 3].startswith("< HTTP/"))
 
     def test_form_body(self):
         toml = textwrap.dedent("""
