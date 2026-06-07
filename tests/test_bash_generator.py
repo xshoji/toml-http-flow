@@ -197,7 +197,34 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertIn("step_login()", script)
         self.assertIn('Content-Type: application/x-www-form-urlencoded', script)
-        self.assertIn('user=alice&pass=secret', script)
+        self.assertIn('body="user=$(urlencode "alice")&pass=$(urlencode "secret")"', script)
+
+    def test_form_body_placeholders_expand_before_urlencode(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "first"
+            method = "POST"
+            url = "http://example.com/first"
+            capture = ["authorization = response.body.token"]
+
+            [[requests]]
+            name = "login"
+            method = "POST"
+            url = "http://example.com/auth"
+            body_form = [
+                "nickname = new_name",
+                "email    = test@email.com",
+                "args     = ${var.argsAaa}",
+                "params   = ${var.paramsParamb}",
+                "token    = ${authorization}",
+            ]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn(
+            'body="nickname=$(urlencode "new_name")&email=$(urlencode "test@email.com")&args=$(urlencode "${VAR_ARGSAAA}")&params=$(urlencode "${VAR_PARAMSPARAMB}")&token=$(urlencode "${VAR_AUTHORIZATION}")"',
+            script,
+        )
+        self.assertNotIn("%24%7Bauthorization%7D", script)
 
     def test_form_body_does_not_duplicate_user_content_type(self):
         toml = textwrap.dedent("""

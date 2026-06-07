@@ -59,6 +59,16 @@ def _urlencode_fields(fields: dict[str, str]) -> str:
     return "&".join(parts)
 
 
+def _urlencode_fields_bash_expr(fields: dict[str, str], captured_vars: set[str]) -> str:
+    """Build a bash expression that urlencodes form fields after expansion."""
+    parts: list[str] = []
+    for k, v in fields.items():
+        encoded_key = urllib.parse.quote_plus(k)
+        expanded_value = _expand_placeholders(v, captured_vars)
+        parts.append(f"{encoded_key}=$(urlencode {_bash_dq(expanded_value)})")
+    return "\"" + "&".join(parts) + "\""
+
+
 def _bash_dq(s: str) -> str:
     """Double-quote a string for bash while preserving shell expansion."""
     return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
@@ -196,7 +206,7 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
             out.append('    body="${body}$(printf "\\n")"')
         case FormBody(fields=f):
             has_body = True
-            out.append(f'    body={_render_expr(_urlencode_fields(f), captured_vars)}')
+            out.append(f'    body={_urlencode_fields_bash_expr(f, captured_vars)}')
         case _:
             pass
 
@@ -760,6 +770,10 @@ uuid() {{
 
 uuid_hex() {{
     uuid | sed "s/-//g"
+}}
+
+urlencode() {{
+    python3 -c 'import sys, urllib.parse; print(urllib.parse.quote_plus(sys.argv[1]), end="")' "$1"
 }}
 {_capture_helpers() if has_capture else ''}
 {_http_helpers(has_capture)}
