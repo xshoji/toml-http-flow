@@ -166,8 +166,8 @@ workflow.sh
 - `${random.UUID}` は `uuid`、`${random.UUID_HEX}` は `uuid_hex` 関数呼び出しとして生成し、参照ごとに新しい UUID v4 を生成する
 - **HTTP ステップ**は関数内で `curl -sS -L -v --no-buffer --stderr -` を `local -a cmd=(...)` 配列で構築し、`grep -v '^\({\|}\) \[.*bytes data\]'` と `grep -v '^\*'` で curl の転送量メタ行・SSL等の診断行を除外してから、`tee` で標準出力と一時 trace ファイルへ同時に出力する。capture はこの trace ファイルから最終レスポンスのステータス・ヘッダー・ボディを best-effort で抽出する
 - `curl -v` はリクエストボディを出力しないため、ボディがある場合は curl 実行前に httpflow がラベル付きでボディを出力し、同じ trace ファイルに保存する
-- **ボディ（text）**は `local __BODY=$(cat << EOF ... EOF)` による heredocument で渡す
-- **ボディ（form）**は urlencode 済み文字列をシングルクォートでインライン化し `Content-Type` ヘッダを自動付与
+- **ボディ（text）**は `body=$(cat << EOF ... EOF)` による heredocument で渡す
+- **ボディ（form）**は固定値のキー・値を `application/x-www-form-urlencoded` として urlencode 済みにし、変数展開が必要な値は bash 実行時の展開に委ねて `Content-Type` ヘッダを自動付与
 - **SLEEP ステップ**は `sleep <seconds>` を実行
 - **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する
 - **until** 指定ありの HTTP ステップは、各試行で通常のリクエスト・レスポンス出力・capture を実行した後に条件を評価する。条件が満たされると `* until satisfied on attempt N` を出力し、満たされない場合は `* until not satisfied (attempt N/M), retrying in Xs` を出力して `interval` 秒待つ。`max_attempts` で満たされなければ標準エラーに失敗理由を出力し非ゼロ終了する。`curl --fail` は使わないため HTTP 4xx/5xx は通常レスポンスとして扱い、capture や条件評価の対象になる

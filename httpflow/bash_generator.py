@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import urllib.parse
 
 from . import __version__
 from .model import FormBody, HttpStep, SleepStep, Step, TextBody, WorkflowSpec
@@ -54,7 +55,7 @@ def _urlencode_fields(fields: dict[str, str]) -> str:
     """Build ``application/x-www-form-urlencoded`` body from field dict."""
     parts: list[str] = []
     for k, v in fields.items():
-        parts.append(f"{k}={v}")
+        parts.append(f"{urllib.parse.quote_plus(k)}={urllib.parse.quote_plus(v)}")
     return "&".join(parts)
 
 
@@ -260,7 +261,7 @@ def _emit_sleep(step: SleepStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a SLEEP step as a bash function."""
     out = [
         f"{fn}() {{",
-        f"    seconds={_render_expr(step.seconds, captured_vars)}",
+        f"    local seconds={_render_expr(step.seconds, captured_vars)}",
         '    hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"',
         f'    echo "==> $(hf_now) [{step.name}] SLEEP $seconds"',
     ]
@@ -532,6 +533,8 @@ hf_http_step() {
     fi
     cmd+=("$url")
 
+    # Only curl/pipeline failures fail the step here; HTTP 4xx/5xx responses
+    # are preserved for capture/until evaluation and are not treated as errors.
     if ! "${cmd[@]}" \
         | grep -v '^\({\|}\) \[.*bytes data\]' \
         | grep -v '^\*' \
