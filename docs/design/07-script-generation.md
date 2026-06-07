@@ -144,7 +144,7 @@ HTTP リクエストには `curl` を利用する。
 | 自己完結性     | 1ファイルで完結。`httpflow` パッケージには一切依存しない                   |
 | 可読性         | 1 `[[requests]]` ブロック = 1 `step_<name>()` 関数として展開             |
 | 変数展開       | **自前テンプレートエンジンは持たない**。`${random.UUID}` / `${random.UUID_HEX}` は bash ヘルパー、`${var.X}` は `${VAR_X}` に変換し、それ以外の `${...}` や `$VAR` はそのままシェルに渡す |
-| 未対応機能     | until / --quiet / -v / --no-mask は生成スクリプトでは実装しない |
+| 未対応機能     | --quiet / -v / --no-mask は生成スクリプトでは実装しない |
 
 ### 8.8.2 生成スクリプトの構造
 
@@ -170,5 +170,6 @@ workflow.sh
 - **ボディ（form）**は urlencode 済み文字列をシングルクォートでインライン化し `Content-Type` ヘッダを自動付与
 - **SLEEP ステップ**は `sleep <seconds>` を実行
 - **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する
+- **until** 指定ありの HTTP ステップは、各試行で通常のリクエスト・レスポンス出力・capture を実行した後に条件を評価する。条件が満たされると `* until satisfied on attempt N` を出力し、満たされない場合は `* until not satisfied (attempt N/M), retrying in Xs` を出力して `interval` 秒待つ。`max_attempts` で満たされなければ標準エラーに失敗理由を出力し非ゼロ終了する。`curl --fail` は使わないため HTTP 4xx/5xx は通常レスポンスとして扱い、capture や条件評価の対象になる
 - `main()` は step 呼び出しを1行ずつ並べるだけ（スキップ・並べ替えがコメントアウトで容易）
 - テンプレートファイルは使わず、`bash_generator.py` のコード内で完結して出力する

@@ -1,6 +1,6 @@
 """Generate a standalone single-file bash runner from a WorkflowSpec.
 
-This is the *simplified* bash generator: no until, repeat, nor full template
+This is the *simplified* bash generator: no repeat nor full template
 rendering engine.  Values are read straight from environment variables and
 expanded by the shell itself, with random UUID placeholders handled by small
 bash helpers.  JSON capture uses jq when a workflow defines capture entries.
@@ -16,6 +16,13 @@ from . import __version__
 from .model import FormBody, HttpStep, SleepStep, Step, TextBody, WorkflowSpec
 from .runner import collect_var_names
 from .runtime.mask import _MASK_DEFAULTS
+
+_UNTIL_OPS = [
+    (re.compile(r"=="), "=="),
+    (re.compile(r"!="), "!="),
+    (re.compile(r"\s+in\s+"), "in"),
+    (re.compile(r"~"), "~"),
+]
 
 
 def _bash_sq(s: str) -> str:
@@ -80,6 +87,21 @@ def _expand_placeholders(s: str, captured_vars: set[str]) -> str:
 def _render_expr(s: str, captured_vars: set[str]) -> str:
     """Return a readable bash expression with random UUID placeholders expanded."""
     return _bash_dq(_expand_placeholders(s, captured_vars))
+
+
+def _split_until_condition(condition: str) -> tuple[str, str, str]:
+    """Split an until condition into unrendered lhs, operator, and rhs."""
+    best: tuple[int, int, str] | None = None
+    for pat, op in _UNTIL_OPS:
+        m = pat.search(condition)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), m.end(), op)
+    if best is None:
+        raise ValueError(
+            f"until condition: no operator (==, !=, ~, in) found in {condition!r}"
+        )
+    start, end, op = best
+    return condition[:start], op, condition[end:]
 
 
 def _has_header(headers: dict[str, str], name: str) -> bool:
@@ -201,6 +223,39 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
     out.append("}")
     return "\n".join(out)
 
+
+def _emit_http_until(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
+    """Emit an HTTP step with an until polling loop as a bash function."""
+    assert step.until is not None
+    lhs, op, rhs = _split_until_condition(step.until.condition)
+    out = _emit_http(step, f"{fn}_attempt", captured_vars).splitlines()
+    out.extend([
+        "",
+        f"{fn}() {{",
+        "    local attempt",
+        f"    local max_attempts={step.until.max_attempts}",
+        f"    local interval={step.until.interval}",
+        "    local until_lhs until_rhs",
+        "    for ((attempt=1; attempt<=max_attempts; attempt++)); do",
+        f"        {fn}_attempt || return $?",
+        f"        until_lhs={_render_expr(lhs, captured_vars)}",
+        f"        until_rhs={_render_expr(rhs, captured_vars)}",
+        f"        if hf_until_eval \"$until_lhs\" {_bash_sq(op)} \"$until_rhs\"; then",
+        '            echo "    * until satisfied on attempt $attempt"',
+        "            return 0",
+        "        fi",
+        "        if [ \"$attempt\" -lt \"$max_attempts\" ]; then",
+        '            echo "    * until not satisfied (attempt $attempt/$max_attempts), retrying in ${interval}s"',
+        '            sleep "$interval"',
+        "        fi",
+        "    done",
+        f"    echo {_bash_dq_lit(f'step {step.name!r}: until condition not satisfied after ')}\"$max_attempts\"{_bash_dq_lit(f' attempts: {step.until.condition!r}')} >&2",
+        "    return 1",
+        "}",
+    ])
+    return "\n".join(out)
+
+
 def _emit_sleep(step: SleepStep, fn: str, captured_vars: set[str]) -> str:
     """Emit a SLEEP step as a bash function."""
     out = [
@@ -224,6 +279,8 @@ def _emit(step: Step, fn: str, captured_vars: set[str]) -> str:
         case SleepStep():
             return _emit_sleep(step, fn, captured_vars)
         case HttpStep():
+            if step.until is not None:
+                return _emit_http_until(step, fn, captured_vars)
             return _emit_http(step, fn, captured_vars)
         case _:
             raise TypeError(f"unknown step type: {type(step).__name__}")
@@ -480,6 +537,7 @@ hf_http_step() {
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
                         # request body echoed by this script; curl -v omits it
+                        printf "> [request body echoed by httpflow; curl -v omits it]\n"
                         printf "%s" "$body" | jq_or_cat | hf_prefix_lines "> "
                     fi
                     ;;
@@ -498,6 +556,79 @@ hf_http_step() {
             return 1
         }
     fi
+}
+'''
+
+
+def _until_helpers() -> str:
+    """Return bash helper functions used by until-enabled scripts."""
+    return r'''
+hf_trim() {
+    local value=$1
+    value=${value#"${value%%[![:space:]]*}"}
+    value=${value%"${value##*[![:space:]]}"}
+    printf '%s' "$value"
+}
+
+hf_until_regex() {
+    local lhs=$1
+    local rhs=$2
+    local pattern flags old_nocasematch result
+    case "$rhs" in
+        /*/) pattern=${rhs:1:${#rhs}-2}; flags= ;;
+        /*/[a-zA-Z]*)
+            pattern=${rhs%/*}
+            pattern=${pattern:1}
+            flags=${rhs##*/}
+            ;;
+        *) echo "until condition: '~' RHS must be /pattern/[flags], got '$rhs'" >&2; return 2 ;;
+    esac
+
+    case "$flags" in
+        *[!ims]*) echo "until condition: unknown regex flag '${flags//[ims]/}'" >&2; return 2 ;;
+    esac
+
+    old_nocasematch=$(shopt -p nocasematch || true)
+    if [[ "$flags" == *i* ]]; then
+        shopt -s nocasematch
+    fi
+    [[ "$lhs" =~ $pattern ]]
+    result=$?
+    eval "$old_nocasematch"
+    return "$result"
+}
+
+hf_until_eval() {
+    local lhs rhs op item list
+    lhs=$(hf_trim "$1")
+    op=$2
+    rhs=$(hf_trim "$3")
+    case "$op" in
+        '==') [ "$lhs" = "$rhs" ] ;;
+        '!=') [ "$lhs" != "$rhs" ] ;;
+        '~') hf_until_regex "$lhs" "$rhs" ;;
+        'in')
+            case "$rhs" in
+                '['*']') ;;
+                *) echo "until condition: 'in' RHS must be [A, B, C], got '$rhs'" >&2; return 2 ;;
+            esac
+            list=${rhs#'['}
+            list=${list%']'}
+            while [ -n "$list" ]; do
+                item=${list%%,*}
+                if [ "$item" = "$list" ]; then
+                    list=
+                else
+                    list=${list#*,}
+                fi
+                item=$(hf_trim "$item")
+                [ -z "$item" ] && continue
+                [ "$lhs" = "$item" ] && return 0
+            done
+            return 1
+            ;;
+        *) echo "until condition: unknown operator $op" >&2; return 2 ;;
+    esac
 }
 '''
 
@@ -525,6 +656,7 @@ def generate(
         for var in s.capture.keys()
     )
     has_capture = any(isinstance(s, HttpStep) and bool(s.capture) for s in spec.steps)
+    has_until = any(isinstance(s, HttpStep) and s.until is not None for s in spec.steps)
     needs_jq = any(
         isinstance(s, HttpStep) and any(_is_json_capture_source(src) for src in s.capture.values())
         for s in spec.steps
@@ -614,6 +746,7 @@ uuid_hex() {{
 }}
 {_capture_helpers() if has_capture else ''}
 {_http_helpers(has_capture)}
+{_until_helpers() if has_until else ''}
 {defaults_block}
 {required_vars_block}"""
 

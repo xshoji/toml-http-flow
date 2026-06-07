@@ -17,6 +17,7 @@ class _CaptureHandler(BaseHTTPRequestHandler):
     seen_auth = ""
     seen_body = ""
     me_count = 0
+    poll_count = 0
 
     def _json(self, payload: dict[str, object], *, trace: str = "trace-1") -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -44,6 +45,19 @@ class _CaptureHandler(BaseHTTPRequestHandler):
             self._json({"ok": True})
         elif self.path.startswith("/echo"):
             self._json({"ok": True})
+        elif self.path == "/poll":
+            type(self).poll_count += 1
+            status = "Active" if type(self).poll_count >= 3 else "Pending"
+            self._json({"status": status})
+        elif self.path == "/poll404":
+            type(self).poll_count += 1
+            status = "Active" if type(self).poll_count >= 2 else "Pending"
+            body = json.dumps({"status": status}).encode("utf-8")
+            self.send_response(200 if status == "Active" else 404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/redir":
             self.send_response(302)
             self.send_header("Location", "/final")
@@ -399,6 +413,109 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertNotIn("jq --version", script)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_until_polls_until_capture_matches(self):
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.poll_count = 0
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "poll"
+            method = "GET"
+            url = "{base}/poll"
+            capture = ["status = status"]
+            until = ["condition = ${{status}} == Active", "interval = 0", "max_attempts = 5"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("hf_until_eval", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertEqual(_CaptureHandler.poll_count, 3)
+        self.assertIn("until satisfied on attempt 3", res.stdout)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_until_exhaustion_fails(self):
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.poll_count = 0
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "poll"
+            method = "GET"
+            url = "{base}/poll"
+            capture = ["status = status"]
+            until = ["condition = ${{status}} == Never", "interval = 0", "max_attempts = 2"]
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertNotEqual(res.returncode, 0)
+        self.assertEqual(_CaptureHandler.poll_count, 2)
+        self.assertIn("until condition not satisfied after 2 attempts", res.stderr)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_until_treats_http_error_as_response(self):
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.poll_count = 0
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "poll"
+            method = "GET"
+            url = "{base}/poll404"
+            capture = ["status = status"]
+            until = ["condition = ${{status}} == Active", "interval = 0", "max_attempts = 3"]
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("until satisfied on attempt 2", res.stdout)
+
+    def test_until_helpers_omitted_when_unused(self):
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertNotIn("hf_until_eval", script)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq required")
+    def test_until_regex_uses_bash_native_eval(self):
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.poll_count = 0
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "poll"
+            method = "GET"
+            url = "{base}/poll"
+            capture = ["status = status"]
+            until = ["condition = ${{status}} ~ /active/i", "interval = 0", "max_attempts = 3"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertNotIn("python3 is required for until regex", script)
+        self.assertNotIn("import re", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("until satisfied on attempt 3", res.stdout)
 
     @unittest.skipUnless(shutil.which("jq"), "jq required")
     def test_response_header_capture_uses_final_redirect_headers(self):
