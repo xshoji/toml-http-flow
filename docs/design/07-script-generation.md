@@ -154,16 +154,16 @@ workflow.sh
   ├── set -uo pipefail
   ├── curl 依存チェック
   ├── jq 依存チェック（capture 使用時のみ）
-  ├── mask() ヘルパー（sed による単純なログ用マスキング）
+  ├── hf_mask() ヘルパー（sed による単純なログ用マスキング）
   ├── capture_*() ヘルパー（capture 使用時のみ）
-  ├── uuid() / uuid_hex() ヘルパー（Python標準ライブラリの uuid を利用）
+  ├── hf_uuid() / hf_uuid_hex() ヘルパー（Python標準ライブラリの uuid を利用）
   ├── step_<name>() 関数群（各 [[requests]] 由来をコメント明記）
   └── main()（step呼び出しの単純な列挙）
 ```
 
 - ステップ関数名はステップ名を `[A-Za-z0-9_]` に正規化し、衝突時は数字サフィックスで一意化
 - ログ出力時は `authorization` / `password` / `token` などの既定キーワードに対して、`sed` で値部分を `***` に置換する（JSON/form/query の構造保持は保証しない）
-- `${random.UUID}` は `uuid`、`${random.UUID_HEX}` は `uuid_hex` 関数呼び出しとして生成し、参照ごとに新しい UUID v4 を生成する
+- `${random.UUID}` は `hf_uuid`、`${random.UUID_HEX}` は `hf_uuid_hex` 関数呼び出しとして生成し、参照ごとに新しい UUID v4 を生成する
 - **HTTP ステップ**は関数内で `curl -sS -L -v --no-buffer --stderr -` を `local -a cmd=(...)` 配列で構築し、`grep -v '^\({\|}\) \[.*bytes data\]'` と `grep -v '^\*'` で curl の転送量メタ行・SSL等の診断行を除外してから、`tee` で標準出力と一時 trace ファイルへ同時に出力する。capture はこの trace ファイルから最終レスポンスのステータス・ヘッダー・ボディを best-effort で抽出する
 - `curl -v` はリクエストボディを出力しないため、ボディがある場合は curl 実行前に httpflow がラベル付きでボディを出力し、同じ trace ファイルに保存する
 - **ボディ（text）**は `body=$(cat << EOF ... EOF)` による heredocument で渡す

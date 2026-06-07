@@ -73,8 +73,8 @@ def _expand_placeholders(s: str, captured_vars: set[str]) -> str:
     Captured variables may also be referenced as ``${name}`` without the
     ``var.`` prefix; those are converted as well.
     """
-    s = s.replace("${random.UUID_HEX}", "$(uuid_hex)")
-    s = s.replace("${random.UUID}", "$(uuid)")
+    s = s.replace("${random.UUID_HEX}", "$(hf_uuid_hex)")
+    s = s.replace("${random.UUID}", "$(hf_uuid)")
     s = re.sub(r"\$\{env\.([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: f"${{{m.group(1)}}}", s)
     s = re.sub(r"\$\{var\.([\w\-]+)\}", lambda m: f"${{{_env_name('VAR', m.group(1))}}}", s)
     if captured_vars:
@@ -341,7 +341,7 @@ def _required_var_check(names: list[str]) -> str:
 def _capture_helpers() -> str:
     """Return bash helper functions used by capture-enabled scripts."""
     return r'''
-capture_log() {
+hf_capture_log() {
     local name=$1
     local value=$2
     if printf '%s\n' "$name" | grep -Eiq "^($MASK_KEYS)$"; then
@@ -350,17 +350,17 @@ capture_log() {
     printf "* capture %s = '%s'\n" "$name" "$value"
 }
 
-capture_value() {
+hf_capture_value() {
     local env_name=$1
     local display_name=$2
     local source=$3
     local value=$4
     printf -v "$env_name" '%s' "$value"
     export "$env_name"
-    capture_log "$display_name" "$value"
+    hf_capture_log "$display_name" "$value"
 }
 
-capture_json() {
+hf_capture_json() {
     local env_name=$1
     local display_name=$2
     local source=$3
@@ -375,10 +375,10 @@ capture_json() {
         echo "capture failed: $display_name <- $source" >&2
         return 1
     fi
-    capture_value "$env_name" "$display_name" "$source" "$value"
+    hf_capture_value "$env_name" "$display_name" "$source" "$value"
 }
 
-capture_header() {
+hf_capture_header() {
     local env_name=$1
     local display_name=$2
     local source=$3
@@ -400,13 +400,17 @@ capture_header() {
             mode != "trace" { line=$0 }
             /^[[:space:]]*$/ { next }
             { sub(/\r$/, "", line); lower=tolower(line) }
-            index(lower, want) == 1 { value=substr(line, length(name) + 2); sub(/^[[:space:]]+/, "", value); found=1 }
+            index(lower, want) == 1 {
+                value=substr(line, length(name) + 2)
+                sub(/^[[:space:]]+/, "", value)
+                found=1
+            }
             END { if (!found) exit 1; print value }
         ' <<< "$input_source"); then
         echo "capture failed: $display_name <- $source" >&2
         return 1
     fi
-    capture_value "$env_name" "$display_name" "$source" "$value"
+    hf_capture_value "$env_name" "$display_name" "$source" "$value"
 }
 '''
 
@@ -427,19 +431,19 @@ hf_run_captures() {
         [ -z "${env_name:-}" ] && continue
         case "$kind" in
             json)
-                capture_json "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
+                hf_capture_json "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
                 ;;
             response_header)
-                capture_header "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
+                hf_capture_header "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
                 ;;
             request_header)
-                capture_header "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
+                hf_capture_header "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
                 ;;
             request_url)
-                capture_value "$env_name" "$display_name" "$source" "$url" || return $?
+                hf_capture_value "$env_name" "$display_name" "$source" "$url" || return $?
                 ;;
             request_body)
-                capture_value "$env_name" "$display_name" "$source" "$body" || return $?
+                hf_capture_value "$env_name" "$display_name" "$source" "$body" || return $?
                 ;;
             *)
                 echo "capture failed: $display_name <- $source" >&2
@@ -466,7 +470,7 @@ hf_trace_response_body() {
     ' "$1"
 }
 
-jq_or_cat() {
+hf_jq_or_cat() {
     local input trimmed
     input=$(cat)
     trimmed=$(printf '%s' "$input" | sed 's/^[[:space:]]*//' | head -c1)
@@ -510,7 +514,7 @@ hf_http_step() {
 
     hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
-    echo "==> $(hf_now) [$step_name] $method $(mask "$url")"
+    echo "==> $(hf_now) [$step_name] $method $(hf_mask "$url")"
     if [ -n "$description" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             echo "# $line"
@@ -551,17 +555,17 @@ hf_http_step() {
                 ">"|"> "|$'> \r')
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
-                        # Request body echoed by this script; curl -v omits it. This comment is not printed.
-                        printf "%s" "$body" | jq_or_cat | hf_prefix_lines "> "
+                        # Request body echoed by this script; curl -v omits it.
+                        printf "%s" "$body" | hf_jq_or_cat | hf_prefix_lines "> "
                     fi
                     ;;
                 *)
-                    printf "%s\n" "$line" | jq_or_cat | hf_prefix_lines ""
+                    printf "%s\n" "$line" | hf_jq_or_cat | hf_prefix_lines ""
                     ;;
             esac
         done \
         | tee -a "$trace_file" \
-        | mask_lines; then
+        | hf_mask_lines; then
         return 1
     fi
 
@@ -708,18 +712,19 @@ curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 
 MASK_KEYS_DEFAULT='{bash_mask_keys_default}'
 MASK_KEYS="$MASK_KEYS_DEFAULT${{HTTPFLOW_MASK_EXTRA:+|${{HTTPFLOW_MASK_EXTRA}}}}"
+MASK_SED_EXPR="s/(\\\"?($MASK_KEYS)\\\"?)([[:space:]]*[:=][[:space:]]*)\\\"?[^& ,}}\\\"]+( [^& ,}}\\\"]+)?\\\"?/\\1\\3***/g"
 
-mask() {{
+hf_mask() {{
     if [ -n "${{HTTPFLOW_NO_MASK:-}}" ]; then
         echo "$1"
         return 0
     fi
-    printf '%s\\n' "$1" | sed -E "s/(\\\"?($MASK_KEYS)\\\"?)([[:space:]]*[:=][[:space:]]*)\\\"?[^& ,}}\\\"]+( [^& ,}}\\\"]+)?\\\"?/\\1\\3***/g"
+    printf '%s\\n' "$1" | sed -E "$MASK_SED_EXPR"
 }}
 
-mask_lines() {{
+hf_mask_lines() {{
     while IFS= read -r LINE || [ -n "$LINE" ]; do
-        mask "$LINE"
+        hf_mask "$LINE"
     done
 }}
 
@@ -739,7 +744,9 @@ hf_print_blank_lines() {{
 
 hf_now() {{
     if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import datetime; n = datetime.datetime.now(); print(n.strftime("%Y-%m-%d %H:%M:%S.") + f"{{n.microsecond // 1000:03d}}")'
+        python3 -c 'import datetime
+n = datetime.datetime.now()
+print(n.strftime("%Y-%m-%d %H:%M:%S.") + f"{{n.microsecond // 1000:03d}}")'
     elif date '+%Y-%m-%d %H:%M:%S.%3N' | grep -Eq '[0-9]{{3}}$'; then
         date '+%Y-%m-%d %H:%M:%S.%3N'
     else
@@ -747,16 +754,16 @@ hf_now() {{
     fi
 }}
 
-uuid() {{
-  if command -v uuidgen &>/dev/null; then
-    uuidgen |awk '{{print tolower($1)}}'
-  else
-    perl -e 'open(my$f,"<:raw","/dev/urandom");read($f,my$b,16);vec($b,13,4)=4;vec($b,16,2)=2;printf"%s-%s-%s-%s-%s\n",unpack"H8 H4 H4 H4 H12",$b'
-  fi
+hf_uuid() {{
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | awk '{{print tolower($1)}}'
+    else
+        python3 -c 'import uuid; print(uuid.uuid4())'
+    fi
 }}
 
-uuid_hex() {{
-    uuid | sed "s/-//g"
+hf_uuid_hex() {{
+    hf_uuid | sed "s/-//g"
 }}
 {_capture_helpers() if has_capture else ''}
 {_http_helpers(has_capture)}
