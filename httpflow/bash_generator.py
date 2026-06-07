@@ -743,11 +743,7 @@ print_blank_lines() {{
 }}
 
 now() {{
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import datetime
-n = datetime.datetime.now()
-print(n.strftime("%Y-%m-%d %H:%M:%S.") + f"{{n.microsecond // 1000:03d}}")'
-    elif date '+%Y-%m-%d %H:%M:%S.%3N' | grep -Eq '[0-9]{{3}}$'; then
+    if date '+%Y-%m-%d %H:%M:%S.%3N' | grep -Eq '[0-9]{{3}}$'; then
         date '+%Y-%m-%d %H:%M:%S.%3N'
     else
         date '+%Y-%m-%d %H:%M:%S.000'
