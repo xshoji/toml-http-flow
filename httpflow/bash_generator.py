@@ -466,9 +466,12 @@ hf_trace_response_body() {
 }
 
 jq_or_cat() {
-    local input
+    local input trimmed
     input=$(cat)
-    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ] || ! echo "$input" | jq . > /dev/null 2>&1; then
+    trimmed=$(echo "$input" | sed 's/^[[:space:]]*//' | head -c1)
+    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ] \
+        || [ "$trimmed" != "{" ] && [ "$trimmed" != "[" ] \
+        || ! echo "$input" | jq . > /dev/null 2>&1; then
         echo "$input"
     else
         echo "$input" | jq .
