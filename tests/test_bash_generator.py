@@ -124,7 +124,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("grep -v '^\\*'", script)
         self.assertIn('tee -a "$trace_file"', script)
         self.assertNotIn('-D "$resp_headers" -o "$resp_body"', script)
-        self.assertIn("hf_http_step 'ping' 'GET'", script)
+        self.assertIn("http_step 'ping' 'GET'", script)
 
     def test_http_summary_lines_include_timestamps(self):
         base = f"http://127.0.0.1:{self.port}"
@@ -250,10 +250,10 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertIn("step_wait()", script)
         self.assertIn('seconds="0.05"', script)
-        self.assertIn('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"', script)
-        self.assertIn('echo "==> $(hf_now) [wait] SLEEP $seconds"', script)
+        self.assertIn('print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"', script)
+        self.assertIn('echo "==> $(now) [wait] SLEEP $seconds"', script)
         self.assertIn('sleep "$seconds"', script)
-        self.assertIn('echo "<== $(hf_now) [wait] done"', script)
+        self.assertIn('echo "<== $(now) [wait] done"', script)
 
     def test_sleep_step_with_shell_variable(self):
         toml = textwrap.dedent("""
@@ -264,7 +264,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn('seconds="${WAIT_SECONDS}"', script)
-        self.assertIn('echo "==> $(hf_now) [wait] SLEEP $seconds"', script)
+        self.assertIn('echo "==> $(now) [wait] SLEEP $seconds"', script)
         self.assertIn('sleep "$seconds"', script)
 
     def test_shebang(self):
@@ -426,7 +426,7 @@ class TestBashGenerator(unittest.TestCase):
             until = ["condition = ${{status}} == Active", "interval = 0", "max_attempts = 5"]
         """)
         script = self._generate_and_check(toml)
-        self.assertIn("hf_until_eval", script)
+        self.assertIn("until_eval", script)
 
         with tempfile.TemporaryDirectory() as tmp:
             script_path = Path(tmp) / "workflow.sh"
@@ -490,7 +490,7 @@ class TestBashGenerator(unittest.TestCase):
             url = "http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
-        self.assertNotIn("hf_until_eval", script)
+        self.assertNotIn("until_eval", script)
 
     @unittest.skipUnless(shutil.which("jq"), "jq required")
     def test_until_regex_uses_bash_native_eval(self):
@@ -588,7 +588,7 @@ class TestBashGenerator(unittest.TestCase):
             description = "health check"
         """)
         script = self._generate_and_check(toml)
-        self.assertIn("hf_http_step 'ping' 'GET'", script)
+        self.assertIn("http_step 'ping' 'GET'", script)
         self.assertIn("'health check'", script)
 
     def test_description_is_printed_after_http_start_line(self):
@@ -624,12 +624,12 @@ class TestBashGenerator(unittest.TestCase):
             body = '{"request_id":"${random.UUID}"}'
         """)
         script = self._generate_and_check(toml)
-        self.assertIn("hf_uuid()", script)
-        self.assertIn("hf_uuid_hex()", script)
-        self.assertIn('url="http://example.com/items/$(hf_uuid_hex)"', script)
-        self.assertIn("X-Request-Id: $(hf_uuid)", script)
+        self.assertIn("uuid()", script)
+        self.assertIn("uuid_hex()", script)
+        self.assertIn('url="http://example.com/items/$(uuid_hex)"', script)
+        self.assertIn("X-Request-Id: $(uuid)", script)
         self.assertIn('cmd+=(-H "$header")', script)
-        self.assertIn('{"request_id":"$(hf_uuid)"}', script)
+        self.assertIn('{"request_id":"$(uuid)"}', script)
 
     def test_generated_uuid_helpers_return_valid_values(self):
         toml = textwrap.dedent("""
@@ -644,7 +644,7 @@ class TestBashGenerator(unittest.TestCase):
             script_path = Path(tmp) / "workflow.sh"
             script_path.write_text(script, encoding="utf-8")
             res = subprocess.run(
-                ["bash", "-c", f"source {script_path} >/dev/null || true; hf_uuid; hf_uuid_hex"],
+                ["bash", "-c", f"source {script_path} >/dev/null || true; uuid; uuid_hex"],
                 capture_output=True, text=True, timeout=10,
             )
 
@@ -663,18 +663,18 @@ class TestBashGenerator(unittest.TestCase):
             body_form = ["user = alice", "password = body-secret"]
         """)
         script = self._generate_and_check(toml)
-        self.assertIn("hf_mask()", script)
-        self.assertIn("hf_mask_lines()", script)
-        self.assertIn('$(hf_mask "$url")', script)
+        self.assertIn("mask()", script)
+        self.assertIn("mask_lines()", script)
+        self.assertIn('$(mask "$url")', script)
         self.assertNotIn('printf "> %s\\n" "$header"', script)
-        self.assertIn('printf "%s" "$body" | hf_jq_or_cat | hf_prefix_lines "> "', script)
+        self.assertIn('printf "%s" "$body" | jq_or_cat | prefix_lines "> "', script)
         self.assertIn("sed -E", script)
         self.assertNotIn("perl -pe", script)
         self.assertIn("MASK_KEYS_DEFAULT='[aA]uthorization|[cC]ookie", script)
         self.assertIn("[sS]et-[cC]ookie", script)
         self.assertNotIn("mask_key_pattern()", script)
         self.assertIn('tee -a "$trace_file"', script)
-        self.assertIn("hf_mask_lines", script)
+        self.assertIn("mask_lines", script)
 
     def test_generated_mask_helper_masks_simple_values(self):
         toml = textwrap.dedent("""
@@ -693,12 +693,12 @@ class TestBashGenerator(unittest.TestCase):
                     "bash",
                     "-c",
                     f"HTTPFLOW_NO_MASK=; source {script_path} >/dev/null || true; "
-                    "hf_mask 'token=abc'; "
-                    "hf_mask 'Token=ABC'; "
-                    "hf_mask 'Authorization: Bearer secret'; "
-                    "hf_mask 'authorization: Bearer 06a84af6-4f9f-4b84-bfe2-529e310eea12'; "
-                    "hf_mask 'Set-Cookie: session=set-cookie-secret'; "
-                    "hf_mask '{\"password\":\"p\",\"user\":\"u\"}'",
+                    "mask 'token=abc'; "
+                    "mask 'Token=ABC'; "
+                    "mask 'Authorization: Bearer secret'; "
+                    "mask 'authorization: Bearer 06a84af6-4f9f-4b84-bfe2-529e310eea12'; "
+                    "mask 'Set-Cookie: session=set-cookie-secret'; "
+                    "mask '{\"password\":\"p\",\"user\":\"u\"}'",
                 ],
                 capture_output=True, text=True, timeout=10,
             )
@@ -741,7 +741,7 @@ class TestBashGenerator(unittest.TestCase):
                       "\"< HTTP/1.1 200 OK\" "
                       "\"< password: mypass\" "
                       "\"{\\\"password\\\":\\\"secret\\\"}\" "
-                    "| hf_mask_lines",
+                    "| mask_lines",
                 ],
                 capture_output=True, text=True, timeout=10,
             )
@@ -775,10 +775,10 @@ class TestBashGenerator(unittest.TestCase):
                 [
                     "bash", "-c",
                     f"HTTPFLOW_MASK_EXTRA='[tT]race-id' HTTPFLOW_NO_MASK=; source {script_path} >/dev/null || true; "
-                    "hf_mask 'trace-id=secret'; "
-                    "hf_mask 'Trace-id=Secret'; "
-                    "hf_mask 'token=foo'; "
-                    "hf_mask 'Authorization: Bearer bar'",
+                    "mask 'trace-id=secret'; "
+                    "mask 'Trace-id=Secret'; "
+                    "mask 'token=foo'; "
+                    "mask 'Authorization: Bearer bar'",
                 ],
                 capture_output=True, text=True, timeout=10,
             )
@@ -809,8 +809,8 @@ class TestBashGenerator(unittest.TestCase):
                 [
                     "bash", "-c",
                     f"HTTPFLOW_NO_MASK=1; source {script_path} >/dev/null || true; "
-                    "hf_mask 'token=foo'; "
-                    "printf '%s\n' 'Authorization: Bearer bar' | hf_mask_lines",
+                    "mask 'token=foo'; "
+                    "printf '%s\n' 'Authorization: Bearer bar' | mask_lines",
                 ],
                 capture_output=True, text=True, timeout=10,
             )
@@ -830,7 +830,7 @@ class TestBashGenerator(unittest.TestCase):
             url = "{base}/echo"
         """)
         script = self._generate_and_check(toml)
-        self.assertIn("hf_jq_or_cat()", script)
+        self.assertIn("jq_or_cat()", script)
         self.assertIn("--pretty-json", script)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -941,8 +941,8 @@ class TestBashGenerator(unittest.TestCase):
             url = "{base}/echo"
         """)
         script = self._generate_and_check(toml)
-        self.assertEqual(script.count('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"'), 1)
-        self.assertIn('hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"\n\n    echo "==>', script)
+        self.assertEqual(script.count('print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"'), 1)
+        self.assertIn('print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"\n\n    echo "==>', script)
 
         with tempfile.TemporaryDirectory() as tmp:
             script_path = Path(tmp) / "workflow.sh"

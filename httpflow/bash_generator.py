@@ -73,8 +73,8 @@ def _expand_placeholders(s: str, captured_vars: set[str]) -> str:
     Captured variables may also be referenced as ``${name}`` without the
     ``var.`` prefix; those are converted as well.
     """
-    s = s.replace("${random.UUID_HEX}", "$(hf_uuid_hex)")
-    s = s.replace("${random.UUID}", "$(hf_uuid)")
+    s = s.replace("${random.UUID_HEX}", "$(uuid_hex)")
+    s = s.replace("${random.UUID}", "$(uuid)")
     s = re.sub(r"\$\{env\.([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: f"${{{m.group(1)}}}", s)
     s = re.sub(r"\$\{var\.([\w\-]+)\}", lambda m: f"${{{_env_name('VAR', m.group(1))}}}", s)
     if captured_vars:
@@ -217,7 +217,7 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
         out.append(')')
 
     out.append(
-        f"    hf_http_step {_bash_sq(step.name)} {_bash_sq(step.method.upper())} \"$url\" "
+        f"    http_step {_bash_sq(step.name)} {_bash_sq(step.method.upper())} \"$url\" "
         f"{1 if has_body else 0} \"$body\" \"$headers_text\" \"$captures_text\" "
         f"{_bash_sq(step.description or '')}"
     )
@@ -241,7 +241,7 @@ def _emit_http_until(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
         f"        {fn}_attempt || return $?",
         f"        until_lhs={_render_expr(lhs, captured_vars)}",
         f"        until_rhs={_render_expr(rhs, captured_vars)}",
-        f"        if hf_until_eval \"$until_lhs\" {_bash_sq(op)} \"$until_rhs\"; then",
+        f"        if until_eval \"$until_lhs\" {_bash_sq(op)} \"$until_rhs\"; then",
         '            echo "    * until satisfied on attempt $attempt"',
         "            return 0",
         "        fi",
@@ -262,14 +262,14 @@ def _emit_sleep(step: SleepStep, fn: str, captured_vars: set[str]) -> str:
     out = [
         f"{fn}() {{",
         f"    local seconds={_render_expr(step.seconds, captured_vars)}",
-        '    hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"',
-        f'    echo "==> $(hf_now) [{step.name}] SLEEP $seconds"',
+        '    print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"',
+        f'    echo "==> $(now) [{step.name}] SLEEP $seconds"',
     ]
     if step.description:
         for dl in step.description.splitlines():
             out.append(f'    echo "# {dl}"')
     out.append('    sleep "$seconds"')
-    out.append(f'    echo "<== $(hf_now) [{step.name}] done"')
+    out.append(f'    echo "<== $(now) [{step.name}] done"')
     out.append("}")
     return "\n".join(out)
 
@@ -341,7 +341,7 @@ def _required_var_check(names: list[str]) -> str:
 def _capture_helpers() -> str:
     """Return bash helper functions used by capture-enabled scripts."""
     return r'''
-hf_capture_log() {
+capture_log() {
     local name=$1
     local value=$2
     if printf '%s\n' "$name" | grep -Eiq "^($MASK_KEYS)$"; then
@@ -350,24 +350,24 @@ hf_capture_log() {
     printf "* capture %s = '%s'\n" "$name" "$value"
 }
 
-hf_capture_value() {
+capture_value() {
     local env_name=$1
     local display_name=$2
     local source=$3
     local value=$4
     printf -v "$env_name" '%s' "$value"
     export "$env_name"
-    hf_capture_log "$display_name" "$value"
+    capture_log "$display_name" "$value"
 }
 
-hf_capture_json() {
+capture_json() {
     local env_name=$1
     local display_name=$2
     local source=$3
     local trace_file=$4
     local filter=$5
     local value
-    if ! value=$(hf_trace_response_body "$trace_file" | jq -r "$filter"); then
+    if ! value=$(trace_response_body "$trace_file" | jq -r "$filter"); then
         echo "capture failed: $display_name <- $source" >&2
         return 1
     fi
@@ -375,10 +375,10 @@ hf_capture_json() {
         echo "capture failed: $display_name <- $source" >&2
         return 1
     fi
-    hf_capture_value "$env_name" "$display_name" "$source" "$value"
+    capture_value "$env_name" "$display_name" "$source" "$value"
 }
 
-hf_capture_header() {
+capture_header() {
     local env_name=$1
     local display_name=$2
     local source=$3
@@ -410,7 +410,7 @@ hf_capture_header() {
         echo "capture failed: $display_name <- $source" >&2
         return 1
     fi
-    hf_capture_value "$env_name" "$display_name" "$source" "$value"
+    capture_value "$env_name" "$display_name" "$source" "$value"
 }
 '''
 
@@ -419,7 +419,7 @@ def _http_helpers(has_capture: bool) -> str:
     """Return bash helper functions used by generated HTTP steps."""
     capture_dispatch = r'''
 
-hf_run_captures() {
+run_captures() {
     local captures_text=$1
     local url=$2
     local body=$3
@@ -431,19 +431,19 @@ hf_run_captures() {
         [ -z "${env_name:-}" ] && continue
         case "$kind" in
             json)
-                hf_capture_json "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
+                capture_json "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
                 ;;
             response_header)
-                hf_capture_header "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
+                capture_header "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
                 ;;
             request_header)
-                hf_capture_header "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
+                capture_header "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
                 ;;
             request_url)
-                hf_capture_value "$env_name" "$display_name" "$source" "$url" || return $?
+                capture_value "$env_name" "$display_name" "$source" "$url" || return $?
                 ;;
             request_body)
-                hf_capture_value "$env_name" "$display_name" "$source" "$body" || return $?
+                capture_value "$env_name" "$display_name" "$source" "$body" || return $?
                 ;;
             *)
                 echo "capture failed: $display_name <- $source" >&2
@@ -455,7 +455,7 @@ hf_run_captures() {
 ''' if has_capture else ""
     return r'''
 ''' + capture_dispatch + r'''
-hf_trace_response_body() {
+trace_response_body() {
     awk '
         /^< HTTP\// { in_headers=1; n=0; seen=1; next }
         in_headers && /^< ?\r?$/ { in_headers=0; n=0; next }
@@ -470,7 +470,7 @@ hf_trace_response_body() {
     ' "$1"
 }
 
-hf_jq_or_cat() {
+jq_or_cat() {
     local input trimmed
     input=$(cat)
     trimmed=$(printf '%s' "$input" | sed 's/^[[:space:]]*//' | head -c1)
@@ -492,14 +492,14 @@ hf_jq_or_cat() {
     fi
 }
 
-hf_prefix_lines() {
+prefix_lines() {
     local prefix=$1
     while IFS= read -r line || [ -n "$line" ]; do
         printf "%s%s\n" "$prefix" "$line"
     done
 }
 
-hf_http_step() {
+http_step() {
     local step_name=$1
     local method=$2
     local url=$3
@@ -512,9 +512,9 @@ hf_http_step() {
     local -a cmd
     local boundary_inserted=0
 
-    hf_print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
+    print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
-    echo "==> $(hf_now) [$step_name] $method $(hf_mask "$url")"
+    echo "==> $(now) [$step_name] $method $(mask "$url")"
     if [ -n "$description" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             echo "# $line"
@@ -548,7 +548,7 @@ hf_http_step() {
                 "< HTTP/"*)
                     if [ "$boundary_inserted" = "0" ]; then
                         boundary_inserted=1
-                        printf "<== %s [%s]\n" "$(hf_now)" "$step_name"
+                        printf "<== %s [%s]\n" "$(now)" "$step_name"
                     fi
                     printf "%s\n" "$line"
                     ;;
@@ -556,21 +556,21 @@ hf_http_step() {
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
                         # Request body echoed by this script; curl -v omits it.
-                        printf "%s" "$body" | hf_jq_or_cat | hf_prefix_lines "> "
+                        printf "%s" "$body" | jq_or_cat | prefix_lines "> "
                     fi
                     ;;
                 *)
-                    printf "%s\n" "$line" | hf_jq_or_cat | hf_prefix_lines ""
+                    printf "%s\n" "$line" | jq_or_cat | prefix_lines ""
                     ;;
             esac
         done \
         | tee -a "$trace_file" \
-        | hf_mask_lines; then
+        | mask_lines; then
         return 1
     fi
 
     if [ -n "$captures_text" ]; then
-        hf_run_captures "$captures_text" "$url" "$body" "$headers_text" "$trace_file" || {
+        run_captures "$captures_text" "$url" "$body" "$headers_text" "$trace_file" || {
             return 1
         }
     fi
@@ -581,14 +581,14 @@ hf_http_step() {
 def _until_helpers() -> str:
     """Return bash helper functions used by until-enabled scripts."""
     return r'''
-hf_trim() {
+trim() {
     local value=$1
     value=${value#"${value%%[![:space:]]*}"}
     value=${value%"${value##*[![:space:]]}"}
     printf '%s' "$value"
 }
 
-hf_until_regex() {
+until_regex() {
     local lhs=$1
     local rhs=$2
     local pattern flags old_nocasematch result
@@ -616,15 +616,15 @@ hf_until_regex() {
     return "$result"
 }
 
-hf_until_eval() {
+until_eval() {
     local lhs rhs op item list
-    lhs=$(hf_trim "$1")
+    lhs=$(trim "$1")
     op=$2
-    rhs=$(hf_trim "$3")
+    rhs=$(trim "$3")
     case "$op" in
         '==') [ "$lhs" = "$rhs" ] ;;
         '!=') [ "$lhs" != "$rhs" ] ;;
-        '~') hf_until_regex "$lhs" "$rhs" ;;
+        '~') until_regex "$lhs" "$rhs" ;;
         'in')
             case "$rhs" in
                 '['*']') ;;
@@ -639,7 +639,7 @@ hf_until_eval() {
                 else
                     list=${list#*,}
                 fi
-                item=$(hf_trim "$item")
+                item=$(trim "$item")
                 [ -z "$item" ] && continue
                 [ "$lhs" = "$item" ] && return 0
             done
@@ -714,7 +714,7 @@ MASK_KEYS_DEFAULT='{bash_mask_keys_default}'
 MASK_KEYS="$MASK_KEYS_DEFAULT${{HTTPFLOW_MASK_EXTRA:+|${{HTTPFLOW_MASK_EXTRA}}}}"
 MASK_SED_EXPR="s/(\\\"?($MASK_KEYS)\\\"?)([[:space:]]*[:=][[:space:]]*)\\\"?[^& ,}}\\\"]+( [^& ,}}\\\"]+)?\\\"?/\\1\\3***/g"
 
-hf_mask() {{
+mask() {{
     if [ -n "${{HTTPFLOW_NO_MASK:-}}" ]; then
         echo "$1"
         return 0
@@ -722,13 +722,13 @@ hf_mask() {{
     printf '%s\\n' "$1" | sed -E "$MASK_SED_EXPR"
 }}
 
-hf_mask_lines() {{
+mask_lines() {{
     while IFS= read -r LINE || [ -n "$LINE" ]; do
-        hf_mask "$LINE"
+        mask "$LINE"
     done
 }}
 
-hf_print_blank_lines() {{
+print_blank_lines() {{
     local count=${{1:-0}}
     case "$count" in
         ''|*[!0-9]*)
@@ -742,7 +742,7 @@ hf_print_blank_lines() {{
     done
 }}
 
-hf_now() {{
+now() {{
     if command -v python3 >/dev/null 2>&1; then
         python3 -c 'import datetime
 n = datetime.datetime.now()
@@ -754,7 +754,7 @@ print(n.strftime("%Y-%m-%d %H:%M:%S.") + f"{{n.microsecond // 1000:03d}}")'
     fi
 }}
 
-hf_uuid() {{
+uuid() {{
     if command -v uuidgen &>/dev/null; then
         uuidgen | awk '{{print tolower($1)}}'
     else
@@ -762,8 +762,8 @@ hf_uuid() {{
     fi
 }}
 
-hf_uuid_hex() {{
-    hf_uuid | sed "s/-//g"
+uuid_hex() {{
+    uuid | sed "s/-//g"
 }}
 {_capture_helpers() if has_capture else ''}
 {_http_helpers(has_capture)}
