@@ -217,7 +217,10 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertIn("step_login()", script)
         self.assertIn('Content-Type: application/x-www-form-urlencoded', script)
-        self.assertIn('body="user=$(urlencode "alice")&pass=$(urlencode "secret")"', script)
+        self.assertIn("body_form_text=$(cat << EOT", script)
+        self.assertIn("user\talice", script)
+        self.assertIn("pass\tsecret", script)
+        self.assertIn('cmd+=(--data-urlencode "$form_key=$form_value")', script)
 
     def test_form_body_placeholders_expand_before_urlencode(self):
         toml = textwrap.dedent("""
@@ -241,7 +244,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn(
-            'body="nickname=$(urlencode "new_name")&email=$(urlencode "test@email.com")&args=$(urlencode "${VAR_ARGSAAA}")&params=$(urlencode "${VAR_PARAMSPARAMB}")&token=$(urlencode "${VAR_AUTHORIZATION}")"',
+            "nickname\tnew_name\nemail\ttest@email.com\nargs\t${VAR_ARGSAAA}\nparams\t${VAR_PARAMSPARAMB}\ntoken\t${VAR_AUTHORIZATION}",
             script,
         )
         self.assertNotIn("%24%7Bauthorization%7D", script)

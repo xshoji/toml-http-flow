@@ -11,7 +11,6 @@ from __future__ import annotations
 import datetime
 import json
 import re
-import urllib.parse
 
 from . import __version__
 from .model import FormBody, HttpStep, SleepStep, Step, TextBody, WorkflowSpec
@@ -51,22 +50,14 @@ def _env_name(prefix: str, name: str) -> str:
     return f"{prefix}_{re.sub(r'[^A-Za-z0-9_]', '_', name).upper()}"
 
 
-def _urlencode_fields(fields: dict[str, str]) -> str:
-    """Build ``application/x-www-form-urlencoded`` body from field dict."""
-    parts: list[str] = []
+def _body_form_rows(fields: dict[str, str], captured_vars: set[str]) -> list[str]:
+    """Emit body_form rows as tab-separated key/value strings."""
+    rows: list[str] = []
     for k, v in fields.items():
-        parts.append(f"{urllib.parse.quote_plus(k)}={urllib.parse.quote_plus(v)}")
-    return "&".join(parts)
-
-
-def _urlencode_fields_bash_expr(fields: dict[str, str], captured_vars: set[str]) -> str:
-    """Build a bash expression that urlencodes form fields after expansion."""
-    parts: list[str] = []
-    for k, v in fields.items():
-        encoded_key = urllib.parse.quote_plus(k)
-        expanded_value = _expand_placeholders(v, captured_vars)
-        parts.append(f"{encoded_key}=$(urlencode {_bash_dq(expanded_value)})")
-    return "\"" + "&".join(parts) + "\""
+        if "\t" in k or "\n" in k or "\t" in v or "\n" in v:
+            raise ValueError("body_form keys and values must not contain tabs or newlines")
+        rows.append(f"{_expand_placeholders(k, captured_vars)}\t{_expand_placeholders(v, captured_vars)}")
+    return rows
 
 
 def _bash_dq(s: str) -> str:
@@ -194,6 +185,7 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
         f"{fn}() {{",
         f"    local url={_render_expr(step.url, captured_vars)}",
         "    local body=",
+        "    local body_form_text=",
         "    local headers_text=",
         "    local captures_text=",
     ]
@@ -209,7 +201,10 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
             out.append('    body="${body}$(printf "\\n")"')
         case FormBody(fields=f):
             has_body = True
-            out.append(f'    body={_urlencode_fields_bash_expr(f, captured_vars)}')
+            out.append("    body_form_text=$(cat << EOT")
+            out.extend(_body_form_rows(f, captured_vars))
+            out.append("EOT")
+            out.append(')')
         case _:
             pass
 
@@ -231,7 +226,7 @@ def _emit_http(step: HttpStep, fn: str, captured_vars: set[str]) -> str:
 
     out.append(
         f"    http_step {_bash_sq(step.name)} {_bash_sq(step.method.upper())} \"$url\" "
-        f"{1 if has_body else 0} \"$body\" \"$headers_text\" \"$captures_text\" "
+        f"{1 if has_body else 0} \"$body\" \"$body_form_text\" \"$headers_text\" \"$captures_text\" "
         f"{_bash_sq(step.description or '')}"
     )
     out.append("}")
@@ -518,10 +513,11 @@ http_step() {
     local url=$3
     local has_body=$4
     local body=$5
-    local headers_text=$6
-    local captures_text=$7
-    local description=$8
-    local trace_file line header
+    local body_form_text=$6
+    local headers_text=$7
+    local captures_text=$8
+    local description=$9
+    local trace_file line header form_key form_value
     local -a cmd
     local boundary_inserted=0
 
@@ -545,7 +541,20 @@ http_step() {
         cmd+=(-H "$header")
     done <<< "$headers_text"
 
-    if [ "$has_body" = "1" ]; then
+    if [ -n "$body_form_text" ]; then
+        notice="Note: Values are shown before URL encoding.
+"
+        body=
+        while IFS=$'\t' read -r form_key form_value || [ -n "$form_key$form_value" ]; do
+            [ -z "$form_key" ] && continue
+            cmd+=(--data-urlencode "$form_key=$form_value")
+            if [ -n "$body" ]; then
+                body+="&"
+            fi
+            body+="$form_key=$form_value"
+        done <<< "$body_form_text"
+        body="${notice}${body}"
+    elif [ "$has_body" = "1" ]; then
         cmd+=(-d "$body")
     fi
     cmd+=("$url")
@@ -767,8 +776,7 @@ uuid() {{
     if command -v uuidgen &>/dev/null; then
         uuidgen | awk '{{print tolower($1)}}'
     else
-        echo "uuidgen is required" >&2
-        return 1
+        awk 'function hex(n, i, s) {{for (i = 0; i < n; i++) s = s sprintf("%x", int(rand() * 16));return s;}} BEGIN {{srand();printf "%s-%s-%s-%s-%s\n", hex(8), hex(4), "4" hex(3), sprintf("%x", int(rand() * 4) + 8) hex(3), hex(12);}}'
     fi
 }}
 
@@ -794,20 +802,6 @@ time_date_ymdhms() {{
     date '+%Y%m%d%H%M%S'
 }}
 
-urlencode() {{
-    local value=$1
-    local i ch out=
-    local LC_ALL=C
-    for ((i=0; i<${{#value}}; i++)); do
-        ch=${{value:i:1}}
-        case "$ch" in
-            [a-zA-Z0-9.~_-]) out+="$ch" ;;
-            ' ') out+='+' ;;
-            *) printf -v out '%s%%%02X' "$out" "'$ch" ;;
-        esac
-    done
-    printf '%s' "$out"
-}}
 {_capture_helpers() if has_capture else ''}
 {_http_helpers(has_capture)}
 {_until_helpers() if has_until else ''}
