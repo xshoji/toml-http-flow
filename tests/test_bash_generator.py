@@ -126,6 +126,26 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn('-D "$resp_headers" -o "$resp_body"', script)
         self.assertIn("http_step 'ping' 'GET'", script)
 
+    def test_time_placeholders(self):
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "echo"
+            method = "GET"
+            url = "{base}/echo?iso=${{time.DATE_ISO}}&ymd=${{time.DATE_YMD}}&hms=${{time.DATE_YMDHMS}}"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertRegex(res.stdout, r"iso=\d{4}-\d{2}-\d{2}T\d{2}:")
+        self.assertRegex(res.stdout, r"ymd=\d{8}")
+        self.assertRegex(res.stdout, r"hms=\d{14}")
+
     def test_http_summary_lines_include_timestamps(self):
         base = f"http://127.0.0.1:{self.port}"
         toml = textwrap.dedent(f"""

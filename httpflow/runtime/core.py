@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import datetime
 import uuid
 from typing import Any
 
@@ -26,6 +27,12 @@ def _lookup(store: dict, parts: list[str]) -> Any:
         return uuid.uuid4()
     if parts == ["random", "UUID_HEX"]:
         return uuid.uuid4().hex
+    if parts == ["time", "DATE_ISO"]:
+        return datetime.datetime.now().astimezone().isoformat(timespec="microseconds")
+    if parts == ["time", "DATE_YMD"]:
+        return datetime.datetime.now().astimezone().strftime("%Y%m%d")
+    if parts == ["time", "DATE_YMDHMS"]:
+        return datetime.datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
     if len(parts) == 2 and parts[0] == "var":
         try:
             return store["vars"][parts[1]]

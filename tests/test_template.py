@@ -1,5 +1,6 @@
 import unittest
 import os
+import re
 import uuid
 
 from httpflow.template import TemplateError, render, render_mapping
@@ -71,6 +72,14 @@ class TestRender(unittest.TestCase):
         value = out.removeprefix("id=")
         self.assertEqual(len(value), 32)
         self.assertEqual(uuid.UUID(hex=value).hex, value)
+
+    def test_time_placeholders(self):
+        self.assertRegex(
+            render("${time.DATE_ISO}", self.store),
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}",
+        )
+        self.assertRegex(render("${time.DATE_YMD}", self.store), r"^\d{8}$")
+        self.assertRegex(render("${time.DATE_YMDHMS}", self.store), r"^\d{14}$")
 
     def test_env_var(self):
         old = os.environ.get("HTTPFLOW_TEST_USER")

@@ -315,6 +315,7 @@ class TestGenerator(unittest.TestCase):
             "hyphen=${var.my-key}",
             "nested=${steps.login.body.user.id}",
             "price=$$100",
+            "ymd=${time.DATE_YMD}",
         ]
 
         with tempfile.TemporaryDirectory() as tmp:

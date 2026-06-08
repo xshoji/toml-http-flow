@@ -85,6 +85,9 @@ def _expand_placeholders(s: str, captured_vars: set[str]) -> str:
     """
     s = s.replace("${random.UUID_HEX}", "$(uuid_hex)")
     s = s.replace("${random.UUID}", "$(uuid)")
+    s = s.replace("${time.DATE_ISO}", "$(time_date_iso)")
+    s = s.replace("${time.DATE_YMDHMS}", "$(time_date_ymdhms)")
+    s = s.replace("${time.DATE_YMD}", "$(time_date_ymd)")
     s = re.sub(r"\$\{env\.([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: f"${{{m.group(1)}}}", s)
     s = re.sub(r"\$\{var\.([\w\-]+)\}", lambda m: f"${{{_env_name('VAR', m.group(1))}}}", s)
     if captured_vars:
@@ -764,7 +767,8 @@ uuid() {{
     if command -v uuidgen &>/dev/null; then
         uuidgen | awk '{{print tolower($1)}}'
     else
-        python3 -c 'import uuid; print(uuid.uuid4())'
+        echo "uuidgen is required" >&2
+        return 1
     fi
 }}
 
@@ -772,8 +776,37 @@ uuid_hex() {{
     uuid | sed "s/-//g"
 }}
 
+time_date_iso() {{
+    local ns micro
+    ns=$(date '+%N')
+    case "$ns" in
+        *N*) micro=000000 ;;
+        *) micro=${{ns:0:6}} ;;
+    esac
+    date "+%Y-%m-%dT%H:%M:%S.${{micro}}%z" | sed -E 's/([+-][0-9][0-9])([0-9][0-9])$/\\1:\\2/'
+}}
+
+time_date_ymd() {{
+    date '+%Y%m%d'
+}}
+
+time_date_ymdhms() {{
+    date '+%Y%m%d%H%M%S'
+}}
+
 urlencode() {{
-    python3 -c 'import sys, urllib.parse; print(urllib.parse.quote_plus(sys.argv[1]), end="")' "$1"
+    local value=$1
+    local i ch out=
+    local LC_ALL=C
+    for ((i=0; i<${{#value}}; i++)); do
+        ch=${{value:i:1}}
+        case "$ch" in
+            [a-zA-Z0-9.~_-]) out+="$ch" ;;
+            ' ') out+='+' ;;
+            *) printf -v out '%s%%%02X' "$out" "'$ch" ;;
+        esac
+    done
+    printf '%s' "$out"
 }}
 {_capture_helpers() if has_capture else ''}
 {_http_helpers(has_capture)}
