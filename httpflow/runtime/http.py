@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import sys
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -139,6 +141,64 @@ def _print_lines(prefix: str, text: str, *, out=None) -> None:
         print(f"{LOG_INDENT}{prefix} {line}", file=out)
 
 
+def _multipart_quote(value: str) -> str:
+    """Quote a multipart Content-Disposition parameter value."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
+
+
+def build_multipart_body(
+    parts: list[dict[str, str | None]],
+    store: dict,
+) -> tuple[bytes, str, list[dict[str, str]]]:
+    """Build multipart/form-data bytes and a log-safe description."""
+    boundary = "----httpflow-" + uuid.uuid4().hex
+    chunks: list[bytes] = []
+    log_parts: list[dict[str, str]] = []
+    for part in parts:
+        kind = part.get("kind")
+        name = render(str(part.get("name", "")), store)
+        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
+        if kind == "field":
+            value = render(str(part.get("value", "")), store)
+            chunks.append(
+                (f'Content-Disposition: form-data; name="{_multipart_quote(name)}"\r\n'
+                 "\r\n").encode("utf-8")
+            )
+            chunks.append(value.encode("utf-8"))
+            chunks.append(b"\r\n")
+            log_parts.append({"kind": "field", "name": name, "value": value})
+            continue
+        if kind == "file":
+            path = render(str(part.get("path", "")), store)
+            filename_raw = part.get("filename") or os.path.basename(path)
+            filename = render(str(filename_raw), store)
+            content_type = render(str(part.get("content_type") or "application/octet-stream"), store)
+            with open(path, "rb") as f:
+                data = f.read()
+            chunks.append(
+                (
+                    f'Content-Disposition: form-data; name="{_multipart_quote(name)}"; '
+                    f'filename="{_multipart_quote(filename)}"\r\n'
+                    f"Content-Type: {content_type}\r\n"
+                    "\r\n"
+                ).encode("utf-8")
+            )
+            chunks.append(data)
+            chunks.append(b"\r\n")
+            log_parts.append({
+                "kind": "file",
+                "name": name,
+                "path": path,
+                "filename": filename,
+                "content_type": content_type,
+                "size": str(len(data)),
+            })
+            continue
+        raise ValueError(f"unknown multipart part kind: {kind!r}")
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(chunks), boundary, log_parts
+
+
 def _log_request(
     method: str,
     url: str,
@@ -148,6 +208,7 @@ def _log_request(
     pretty_json: bool,
     no_mask: bool = False,
     *,
+    body_log: dict[str, Any] | None = None,
     out=None,
 ) -> None:
     out = sys.stdout if out is None else out
@@ -169,7 +230,23 @@ def _log_request(
         )
     if "accept-encoding" not in lower:
         print(f"{LOG_INDENT}> Accept-Encoding: identity", file=out)
-    if body_form is not None:
+    if body_log and body_log.get("kind") == "file":
+        print(f"{LOG_INDENT}> (file)", file=out)
+        print(f"{LOG_INDENT}>   path = {body_log.get('path')}", file=out)
+        print(f"{LOG_INDENT}>   bytes = {body_log.get('size')}", file=out)
+    elif body_log and body_log.get("kind") == "multipart":
+        print(f"{LOG_INDENT}> (multipart)", file=out)
+        for part in body_log.get("parts", []):
+            if part.get("kind") == "field":
+                print(f"{LOG_INDENT}>   {part.get('name')} = {mask_value(str(part.get('name')), part.get('value'), disabled=no_mask)}", file=out)
+            else:
+                print(
+                    f"{LOG_INDENT}>   {part.get('name')} = @{part.get('path')}; "
+                    f"filename={part.get('filename')}; type={part.get('content_type')}; "
+                    f"bytes={part.get('size')}",
+                    file=out,
+                )
+    elif body_form is not None:
         print(f"{LOG_INDENT}> (form)", file=out)
         for k, v in body_form.items():
             print(f"{LOG_INDENT}>   {k} = {mask_value(k, v, disabled=no_mask)}", file=out)
@@ -209,6 +286,8 @@ def run_step(
     headers: dict[str, str] | None = None,
     body: str | None = None,
     body_form: dict[str, str] | None = None,
+    body_file: str | None = None,
+    body_multipart: list[dict[str, str | None]] | None = None,
     capture: dict[str, str] | None = None,
     description: str | None = None,
     quiet: bool = False,
@@ -241,6 +320,7 @@ def run_step(
         return
 
     headers = render_mapping(headers or {}, store)
+    body_log: dict[str, Any] | None = None
     if body is not None:
         body_bytes = render(body, store).encode("utf-8")
     elif body_form is not None:
@@ -248,6 +328,22 @@ def run_step(
         body_bytes = urllib.parse.urlencode(body_form).encode("utf-8")
         if not any(h.lower() == "content-type" for h in headers):
             headers["Content-Type"] = "application/x-www-form-urlencoded"
+    elif body_file is not None:
+        path = render(body_file, store)
+        with open(path, "rb") as f:
+            body_bytes = f.read()
+        if not any(h.lower() == "content-type" for h in headers):
+            headers["Content-Type"] = "application/octet-stream"
+        body_log = {"kind": "file", "path": path, "size": len(body_bytes)}
+    elif body_multipart is not None:
+        if any(h.lower() == "content-type" for h in headers):
+            raise RuntimeError(
+                f"step {name!r}: body_multipart auto-generates Content-Type; "
+                "remove Content-Type header"
+            )
+        body_bytes, boundary, log_parts = build_multipart_body(body_multipart, store)
+        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        body_log = {"kind": "multipart", "parts": log_parts}
     else:
         body_bytes = None
 
@@ -256,7 +352,7 @@ def run_step(
         for line in description.splitlines() or [""]:
             print(f"{LOG_INDENT}# {line}", file=out)
     if not quiet:
-        _log_request(method, url, headers, body_bytes, body_form, pretty_json, no_mask=no_mask, out=out)
+        _log_request(method, url, headers, body_bytes, body_form, pretty_json, no_mask=no_mask, body_log=body_log, out=out)
 
     status, reason, resp_headers, text, body_json = do_request(method, url, headers, body_bytes)
     print(f"<== {_now()} [{name}]", file=out)

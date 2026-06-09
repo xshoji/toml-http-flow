@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from httpflow import config as cfg_mod
-from httpflow.model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
+from httpflow.model import FileBody, FormBody, HttpStep, MultipartBody, MultipartField, MultipartFile, SleepStep, TextBody, WorkflowSpec
 
 
 SAMPLE = b"""
@@ -90,6 +90,47 @@ body_form = ["a = b"]
         path = self._write(bad)
         with self.assertRaises(ValueError):
             cfg_mod.load(path)
+
+    def test_file_and_multipart_bodies_load(self):
+        path = self._write(b"""
+[[requests]]
+name = "raw"
+method = "PUT"
+url = "http://example.com/raw"
+body_file = "./data.bin"
+
+[[requests]]
+name = "multi"
+method = "POST"
+url = "http://example.com/upload"
+body_multipart = [
+    "title = hello",
+    "literal = @@starts",
+    "file = @./a.bin; filename=name.bin; type=application/custom",
+]
+""")
+        wf = cfg_mod.load(path)
+        raw = wf.steps[0]
+        self.assertIsInstance(raw, HttpStep)
+        assert isinstance(raw, HttpStep)
+        self.assertIsInstance(raw.body, FileBody)
+        assert isinstance(raw.body, FileBody)
+        self.assertEqual(raw.body.path, "./data.bin")
+
+        multi = wf.steps[1]
+        self.assertIsInstance(multi, HttpStep)
+        assert isinstance(multi, HttpStep)
+        self.assertIsInstance(multi.body, MultipartBody)
+        assert isinstance(multi.body, MultipartBody)
+        self.assertIsInstance(multi.body.parts[0], MultipartField)
+        self.assertEqual(multi.body.parts[0].value, "hello")
+        self.assertEqual(multi.body.parts[1].value, "@starts")
+        self.assertIsInstance(multi.body.parts[2], MultipartFile)
+        file_part = multi.body.parts[2]
+        assert isinstance(file_part, MultipartFile)
+        self.assertEqual(file_part.path, "./a.bin")
+        self.assertEqual(file_part.filename, "name.bin")
+        self.assertEqual(file_part.content_type, "application/custom")
 
     def test_sleep_rejects_headers(self):
         bad = b"""

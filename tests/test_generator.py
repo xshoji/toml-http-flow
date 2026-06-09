@@ -39,6 +39,41 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
 
+class _UploadHandler(BaseHTTPRequestHandler):
+    seen: list[dict[str, str | bytes]] = []
+
+    def _send(self):
+        body = json.dumps({"ok": True}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_PUT(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        _UploadHandler.seen.append({
+            "path": self.path,
+            "content_type": self.headers.get("Content-Type", ""),
+            "body": body,
+        })
+        self._send()
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        _UploadHandler.seen.append({
+            "path": self.path,
+            "content_type": self.headers.get("Content-Type", ""),
+            "body": body,
+        })
+        self._send()
+
+    def log_message(self, format, *args):
+        return
+
+
 class _HttpErrorThenOkHandler(BaseHTTPRequestHandler):
     count = 0
 
@@ -225,6 +260,58 @@ class TestGenerator(unittest.TestCase):
             self.assertIn("[poll]", res.stdout)
             self.assertIn("[poll]", res.stdout)
             self.assertIn("* until satisfied on attempt 2", res.stdout)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_generated_script_uploads_file_and_multipart(self):
+        srv = HTTPServer(("127.0.0.1", 0), _UploadHandler)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        _UploadHandler.seen = []
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                raw_path = tmp_path / "raw.bin"
+                part_path = tmp_path / "part.txt"
+                raw_path.write_bytes(b"\x00raw-bytes\xff")
+                part_path.write_text("part text", encoding="utf-8")
+                toml_path = tmp_path / "workflow.toml"
+                toml_path.write_text(textwrap.dedent(f"""
+                    [[requests]]
+                    name = "raw"
+                    method = "PUT"
+                    url = "http://127.0.0.1:{port}/raw"
+                    body_file = "{raw_path}"
+
+                    [[requests]]
+                    name = "multi"
+                    method = "POST"
+                    url = "http://127.0.0.1:{port}/multi"
+                    body_multipart = [
+                        "title = hello",
+                        "file = @{part_path}; filename=part.txt; type=text/plain",
+                    ]
+                """), encoding="utf-8")
+                wf = cfg_mod.load(str(toml_path))
+                script_path = tmp_path / "workflow.py"
+                script_path.write_text(generator.generate(wf), encoding="utf-8")
+                res = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True, timeout=10)
+
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            self.assertEqual(len(_UploadHandler.seen), 2)
+            self.assertEqual(_UploadHandler.seen[0]["content_type"], "application/octet-stream")
+            self.assertEqual(_UploadHandler.seen[0]["body"], b"\x00raw-bytes\xff")
+            content_type = str(_UploadHandler.seen[1]["content_type"])
+            self.assertTrue(content_type.startswith("multipart/form-data; boundary="))
+            multipart_body = _UploadHandler.seen[1]["body"]
+            assert isinstance(multipart_body, bytes)
+            self.assertIn(b'name="title"', multipart_body)
+            self.assertIn(b"hello", multipart_body)
+            self.assertIn(b'name="file"; filename="part.txt"', multipart_body)
+            self.assertIn(b"Content-Type: text/plain", multipart_body)
+            self.assertIn(b"part text", multipart_body)
         finally:
             srv.shutdown()
             srv.server_close()

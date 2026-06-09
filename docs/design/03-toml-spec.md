@@ -4,7 +4,7 @@
 
 TOMLの素直な使い方（`[requests.headers]` などのサブテーブル）だと、1リクエストが複数ブロックに分割されてしまい「どこからどこまでが1リクエストか」が一目で分からない。
 
-そこで、**1リクエスト = 1つの `[[requests]]` ブロックに収める**ことを最優先とし、ネストする `headers` / `body_form` / `capture` はすべて **配列形式の文字列リスト** で記述する方式を採用する。
+そこで、**1リクエスト = 1つの `[[requests]]` ブロックに収める**ことを最優先とし、ネストする `headers` / `body_form` / `body_multipart` / `capture` はすべて **配列形式の文字列リスト** で記述する方式を採用する。
 
 - HTTP / curl と同じ「`Key: Value`」「`key=value`」記法なので親しみやすい
 - 配列リテラル `[ ... ]` はTOML 1.0でも複数行展開・末尾カンマが許可されているため、項目数が増えても読みやすい
@@ -49,6 +49,23 @@ body_form = [
     "nickname = new_name",
     "email    = test@example.com",
 ]
+
+
+[[requests]]
+name = "uploadRaw"
+method = "PUT"
+url = "https://api.example.com/files/${var.file_id}"
+body_file = "./data/archive.bin"
+
+
+[[requests]]
+name = "uploadMultipart"
+method = "POST"
+url = "https://api.example.com/upload"
+body_multipart = [
+    "title = test upload",
+    "file = @./data/report.pdf; filename=report.pdf; type=application/pdf",
+]
 ```
 
 ## 4.3 フィールド定義
@@ -60,25 +77,32 @@ body_form = [
 | method       | ○    | string         | HTTPメソッド（GET/POST/PUT/DELETE）または特殊メソッド（SLEEP）       |
 | url          | ○    | string         | リクエストURL、または特殊メソッドのパラメータ（例：SLEEP の秒数）   |
 | headers      | -    | array[string]  | `"Key: Value"` 形式の文字列リスト                                    |
-| body         | -    | string         | 生テキストボディ（複数行リテラル `'''...'''` 推奨。`body_form`と排他）|
-| body_form    | -    | array[string]  | `"key = value"` 形式の文字列リスト（`body`と排他）                   |
+| body         | -    | string         | 生テキストボディ（複数行リテラル `'''...'''` 推奨。他 body mode と排他）|
+| body_form    | -    | array[string]  | `"key = value"` 形式の文字列リスト。他 body mode と排他              |
+| body_file    | -    | string         | ファイル内容をそのまま request body として送信する。`Content-Type` 未指定時は `application/octet-stream`。他 body mode と排他 |
+| body_multipart | -  | array[string]  | `multipart/form-data` body。通常フィールドは `"key = value"`、ファイルフィールドは `"key = @path; filename=...; type=..."`。他 body mode と排他 |
 | capture      | -    | array[string]  | `"var_name = source"` 形式の文字列リスト（`source` の記法は §4.5）   |
 | until        | -    | array[string]  | ポーリング設定（§4.5）。条件を満たすまでリクエストを繰り返す         |
 
 ## 4.4 パース規則
 
-`headers` / `body_form` / `capture` の各要素は、Python側でパースして dict に変換する。
+`headers` / `body_form` / `body_multipart` / `capture` の各要素は、Python側でパースする。
 
 | フィールド   | 区切り文字 | 分割回数 | 例                                | 結果                                  |
 |--------------|------------|----------|-----------------------------------|---------------------------------------|
 | headers      | 最初の `:` | 1回      | `"Authorization: Bearer abc"`     | `{"Authorization": "Bearer abc"}`     |
 | body_form    | 最初の `=` | 1回      | `"email = test@example.com"`      | `{"email": "test@example.com"}`       |
+| body_multipart | 最初の `=` | 1回   | `"file = @./a.bin; filename=a.bin; type=application/octet-stream"` | 順序付き multipart part |
 | capture      | 最初の `=` | 1回      | `"token = data.access_token"`     | `{"token": "data.access_token"}`      |
 
 - 区切り文字の左右の空白は自動でトリムする（`"a = b"` も `"a=b"` も同じ）
 - 値側に区切り文字を含めたい場合も、最初の1つだけが区切りとして扱われる
   例: `"X-Url: https://example.com:8080/path"` → key=`X-Url`, value=`https://example.com:8080/path`
 - 区切り文字が無い行は `ValueError` でエラー
+- `body_file` のファイルパスはテンプレート展開対象。ファイル内容は展開せず bytes として送信する。
+- `body_multipart` の値が `@` で始まる場合はファイルフィールド。`filename` 省略時はファイル名、`type` 省略時は `application/octet-stream`。値を `@` で始めたい通常フィールドは `@@value` と書く。
+- `body_multipart` は boundary 付き `Content-Type` を自動生成するため、`headers` に `Content-Type` を指定すると実行時エラーになる。
+- ファイル読み込みと multipart 組み立ては実行時に行われ、相対パスは実行時の current working directory 基準。大きなファイルはメモリに載る。
 
 ```python
 def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
@@ -109,7 +133,7 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
 | `response.header.<Name>`     | レスポンスヘッダー値（大文字小文字を無視）        | `loc = response.header.Location`         |
 | `request.header.<Name>`      | リクエストヘッダー値（送信した実値、大小無視）    | `sent_auth = request.header.Authorization` |
 | `request.url`                | テンプレート展開後のリクエストURL                 | `called_url = request.url`               |
-| `request.body`              | 送信したリクエストボディ（form は urlencode 済み）| `sent_body = request.body`               |
+| `request.body`              | 送信したリクエストボディ（form は urlencode 済み、file/multipart は UTF-8 replacement decode）| `sent_body = request.body`               |
 
 - `response.header.*` / `request.header.*` のヘッダー名は大文字小文字を区別しない。
   該当ヘッダーが存在しない場合はエラーで停止する。
@@ -231,7 +255,7 @@ url    = "5"
 ```
 
 - `url` に待機秒数を指定する（テンプレート変数も使用可）。
-- `headers` / `body` / `body_form` / `capture` は指定不可（バリデーションエラー）。
+- `headers` / `body` / `body_form` / `body_file` / `body_multipart` / `capture` は指定不可（バリデーションエラー）。
 - 出力: `==> [name] SLEEP 5` → `    > sleep 5.0 seconds` → `<== [name] done`
 
 ## 4.8 ポーリング（`until` フィールド）
