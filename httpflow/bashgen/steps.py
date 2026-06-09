@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from httpflow.model import FormBody, HttpStep, SleepStep, TextBody
+from httpflow.model import FileBody, FormBody, HttpStep, MultipartBody, SleepStep, TextBody
 
 from .capture import capture_rows
 from .conditions import split_until_condition
@@ -54,6 +54,9 @@ class StepEmitter:
             "    local headers_text=",
             "    local captures_text=",
         ]
+
+        if isinstance(step.body, (FileBody, MultipartBody)):
+            raise ValueError("bash generator does not support body_file/body_multipart yet")
 
         has_body = False
         if isinstance(step.body, TextBody):

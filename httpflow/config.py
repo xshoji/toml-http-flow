@@ -6,7 +6,7 @@ import tomllib
 from dataclasses import dataclass, field
 from typing import Any
 
-from .model import FormBody, HttpStep, SleepStep, TextBody, UntilSpec, WorkflowSpec
+from .model import FileBody, FormBody, HttpStep, MultipartBody, MultipartField, MultipartFile, MultipartPart, SleepStep, TextBody, UntilSpec, WorkflowSpec
 
 
 SPECIAL_METHODS = {"SLEEP"}
@@ -34,6 +34,50 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
     return result
 
 
+def parse_multipart_list(items: list[str]) -> list[MultipartPart]:
+    """Parse multipart/form-data entries into ordered parts."""
+    parts: list[MultipartPart] = []
+    for raw in items:
+        if not isinstance(raw, str):
+            raise ValueError(f"expected string entry, got {type(raw).__name__}: {raw!r}")
+        if "=" not in raw:
+            raise ValueError(f"invalid multipart entry (missing '='): {raw!r}")
+        key_raw, value_raw = raw.split("=", 1)
+        name = key_raw.strip()
+        value = value_raw.strip()
+        if not name:
+            raise ValueError(f"empty multipart field name in entry: {raw!r}")
+        if value.startswith("@@"):
+            parts.append(MultipartField(name=name, value=value[1:]))
+            continue
+        if not value.startswith("@"):
+            parts.append(MultipartField(name=name, value=value))
+            continue
+
+        segments = [seg.strip() for seg in value[1:].split(";")]
+        path = segments[0]
+        if not path:
+            raise ValueError(f"empty multipart file path in entry: {raw!r}")
+        filename: str | None = None
+        content_type = "application/octet-stream"
+        for segment in segments[1:]:
+            if not segment:
+                continue
+            if "=" not in segment:
+                raise ValueError(f"invalid multipart file option in entry: {raw!r}")
+            opt_key, opt_value = segment.split("=", 1)
+            opt_key = opt_key.strip()
+            opt_value = opt_value.strip()
+            if opt_key == "filename":
+                filename = opt_value
+            elif opt_key == "type":
+                content_type = opt_value
+            else:
+                raise ValueError(f"unknown multipart file option {opt_key!r} in entry: {raw!r}")
+        parts.append(MultipartFile(name=name, path=path, filename=filename, content_type=content_type))
+    return parts
+
+
 # ------------------------------------------------------------------ internal intermediate
 
 
@@ -48,6 +92,8 @@ class _IntermediateRequest:
     headers: list[str] = field(default_factory=list)
     body: str | None = None
     body_form: list[str] = field(default_factory=list)
+    body_file: str | None = None
+    body_multipart: list[str] = field(default_factory=list)
     capture: list[str] = field(default_factory=list)
     until: list[str] | None = None
 
@@ -69,12 +115,14 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
             d.get("headers")
             or d.get("body")
             or d.get("body_form")
+            or d.get("body_file")
+            or d.get("body_multipart")
             or d.get("capture")
             or d.get("until")
         ):
             raise ValueError(
                 f"request {d['name']!r}: 'SLEEP' step must not specify "
-                f"headers, body, body_form, capture, or until"
+                f"headers, body, body_form, body_file, body_multipart, capture, or until"
             )
         url_val = str(d["url"])
         # Defer numeric validation to runtime when the value contains a template.
@@ -95,16 +143,30 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
 
     body = d.get("body")
     body_form = d.get("body_form", [])
-    if body is not None and body_form:
+    body_file = d.get("body_file")
+    body_multipart = d.get("body_multipart", [])
+    body_modes = [
+        ("body", body is not None),
+        ("body_form", bool(body_form)),
+        ("body_file", body_file is not None),
+        ("body_multipart", bool(body_multipart)),
+    ]
+    present = [name for name, enabled in body_modes if enabled]
+    if len(present) > 1:
         raise ValueError(
-            f"request {d.get('name')!r}: 'body' and 'body_form' are mutually exclusive"
+            f"request {d.get('name')!r}: body fields are mutually exclusive: "
+            f"{', '.join(present)}"
         )
 
     if body is not None and not isinstance(body, str):
         raise ValueError(f"request {d['name']!r}: 'body' must be a string")
+    if body_file is not None and not isinstance(body_file, str):
+        raise ValueError(f"request {d['name']!r}: 'body_file' must be a string")
 
     if not isinstance(body_form, list):
         body_form = [body_form]
+    if not isinstance(body_multipart, list):
+        body_multipart = [body_multipart]
 
     return _IntermediateRequest(
         name=str(d["name"]),
@@ -114,6 +176,8 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
         headers=d.get("headers", []),
         body=body,
         body_form=body_form,
+        body_file=body_file,
+        body_multipart=body_multipart,
         capture=d.get("capture", []),
         until=d["until"] if "until" in d else None,
     )
@@ -184,11 +248,15 @@ def _intermediate_to_step(inter: _IntermediateRequest) -> HttpStep | SleepStep:
             description=inter.description,
         )
 
-    body: TextBody | FormBody | None = None
+    body: TextBody | FormBody | FileBody | MultipartBody | None = None
     if inter.body is not None:
         body = TextBody(text=inter.body)
     elif inter.body_form:
         body = FormBody(fields=parse_kv_list(inter.body_form, "="))
+    elif inter.body_file is not None:
+        body = FileBody(path=inter.body_file)
+    elif inter.body_multipart:
+        body = MultipartBody(parts=parse_multipart_list(inter.body_multipart))
 
     until = None
     if inter.until is not None:

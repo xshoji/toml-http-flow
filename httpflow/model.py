@@ -24,7 +24,42 @@ class FormBody:
     fields: dict[str, str]
 
 
-Body: TypeAlias = TextBody | FormBody
+@dataclass(slots=True)
+class FileBody:
+    """A raw binary body loaded from a file at runtime."""
+
+    path: str
+
+
+@dataclass(slots=True)
+class MultipartField:
+    """A regular multipart/form-data text field."""
+
+    name: str
+    value: str
+
+
+@dataclass(slots=True)
+class MultipartFile:
+    """A multipart/form-data file field loaded at runtime."""
+
+    name: str
+    path: str
+    filename: str | None = None
+    content_type: str = "application/octet-stream"
+
+
+MultipartPart: TypeAlias = MultipartField | MultipartFile
+
+
+@dataclass(slots=True)
+class MultipartBody:
+    """A multipart/form-data body preserving part order and duplicate names."""
+
+    parts: list[MultipartPart]
+
+
+Body: TypeAlias = TextBody | FormBody | FileBody | MultipartBody
 
 
 @dataclass(slots=True)
@@ -40,8 +75,8 @@ class UntilSpec:
 class HttpStep:
     """A single HTTP request step.
 
-    ``body`` carries exactly one of :class:`TextBody` or :class:`FormBody`
-    when present, representing the mutually exclusive body modes at the
+    ``body`` carries exactly one body model when present, representing the
+    mutually exclusive body modes at the
     type level.
     """
 
