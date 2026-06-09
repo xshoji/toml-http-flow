@@ -51,7 +51,23 @@ headers = ["Authorization: Bearer ${env.API_TOKEN}"]
 url = "https://api.example.com/users/${env.USER}"
 ```
 
-## 5.5 ランダム値の参照
+## 5.5 現在時刻の参照
+
+```
+${time.DATE_ISO}
+${time.DATE_YMD}
+${time.DATE_YMDHMS}
+```
+
+レンダリング時に現在時刻を取得して文字列として展開する。
+
+| プレースホルダ | 出力例 | 形式 |
+|---------------|--------|------|
+| `${time.DATE_ISO}` | `2026-06-09T12:34:56.123456+09:00` | ISO 8601（マイクロ秒精度） |
+| `${time.DATE_YMD}` | `20260609` | `%Y%m%d` |
+| `${time.DATE_YMDHMS}` | `20260609123456` | `%Y%m%d%H%M%S` |
+
+## 5.6 ランダム値の参照
 
 ```
 ${random.UUID}
@@ -69,7 +85,7 @@ body = '{"request_id":"${random.UUID}"}'
 headers = ["X-Request-Id: ${random.UUID_HEX}"]
 ```
 
-## 5.6 リテラル `$` のエスケープ
+## 5.7 リテラル `$` のエスケープ
 
 `string.Template` の慣例に倣い `$$` で `$` 1文字として扱う。
 
@@ -77,7 +93,7 @@ headers = ["X-Request-Id: ${random.UUID_HEX}"]
 body = '{"price":"$$100"}'   # → {"price":"$100"}
 ```
 
-## 5.7 パス要素で使える文字
+## 5.8 パス要素で使える文字
 
 `${...}` 内のパス要素には以下を許可する:
 
@@ -95,7 +111,7 @@ body = '{"price":"$$100"}'   # → {"price":"$100"}
 url = "https://api.example.com/x?args=${token}"
 ```
 
-## 5.8 実装方針
+## 5.9 実装方針
 
 `re.sub` のコールバックで置換する。
 値は `store["vars"]` / `env.*` / `random.*` を単一のルックアップ関数で解決する。
@@ -103,6 +119,7 @@ url = "https://api.example.com/x?args=${token}"
 ```python
 import re
 import os
+import datetime
 import uuid
 from typing import Any
 
@@ -112,11 +129,6 @@ class TemplateError(KeyError):
     pass
 
 def _lookup(store: dict, parts: list[str]) -> Any:
-    if len(parts) == 2 and parts[0] == "var":
-        try:
-            return store["vars"][parts[1]]
-        except KeyError as exc:
-            raise TemplateError(".".join(parts)) from exc
     if len(parts) == 2 and parts[0] == "env":
         try:
             return os.environ[parts[1]]
@@ -126,6 +138,17 @@ def _lookup(store: dict, parts: list[str]) -> Any:
         return uuid.uuid4()
     if parts == ["random", "UUID_HEX"]:
         return uuid.uuid4().hex
+    if parts == ["time", "DATE_ISO"]:
+        return datetime.datetime.now().astimezone().isoformat(timespec="microseconds")
+    if parts == ["time", "DATE_YMD"]:
+        return datetime.datetime.now().astimezone().strftime("%Y%m%d")
+    if parts == ["time", "DATE_YMDHMS"]:
+        return datetime.datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
+    if len(parts) == 2 and parts[0] == "var":
+        try:
+            return store["vars"][parts[1]]
+        except KeyError as exc:
+            raise TemplateError(".".join(parts)) from exc
     if len(parts) == 1 and parts[0] in store.get("vars", {}):
         return store["vars"][parts[0]]
     cur: Any = store

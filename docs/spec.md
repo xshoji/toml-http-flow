@@ -274,8 +274,17 @@ Available namespaces:
 - `var.<name>` — variables in `store["vars"]` (including CLI `-v key=value` and captured values)
 - `env.<name>` — environment variables
 - `random.UUID` / `random.UUID_HEX` — generated UUID values
+- `time.DATE_ISO` / `time.DATE_YMD` / `time.DATE_YMDHMS` — current timestamp placeholders
 
 Referencing an undefined variable raises `TemplateError` and stops execution.
+
+### `time.*` placeholders
+
+| Placeholder        | Output example                     | Format                 |
+|--------------------|------------------------------------|------------------------|
+| `${time.DATE_ISO}` | `2026-06-09T12:34:56.123456+09:00` | ISO 8601 with microseconds |
+| `${time.DATE_YMD}` | `20260609`                         | `%Y%m%d`               |
+| `${time.DATE_YMDHMS}` | `20260609123456`                | `%Y%m%d%H%M%S`         |
 
 ---
 
@@ -286,8 +295,10 @@ ad-hoc editing**. Each `[[requests]]` block expands to an independent
 `step_<name>` function that calls the shared `run_step` helper.
 
 ```python
-def step_getToken(store, quiet=False, pretty_json=False, no_mask=False):
+def step_getToken(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):
     """[[requests]] name = 'getToken' — POST https://api.example.com/auth"""
+    for _ in range(blank_line):
+        print()
     run_step(
         store, 'getToken', 'POST', 'https://api.example.com/auth',
         headers={
@@ -302,9 +313,12 @@ def main():
     ...
     # === Workflow ===
     # Comment out a line to skip that step. Reorder lines to change execution order.
-    step_getToken(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)
-    step_getUser(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask)
+    step_getToken(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask, blank_line=0)
+    step_getUser(store, quiet=args.quiet, pretty_json=args.pretty_json, no_mask=args.no_mask, blank_line=args.blank_line)
 ```
+
+- Each step function accepts `blank_line` parameter; only the second and subsequent steps in main execute the blank-line logic (the first step passes `0` unconditionally).
+- Generated scripts support `-v`, `-q`/`--quiet`, `--pretty-json`, `--no-mask`, `--blank-line`.
 
 Common editing use cases:
 
@@ -314,8 +328,8 @@ Common editing use cases:
 - **Add a brand-new step** → copy an existing function, rename it, change the contents, and add one line to `main()`
 
 The runtime helpers (`render` / `extract` / `do_request` / `run_step` / `mask_*`) are
-inlined at the top of the generated script from `embedded_runtime.py` and do not
-depend on this tool's codebase.
+inlined at the top of the generated script from `runtime/*.py` (flattened via
+`generator._flatten_modules()`) and do not depend on this tool's codebase.
 
 ---
 

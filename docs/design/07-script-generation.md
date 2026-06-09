@@ -83,13 +83,14 @@ runner.py.tmpl
    - `until` 指定ありの HTTP ステップは内部関数 `attempt()` に `run_step` を包み、`poll_until(...)` で実行する
    - `SLEEP` ステップも `run_step(method="SLEEP", url=seconds, ...)` として統一
 5. 以下のプレースホルダを置換:
+   - `{{RUNTIME_HELPERS}}`: 必要な `runtime/*.py` から flatten したソース
+   - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `poll_until` を含むヘルパ群（未使用時はコメントのみ）
+   - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数（dict リテラル）
+   - `{{REQUIRED_VARS}}`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に無い変数名（list リテラル）
    - `{{STEP_FUNCTIONS}}`: 各ステップ関数の定義（空行2つで区切り）
    - `{{STEP_CALLS}}`: `main()` 内に並べる `step_xxx(store, ...)` の列
-   - `{{DEFAULT_VARS}}`: `-v` で渡されたデフォルト変数
-   - `{{REQUIRED_VARS}}`: `${var.<key>}` で参照されているが `DEFAULT_VARS` に無い変数名
    - `{{GENERATED_AT}}`: 生成タイムスタンプ
    - `{{VERSION}}`: 本ツールのバージョン
-   - `{{UNTIL_HELPERS}}`: `until` 使用時のみ `poll_until` を含むヘルパ群（未使用時は省略）
    - 生成スクリプトの `main()` は `-v` を `store["vars"]` に反映した直後、step 呼び出し前に `REQUIRED_VARS` の不足を検証する
 6. 出力先（`-o` または stdout）に書き出す
 7. `--shebang` 指定時は先頭に `#!/usr/bin/env python3` を付け、`chmod +x` 相当を実施
@@ -108,8 +109,10 @@ runner.py.tmpl
 | `eval_until`    | `runtime.until`                        | `runtime/until.py` 平滑化 |
 | `mask` / `mask_url` / `mask_value` | `runtime.mask`         | `runtime/mask.py` 平滑化  |
 
-本体側の `template.py` / `httpclient.py` / `masking.py` / `until.py` は、
-原則として `httpflow.runtime.*` へ thin wrapper として delegate する。
+本体側の `template.py` は、`runtime.core` の `render` を import し、
+`${var.*}` の名前を抽出する `find_var_names()` のみを追加実装する。
+`httpclient.py` / `masking.py` / `until.py` / `workflow.py` などの
+独立ファイルは存在せず、すべて `runtime/` 配下のモジュールが source-of-truth である。
 
 ## 8.6 生成スクリプトの使い方（生成後）
 
@@ -172,4 +175,6 @@ workflow.sh
 - **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する
 - **until** 指定ありの HTTP ステップは、各試行で通常のリクエスト・レスポンス出力・capture を実行した後に条件を評価する。条件が満たされると `* until satisfied on attempt N` を出力し、満たされない場合は `* until not satisfied (attempt N/M), retrying in Xs` を出力して `interval` 秒待つ。`max_attempts` で満たされなければ標準エラーに失敗理由を出力し非ゼロ終了する。`curl --fail` は使わないため HTTP 4xx/5xx は通常レスポンスとして扱い、capture や条件評価の対象になる
 - `main()` は step 呼び出しを1行ずつ並べるだけ（スキップ・並べ替えがコメントアウトで容易）
-- テンプレートファイルは使わず、`bash_generator.py` のコード内で完結して出力する
+- テンプレートファイルは使わず、`bashgen/` パッケージ（`bashgen/steps.py` 等）のコード内で完結して出力する
+- `bash_generator.py` は単一のディスパッチ関数を持ち、`bashgen` パッケージの各モジュールに委譲する
+- `${time.DATE_ISO}` / `${time.DATE_YMD}` / `${time.DATE_YMDHMS}` は Python の `datetime` を利用したヘルパー関数として展開する

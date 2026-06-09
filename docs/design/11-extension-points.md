@@ -9,3 +9,5 @@
 - `until` の condition で数値比較（`>`, `<`, `>=`, `<=`）や論理演算（`&&`, `||`）
 - `generate --strip-secrets` で機密ヘッダー/フィールドを除外して書き出し
 - `generate --format curl` で curl コマンド列としても書き出せるようにする → **bash スクリプト生成（`--format bash`）として実装済み**
+- `time.*` プレースホルダ（`DATE_ISO` / `DATE_YMD` / `DATE_YMDHMS`） → **実装済み**
+- `HTTPFLOW_MASK_EXTRA` 環境変数による追加マスキング → **実装済み**
