@@ -24,6 +24,7 @@ class StepPlan:
     index: int
     step: Step
     function_name: str
+    attempt_function_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,10 @@ def analyze_workflow(spec: WorkflowSpec, default_vars: dict[str, str] | None = N
 
     for i, s in enumerate(spec.steps):
         fn = step_function_name(s.name, used)
-        plans.append(StepPlan(index=i, step=s, function_name=fn))
+        attempt_fn = None
+        if isinstance(s, HttpStep) and s.until is not None:
+            attempt_fn = step_function_name(f"{s.name}_attempt", used)
+        plans.append(StepPlan(index=i, step=s, function_name=fn, attempt_function_name=attempt_fn))
 
     required = sorted(
         collect_var_names(spec) - captured_vars - set(default_vars or {})

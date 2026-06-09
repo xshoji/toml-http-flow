@@ -177,4 +177,6 @@ workflow.sh
 - `main()` は step 呼び出しを1行ずつ並べるだけ（スキップ・並べ替えがコメントアウトで容易）
 - テンプレートファイルは使わず、`bashgen/` パッケージ（`bashgen/steps.py` 等）のコード内で完結して出力する
 - `bash_generator.py` は単一のディスパッチ関数を持ち、`bashgen` パッケージの各モジュールに委譲する
-- `${time.DATE_ISO}` / `${time.DATE_YMD}` / `${time.DATE_YMDHMS}` は Python の `datetime` を利用したヘルパー関数として展開する
+- `${time.DATE_ISO}` / `${time.DATE_YMD}` / `${time.DATE_YMDHMS}` は `date` コマンドと shell 関数として展開する
+- until ステップの inner attempt 関数名は `{fn}_attempt` として生成する。この名前は通常ステップの関数名と衝突しないよう、`bashgen/analysis.py` で予約する
+- SLEEP ステップの name / description は shell injection を防ぐため `printf` + シングルクォートでデータとして出力する

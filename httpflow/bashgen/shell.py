@@ -20,7 +20,7 @@ def dq_literal(s: str) -> str:
 
 def default_assignment(name: str, value: str) -> str:
     """Emit a bash line that sets a default for an env-style variable."""
-    return f': "${{{name}:={dq_literal(value)[1:-1]}}}"'
+    return f'if [ -z "${{{name}:-}}" ]; then {name}={sq(value)}; fi'
 
 
 
@@ -45,5 +45,4 @@ def mask_key_pattern(keys: str) -> str:
                 key_parts.append(key_part)
         parts.append("-".join(key_parts))
     return "|".join(parts)
-
 

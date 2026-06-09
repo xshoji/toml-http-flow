@@ -301,9 +301,9 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("step_wait()", script)
         self.assertIn('seconds="0.05"', script)
         self.assertIn('print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"', script)
-        self.assertIn('echo "==> $(now) [wait] SLEEP $seconds"', script)
+        self.assertIn('SLEEP %s\\n" "$(now)" \'wait\' "$seconds"', script)
         self.assertIn('sleep "$seconds"', script)
-        self.assertIn('echo "<== $(now) [wait] done"', script)
+        self.assertIn('done\\n" "$(now)" \'wait\'', script)
 
     def test_sleep_step_with_shell_variable(self):
         toml = textwrap.dedent("""
@@ -314,7 +314,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn('seconds="${WAIT_SECONDS}"', script)
-        self.assertIn('echo "==> $(now) [wait] SLEEP $seconds"', script)
+        self.assertIn('SLEEP %s\\n" "$(now)" \'wait\' "$seconds"', script)
         self.assertIn('sleep "$seconds"', script)
 
     def test_shebang(self):
@@ -921,8 +921,8 @@ class TestBashGenerator(unittest.TestCase):
                 msg=f"syntax error:\n{syntax.stderr}\n--- script ---\n{script}",
             )
 
-            self.assertIn(': "${VAR_ENV:=prod}"', script)
-            self.assertIn(': "${VAR_USER:=alice}"', script)
+            self.assertIn('if [ -z "${VAR_ENV:-}" ]; then VAR_ENV=\'prod\'; fi', script)
+            self.assertIn('if [ -z "${VAR_USER:-}" ]; then VAR_USER=\'alice\'; fi', script)
             # Ensure they are defined *before* main / step functions so they act as defaults
             defaults_pos = script.find("# ─── defaults")
             steps_pos = script.find("# ─── step functions")
@@ -1039,3 +1039,87 @@ class TestBashGenerator(unittest.TestCase):
                 capture_output=True, text=True, timeout=10,
             )
             self.assertIn("overridden", res2.stdout)
+
+    def test_until_function_name_no_collision_with_normal_step(self):
+        """until _attempt suffix must not collide with another step's function name."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "poll_attempt"
+            method = "GET"
+            url = "http://example.com/other"
+
+            [[requests]]
+            name = "poll"
+            method = "GET"
+            url = "http://example.com/poll"
+            capture = ["status = status"]
+            until = ["condition = ${status} == Active", "interval = 0", "max_attempts = 3"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("step_poll_attempt()", script)
+        self.assertIn("step_poll_attempt_2()", script)
+        idx1 = script.index("step_poll_attempt()")
+        idx3 = script.index("step_poll_attempt_2()")
+        self.assertLess(idx1, idx3)
+
+    def test_sleep_step_name_is_safe_from_shell_injection(self):
+        """SLEEP step name with shell metacharacters must not be expanded."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "`id`$(echo injected)&"
+            method = "SLEEP"
+            url = "0.01"
+            description = "); echo injected2"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("`id`$(echo injected)&", script)
+        self.assertNotIn("echo \\\"#>", script)
+        self.assertIn('printf "==> %s [%s] SLEEP', script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True, timeout=10,
+            )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertNotIn("uid=", res.stdout, msg="shell expansion of $(id) must not happen")
+        self.assertNotIn("uid=", res.stdout, msg="command substitution must not happen")
+
+    def test_default_var_containing_brace_generates_valid_bash(self):
+        """Default var value containing } must be escaped properly."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(
+                wf,
+                default_vars={"env": "prod}", "user": "alice{foo}"},
+            )
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+
+            syntax = subprocess.run(
+                ["bash", "-n", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(
+                syntax.returncode, 0,
+                msg=f"syntax error:\n{syntax.stderr}\n--- script ---\n{script}",
+            )
+            # Also verify the default value is actually stored correctly
+            res = subprocess.run(
+                ["bash", "-c",
+                 f"source {script_path} >/dev/null || true; printf '%s\\n' \"${{VAR_ENV}}\" \"${{VAR_USER}}\""],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            self.assertIn("prod}", res.stdout)
+            self.assertIn("alice{foo}", res.stdout)

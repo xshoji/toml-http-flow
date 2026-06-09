@@ -40,7 +40,7 @@ class StepEmitter:
             return self.emit_sleep(step, fn)
         if isinstance(step, HttpStep):
             if step.until is not None:
-                return self.emit_http_until(step, fn)
+                return self.emit_http_until(step, fn, plan.attempt_function_name)
             return self.emit_http(step, fn)
         raise TypeError(f"unknown step type: {type(step).__name__}")
 
@@ -94,11 +94,12 @@ class StepEmitter:
         out.append("}")
         return "\n".join(out)
 
-    def emit_http_until(self, step: HttpStep, function_name: str) -> str:
+    def emit_http_until(self, step: HttpStep, function_name: str, attempt_function_name: str | None = None) -> str:
         """Emit an HTTP step wrapped in an until polling loop."""
         assert step.until is not None
         lhs, op, rhs = split_until_condition(step.until.condition)
-        out = self.emit_http(step, f"{function_name}_attempt").splitlines()
+        attempt_fn = attempt_function_name or f"{function_name}_attempt"
+        out = self.emit_http(step, attempt_fn).splitlines()
         out.extend([
             "",
             f"{function_name}() {{",
@@ -107,7 +108,7 @@ class StepEmitter:
             f"    local interval={step.until.interval}",
             "    local until_lhs until_rhs",
             "    for ((attempt=1; attempt<=max_attempts; attempt++)); do",
-            f"        {function_name}_attempt || return $?",
+            f"        {attempt_fn} || return $?",
             f"        until_lhs={self._ph.expr(lhs)}",
             f"        until_rhs={self._ph.expr(rhs)}",
             f'        if until_eval "$until_lhs" {sq(op)} "$until_rhs"; then',
@@ -131,12 +132,12 @@ class StepEmitter:
             f"{function_name}() {{",
             f'    local seconds={self._ph.expr(step.seconds)}',
             '    print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"',
-            f'    echo "==> $(now) [{step.name}] SLEEP $seconds"',
+            f'    printf "==> %s [%s] SLEEP %s\\n" "$(now)" {sq(step.name)} "$seconds"',
         ]
         if step.description:
             for dl in step.description.splitlines():
-                out.append(f'    echo "# {dl}"')
+                out.append(f'    printf "# %s\\n" {sq(dl)}')
         out.append('    sleep "$seconds"')
-        out.append(f'    echo "<== $(now) [{step.name}] done"')
+        out.append(f'    printf "<== %s [%s] done\\n" "$(now)" {sq(step.name)}')
         out.append("}")
         return "\n".join(out)
