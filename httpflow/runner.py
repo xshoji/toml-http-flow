@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import Any, Iterator
 
-from .model import FormBody, HttpStep, SleepStep, TextBody, WorkflowSpec
+from .model import FileBody, FormBody, HttpStep, MultipartBody, MultipartField, MultipartFile, SleepStep, TextBody, WorkflowSpec
 from .runtime.http import run_step
 from .runtime.until import poll_until
 from .template import find_var_names
@@ -27,6 +27,19 @@ def _iter_template_strings(spec: WorkflowSpec) -> Iterator[str]:
                     case FormBody():
                         yield from step.body.fields
                         yield from step.body.fields.values()
+                    case FileBody():
+                        yield step.body.path
+                    case MultipartBody():
+                        for part in step.body.parts:
+                            yield part.name
+                            match part:
+                                case MultipartField():
+                                    yield part.value
+                                case MultipartFile():
+                                    yield part.path
+                                    if part.filename is not None:
+                                        yield part.filename
+                                    yield part.content_type
                     case None:
                         pass
                 if step.until is not None:
@@ -130,11 +143,29 @@ def _run_once(
         assert isinstance(step, HttpStep)
         body: str | None = None
         body_form: dict[str, str] | None = None
+        body_file: str | None = None
+        body_multipart: list[dict[str, str | None]] | None = None
         match step.body:
             case TextBody():
                 body = step.body.text
             case FormBody():
                 body_form = step.body.fields
+            case FileBody():
+                body_file = step.body.path
+            case MultipartBody():
+                body_multipart = []
+                for part in step.body.parts:
+                    match part:
+                        case MultipartField():
+                            body_multipart.append({"kind": "field", "name": part.name, "value": part.value})
+                        case MultipartFile():
+                            body_multipart.append({
+                                "kind": "file",
+                                "name": part.name,
+                                "path": part.path,
+                                "filename": part.filename,
+                                "content_type": part.content_type,
+                            })
             case None:
                 pass
 
@@ -147,6 +178,8 @@ def _run_once(
                 headers=step.headers,
                 body=body,
                 body_form=body_form,
+                body_file=body_file,
+                body_multipart=body_multipart,
                 capture=step.capture,
                 description=step.description,
                 quiet=quiet,
@@ -166,6 +199,8 @@ def _run_once(
                 headers=step.headers,
                 body=body,
                 body_form=body_form,
+                body_file=body_file,
+                body_multipart=body_multipart,
                 capture=step.capture,
                 description=step.description,
                 quiet=quiet,

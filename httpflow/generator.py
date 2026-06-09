@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 from . import __version__
-from .model import FormBody, HttpStep, SleepStep, Step, TextBody, WorkflowSpec
+from .model import FileBody, FormBody, HttpStep, MultipartBody, MultipartField, MultipartFile, SleepStep, Step, TextBody, WorkflowSpec
 from .runner import collect_var_names
 
 
@@ -200,6 +200,21 @@ def _list_literal(items: list[str], indent: str = "") -> str:
     return "\n".join(lines)
 
 
+def _multipart_literal(parts: list[dict[str, str | None]], indent: str = "    ") -> str:
+    """Return a Python list literal for multipart part dictionaries."""
+    if not parts:
+        return "[]"
+    inner = indent + "    "
+    lines = ["["]
+    for part in parts:
+        lines.append(f"{inner}{{")
+        for key, value in part.items():
+            lines.append(f"{inner}    {key!r}: {value!r},")
+        lines.append(f"{inner}}},")
+    lines.append(f"{indent}]")
+    return "\n".join(lines)
+
+
 def _sanitize_ident(name: str, used: set[str]) -> str:
     """Turn a step name into a unique python identifier prefixed with ``step_``."""
     cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name)
@@ -226,6 +241,8 @@ def _emit_run_step_call(
     headers: dict[str, str] | None = None,
     body: str | None = None,
     body_form: dict[str, str] | None = None,
+    body_file: str | None = None,
+    body_multipart: list[dict[str, str | None]] | None = None,
     capture: dict[str, str] | None = None,
     description: str | None = None,
     indent: str = "    ",
@@ -241,6 +258,10 @@ def _emit_run_step_call(
         args.append("body=" + _str_literal(body))
     if body_form is not None:
         args.append("body_form=" + _dict_literal(body_form, indent=pad))
+    if body_file is not None:
+        args.append("body_file=" + _str_literal(body_file))
+    if body_multipart is not None:
+        args.append("body_multipart=" + _multipart_literal(body_multipart, indent=pad))
     if capture:
         args.append("capture=" + _dict_literal(capture, indent=pad))
     if description is not None:
@@ -266,20 +287,37 @@ def _emit_sleep_step(step: SleepStep, func_name: str) -> str:
     ])
 
 
-def _body_parts(step: HttpStep) -> tuple[str | None, dict[str, str] | None]:
-    """Return (body_text, body_form) for an HttpStep."""
+def _body_parts(step: HttpStep) -> tuple[str | None, dict[str, str] | None, str | None, list[dict[str, str | None]] | None]:
+    """Return body mode values for an HttpStep."""
     match step.body:
         case TextBody(text=t):
-            return t, None
+            return t, None, None, None
         case FormBody(fields=f):
-            return None, f
+            return None, f, None, None
+        case FileBody(path=p):
+            return None, None, p, None
+        case MultipartBody(parts=parts):
+            out: list[dict[str, str | None]] = []
+            for part in parts:
+                match part:
+                    case MultipartField():
+                        out.append({"kind": "field", "name": part.name, "value": part.value})
+                    case MultipartFile():
+                        out.append({
+                            "kind": "file",
+                            "name": part.name,
+                            "path": part.path,
+                            "filename": part.filename,
+                            "content_type": part.content_type,
+                        })
+            return None, None, None, out
         case _:
-            return None, None
+            return None, None, None, None
 
 
 def _emit_http_step(step: HttpStep, func_name: str) -> str:
     """Plain HTTP step: docstring + a single ``run_step(...)`` call."""
-    body, body_form = _body_parts(step)
+    body, body_form, body_file, body_multipart = _body_parts(step)
     return "\n".join([
         f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
         f'    """[[requests]] name = {step.name!r} \u2014 {step.method.upper()} {step.url}"""',
@@ -292,6 +330,8 @@ def _emit_http_step(step: HttpStep, func_name: str) -> str:
             headers=step.headers or None,
             body=body,
             body_form=body_form,
+            body_file=body_file,
+            body_multipart=body_multipart,
             capture=step.capture or None,
             description=step.description,
             indent="    ",
@@ -302,7 +342,7 @@ def _emit_http_step(step: HttpStep, func_name: str) -> str:
 def _emit_until_step(step: HttpStep, func_name: str) -> str:
     """HTTP step wrapped in a ``poll_until`` loop."""
     assert step.until is not None
-    body, body_form = _body_parts(step)
+    body, body_form, body_file, body_multipart = _body_parts(step)
     return "\n".join([
         f"def {func_name}(store, quiet=False, pretty_json=False, no_mask=False, blank_line=0):",
         f'    """[[requests]] name = {step.name!r} \u2014 {step.method.upper()} {step.url}"""',
@@ -316,6 +356,8 @@ def _emit_until_step(step: HttpStep, func_name: str) -> str:
             headers=step.headers or None,
             body=body,
             body_form=body_form,
+            body_file=body_file,
+            body_multipart=body_multipart,
             capture=step.capture or None,
             description=step.description,
             indent="        ",
