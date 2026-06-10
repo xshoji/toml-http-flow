@@ -1547,7 +1547,7 @@ class TestBashGenerator(unittest.TestCase):
             wf = cfg_mod.load(str(toml_path))
             with self.assertRaises(ValueError) as ctx:
                 bash_generator.generate(wf)
-            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
+            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
 
     def test_body_multipart_tab_in_value_raises(self):
         """multipart field value with tab raises ValueError."""
@@ -1559,7 +1559,7 @@ class TestBashGenerator(unittest.TestCase):
             wf = cfg_mod.load(str(toml_path))
             with self.assertRaises(ValueError) as ctx:
                 bash_generator.generate(wf)
-            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
+            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
 
     def test_body_multipart_tab_in_file_path_raises(self):
         """multipart file path with tab raises ValueError."""
@@ -1571,7 +1571,19 @@ class TestBashGenerator(unittest.TestCase):
             wf = cfg_mod.load(str(toml_path))
             with self.assertRaises(ValueError) as ctx:
                 bash_generator.generate(wf)
-            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
+            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
+
+    def test_body_multipart_double_quote_in_field_name_raises(self):
+        """multipart field name with double quote raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["na\\"me = value"]\n'
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml_content, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            with self.assertRaises(ValueError) as ctx:
+                bash_generator.generate(wf)
+            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
 
     def test_embed_files_body_file(self):
         """--embed-files embeds body_file content as base64 in the script."""

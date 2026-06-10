@@ -42,15 +42,15 @@ class StepEmitter:
         """Emit body_form rows as tab-separated key/value strings."""
         rows: list[str] = []
         for k, v in fields.items():
-            if "\t" in k or "\n" in k or "\t" in v or "\n" in v:
-                raise ValueError("body_form keys and values must not contain tabs or newlines")
+            self._validate_no_tabs_newlines(k, f"body_form key {k!r}")
+            self._validate_no_tabs_newlines(v, f"body_form value {v!r}")
             rows.append(f"{self._ph.expand(k)}\t{self._ph.expand(v)}")
         return rows
 
     def _validate_no_tabs_newlines(self, value: str, context: str) -> None:
-        """Raise ValueError when *value* contains tab or newline."""
-        if "\t" in value or "\n" in value:
-            raise ValueError(f"{context} must not contain tabs or newlines: {value!r}")
+        """Raise ValueError when *value* contains tab, newline, or double quote."""
+        if "\t" in value or "\n" in value or '"' in value:
+            raise ValueError(f"{context} must not contain tabs, newlines, or double quotes: {value!r}")
 
     def _multipart_rows(self, parts: list) -> list[str]:
         """Emit multipart rows as tab-separated internal strings."""

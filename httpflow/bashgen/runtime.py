@@ -321,14 +321,23 @@ http_step() {
                             echo "error: multipart file not found: $multipart_value" >&2
                             return 1
                         fi
+                        # Wrap path and filename in double quotes so curl treats
+                        # `;`, `,` and `"` inside them as literal characters
+                        # rather than option separators (curl 7.55+).
+                        local quoted_path="\"$multipart_value\""
+                        local quoted_filename=""
+                        if [ -n "$multipart_filename" ]; then
+                            quoted_filename="\"$multipart_filename\""
+                        fi
+                        local quoted_type="$multipart_type"
                         if [ -n "$multipart_filename" ] && [ -n "$multipart_type" ]; then
-                            cmd+=(-F "$multipart_name=@$multipart_value;filename=$multipart_filename;type=$multipart_type")
+                            cmd+=(-F "$multipart_name=@$quoted_path;filename=$quoted_filename;type=$quoted_type")
                         elif [ -n "$multipart_filename" ]; then
-                            cmd+=(-F "$multipart_name=@$multipart_value;filename=$multipart_filename")
+                            cmd+=(-F "$multipart_name=@$quoted_path;filename=$quoted_filename")
                         elif [ -n "$multipart_type" ]; then
-                            cmd+=(-F "$multipart_name=@$multipart_value;type=$multipart_type")
+                            cmd+=(-F "$multipart_name=@$quoted_path;type=$quoted_type")
                         else
-                            cmd+=(-F "$multipart_name=@$multipart_value")
+                            cmd+=(-F "$multipart_name=@$quoted_path")
                         fi
                         file_size=$(wc -c < "$multipart_value")
                         echo "# multipart file: $multipart_name = $multipart_value (${file_size} bytes)"
