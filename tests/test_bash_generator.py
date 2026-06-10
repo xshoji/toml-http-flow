@@ -311,7 +311,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("body_form_text=$(cat << EOT", script)
         self.assertIn("user\talice", script)
         self.assertIn("pass\tsecret", script)
-        self.assertIn('cmd+=(--data-urlencode "$multipart_name=$multipart_value")', script)
+        self.assertIn('cmd+=(--data-urlencode "$form_key=$form_value")', script)
 
     def test_form_body_placeholders_expand_before_urlencode(self):
         toml = textwrap.dedent("""

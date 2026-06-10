@@ -257,7 +257,7 @@ http_step() {
     local headers_text=$8
     local captures_text=$9
     local description=${10}
-    local trace_file line header multipart_kind multipart_name multipart_value
+    local trace_file line header form_key form_value multipart_kind multipart_name multipart_value
     local multipart_filename multipart_type file_size
     local -a cmd
     local boundary_inserted=0
@@ -287,13 +287,13 @@ http_step() {
         form)
             body_log="Note: Values are shown before URL encoding.
 "
-            while IFS=$'\t' read -r multipart_name multipart_value || [ -n "$multipart_name$multipart_value" ]; do
-                [ -z "$multipart_name" ] && continue
-                cmd+=(--data-urlencode "$multipart_name=$multipart_value")
+            while IFS=$'\t' read -r form_key form_value || [ -n "$form_key$form_value" ]; do
+                [ -z "$form_key" ] && continue
+                cmd+=(--data-urlencode "$form_key=$form_value")
                 if [ -n "$body_log" ]; then
                     body_log="${body_log}&"
                 fi
-                body_log+="$multipart_name=$multipart_value"
+                body_log+="$form_key=$form_value"
             done <<< "$body_form_text"
             ;;
 
@@ -303,7 +303,7 @@ http_step() {
                 return 1
             fi
             cmd+=(--data-binary "@$body")
-            file_size=$(wc -c < "$body")
+            file_size=$(($(wc -c < "$body")))
             body_log="Note: binary body from file: $body (${file_size} bytes)"
             echo "# body_file: $body (${file_size} bytes)"
             ;;
@@ -339,7 +339,7 @@ http_step() {
                         else
                             cmd+=(-F "$multipart_name=@$quoted_path")
                         fi
-                        file_size=$(wc -c < "$multipart_value")
+                        file_size=$(($(wc -c < "$multipart_value")))
                         echo "# multipart file: $multipart_name = $multipart_value (${file_size} bytes)"
                         ;;
                 esac
