@@ -7,11 +7,6 @@ from .conditions import split_until_condition
 from .placeholders import PlaceholderRenderer
 from .shell import dq_literal, sq
 
-_BODY_KIND_NONE = "none"
-_BODY_KIND_TEXT = "text"
-_BODY_KIND_FORM = "form"
-_BODY_KIND_FILE = "file"
-_BODY_KIND_MULTIPART = "multipart"
 
 
 class StepEmitter:
@@ -124,6 +119,14 @@ class StepEmitter:
 
     def emit_http(self, step: HttpStep, function_name: str) -> str:
         """Emit an HTTP step function."""
+
+        # Validate multipart Content-Type before anything else (fail fast).
+        if isinstance(step.body, MultipartBody) and self._has_header(step.headers, "Content-Type"):
+            raise ValueError(
+                f"body_multipart step {step.name!r}: Content-Type is set automatically by curl; "
+                f"remove the user-specified Content-Type header"
+            )
+
         out: list[str] = [
             f"{function_name}() {{",
             f'    local url={self._ph.expr(step.url)}',
@@ -134,26 +137,21 @@ class StepEmitter:
             "    local captures_text=",
         ]
 
-        has_body = False
-        body_kind = _BODY_KIND_NONE
         if isinstance(step.body, TextBody):
-            has_body = True
-            body_kind = _BODY_KIND_TEXT
+            body_kind = "text"
             out.append("    body=$(cat << EOT")
             out.append(self._ph.expand(step.body.text))
             out.append("EOT")
             out.append(")")
             out.append('    body="${body}$(printf "\\n")"')
         elif isinstance(step.body, FormBody):
-            has_body = True
-            body_kind = _BODY_KIND_FORM
+            body_kind = "form"
             out.append("    body_form_text=$(cat << EOT")
             out.extend(self._body_form_rows(step.body.fields))
             out.append("EOT")
             out.append(")")
         elif isinstance(step.body, FileBody):
-            has_body = True
-            body_kind = _BODY_KIND_FILE
+            body_kind = "file"
             embed_var = self._embed_var_name_file_body(function_name)
             decode = self._emit_decode_file(embed_var)
             out.extend(decode)
@@ -162,8 +160,7 @@ class StepEmitter:
             else:
                 out.append(f"    body={self._ph.expr(step.body.path)}")
         elif isinstance(step.body, MultipartBody):
-            has_body = True
-            body_kind = _BODY_KIND_MULTIPART
+            body_kind = "multipart"
             multipart_rows = self._multipart_rows(step.body.parts)
             for idx, part in enumerate(step.body.parts):
                 if isinstance(part, MultipartFile):
@@ -183,6 +180,8 @@ class StepEmitter:
             out.extend(multipart_rows)
             out.append("EOT")
             out.append(")")
+        else:
+            body_kind = "none"
         out.append(f"    body_kind={sq(body_kind)}")
 
         header_lines = [self._ph.expand(f"{k}: {v}") for k, v in step.headers.items()]
@@ -190,11 +189,6 @@ class StepEmitter:
             header_lines.append("Content-Type: application/x-www-form-urlencoded")
         if isinstance(step.body, FileBody) and not self._has_header(step.headers, "Content-Type"):
             header_lines.append("Content-Type: application/octet-stream")
-        if isinstance(step.body, MultipartBody) and self._has_header(step.headers, "Content-Type"):
-            raise ValueError(
-                f"body_multipart step {step.name!r}: Content-Type is set automatically by curl; "
-                f"remove the user-specified Content-Type header"
-            )
         if header_lines:
             out.append("    headers_text=$(cat << EOT")
             out.extend(header_lines)
@@ -210,7 +204,7 @@ class StepEmitter:
 
         out.append(
             f"    http_step {sq(step.name)} {sq(step.method.upper())} \"$url\" "
-            f"{1 if has_body else 0} \"$body_kind\" \"$body\" \"$body_form_text\" \"$headers_text\" \"$captures_text\" "
+            f"\"$body_kind\" \"$body\" \"$body_form_text\" \"$headers_text\" \"$captures_text\" "
             f"{sq(step.description or '')}"
         )
         out.append("}")

@@ -250,18 +250,19 @@ http_step() {
     local step_name=$1
     local method=$2
     local url=$3
-    local has_body=$4
-    local body_kind=$5
-    local body=$6
-    local body_form_text=$7
-    local headers_text=$8
-    local captures_text=$9
-    local description=${10}
+    local body_kind=$4
+    local body=$5
+    local body_form_text=$6
+    local headers_text=$7
+    local captures_text=$8
+    local description=${9}
     local trace_file line header form_key form_value multipart_kind multipart_name multipart_value
     local multipart_filename multipart_type file_size
     local -a cmd
     local boundary_inserted=0
     local body_log=""
+    local has_body=0
+    [ "$body_kind" != "none" ] && has_body=1
 
     print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
