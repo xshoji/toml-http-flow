@@ -160,8 +160,7 @@ class StepEmitter:
             if decode:
                 out.append(f"    body=\"$decode_file\"")
             else:
-                body_file_path = self._ph.expand(step.body.path)
-                out.append(f"    body={sq(body_file_path)}")
+                out.append(f"    body={self._ph.expr(step.body.path)}")
         elif isinstance(step.body, MultipartBody):
             has_body = True
             body_kind = _BODY_KIND_MULTIPART
