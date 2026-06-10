@@ -148,6 +148,7 @@ HTTP リクエストには `curl` を利用する。
 | 可読性         | 1 `[[requests]]` ブロック = 1 `step_<name>()` 関数として展開             |
 | 変数展開       | **自前テンプレートエンジンは持たない**。`${random.UUID}` / `${random.UUID_HEX}` は bash ヘルパー、`${var.X}` は `${VAR_X}` に変換し、それ以外の `${...}` や `$VAR` はそのままシェルに渡す |
 | 未対応機能     | --quiet / -v / --no-mask は生成スクリプトでは実装しない |
+| ファイル埋め込み | `--embed-files` 指定時、body_file / body_multipart のリテラルパスを Base64 埋め込みする。`${...}` プレースホルダを含むパスは既存の実行時解決にフォールバックする |
 
 ### 8.8.2 生成スクリプトの構造
 
@@ -180,3 +181,10 @@ workflow.sh
 - `${time.DATE_ISO}` / `${time.DATE_YMD}` / `${time.DATE_YMDHMS}` は `date` コマンドと shell 関数として展開する
 - until ステップの inner attempt 関数名は `{fn}_attempt` として生成する。この名前は通常ステップの関数名と衝突しないよう、`bashgen/analysis.py` で予約する
 - SLEEP ステップの name / description は shell injection を防ぐため `printf` + シングルクォートでデータとして出力する
+- **`--embed-files` オプション（bash のみ）**:
+  - `-f` で指定された TOML ファイルと同じディレクトリ基準でファイルパスを解決する
+  - `body_file` または `body_multipart` のファイルフィールドのうち、リテラルパス（`${...}` プレースホルダを含まないもの）を生成時に読み込み Base64 エンコードする
+  - `${var.*}` / `${env.*}` などを含むパスは埋め込み対象外とし、警告を出力した上で既存の実行時ファイル参照にフォールバックする
+  - 埋め込まれた内容は `__HF_EMBED_<step_fn>_body` や `__HF_EMBED_<step_fn>_mp<N>` などの変数として宣言され、`_hf_b64decode` ヘルパー（base64 -d / -D の差異を吸収）で実行時に `$HF_TMPDIR` 配下の一時ファイルに復元される
+  - マルチパート内の通常フィールド（`kind=field`）は埋め込み対象外
+  - ファイルが存在しない場合は生成時にエラーで終了する

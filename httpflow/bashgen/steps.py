@@ -17,9 +17,18 @@ _BODY_KIND_MULTIPART = "multipart"
 class StepEmitter:
     """Emit bash functions for workflow steps."""
 
-    def __init__(self, placeholders: PlaceholderRenderer) -> None:
-        """Create a step emitter."""
+    def __init__(
+        self,
+        placeholders: PlaceholderRenderer,
+        embedded_map: dict[str, str] | None = None,
+    ) -> None:
+        """Create a step emitter.
+
+        *embedded_map* maps var_name → base64 content for files embedded
+        via the ``--embed-files`` option.
+        """
         self._placeholders = placeholders
+        self._embedded = embedded_map or {}
 
     @property
     def _ph(self) -> PlaceholderRenderer:
@@ -92,6 +101,27 @@ class StepEmitter:
             return self.emit_http(step, fn)
         raise TypeError(f"unknown step type: {type(step).__name__}")
 
+    def _emit_decode_file(self, var_name: str) -> list[str]:
+        """Return bash lines that decode an embedded file to a temp file.
+
+        Returns empty list if *var_name* is not in the embedded map.
+        """
+        if var_name not in self._embedded:
+            return []
+        return [
+            f'    local decode_file',
+            f'    decode_file=$(mktemp "$HF_TMPDIR/hf_embed.XXXXXX") || return $?',
+            f"    printf '%s' \"${{__HF_EMBED_{var_name}}}\" | _hf_b64decode > \"$decode_file\"",
+        ]
+
+    def _embed_var_name_file_body(self, function_name: str) -> str:
+        """Return the embedded var name for a body_file step."""
+        return f"{function_name}_body"
+
+    def _embed_var_name_mp(self, function_name: str, idx: int) -> str:
+        """Return the embedded var name for a multipart file part."""
+        return f"{function_name}_mp{idx}"
+
     def emit_http(self, step: HttpStep, function_name: str) -> str:
         """Emit an HTTP step function."""
         out: list[str] = [
@@ -124,13 +154,33 @@ class StepEmitter:
         elif isinstance(step.body, FileBody):
             has_body = True
             body_kind = _BODY_KIND_FILE
-            body_file_path = self._ph.expand(step.body.path)
-            out.append(f"    body={sq(body_file_path)}")
+            embed_var = self._embed_var_name_file_body(function_name)
+            decode = self._emit_decode_file(embed_var)
+            out.extend(decode)
+            if decode:
+                out.append(f"    body=\"$decode_file\"")
+            else:
+                body_file_path = self._ph.expand(step.body.path)
+                out.append(f"    body={sq(body_file_path)}")
         elif isinstance(step.body, MultipartBody):
             has_body = True
             body_kind = _BODY_KIND_MULTIPART
             multipart_rows = self._multipart_rows(step.body.parts)
-            out.append("    body_form_text=$(cat <<'EOT'")
+            for idx, part in enumerate(step.body.parts):
+                if isinstance(part, MultipartFile):
+                    embed_var = self._embed_var_name_mp(function_name, idx)
+                    decode = self._emit_decode_file(embed_var)
+                    out.extend(decode)
+                    if decode:
+                        new_path = f"$decode_file"
+                        # Replace the path in the TSV row for this part
+                        for row_idx in range(len(multipart_rows)):
+                            parts = multipart_rows[row_idx].split("\t")
+                            if len(parts) == 5 and parts[0] == "file" and parts[1] == self._ph.expand(part.name):
+                                parts[2] = new_path
+                                multipart_rows[row_idx] = "\t".join(parts)
+                                break
+            out.append("    body_form_text=$(cat << EOT")
             out.extend(multipart_rows)
             out.append("EOT")
             out.append(")")

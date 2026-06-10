@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 
-def base_helpers(mask_keys_default: str) -> str:
+def base_helpers(mask_keys_default: str, *, include_b64decode: bool = False) -> str:
     """Return base bash helpers used by every generated script."""
-    return """MASK_KEYS_DEFAULT='""" + mask_keys_default + """'
+    b64decode_impl = r"""
+_hf_b64decode() {
+    if base64 -d /dev/null 2>/dev/null; then
+        base64 -d
+    else
+        base64 -D
+    fi
+}
+""" if include_b64decode else ""
+    return b64decode_impl + """MASK_KEYS_DEFAULT='""" + mask_keys_default + """'
 MASK_KEYS="$MASK_KEYS_DEFAULT${HTTPFLOW_MASK_EXTRA:+|${HTTPFLOW_MASK_EXTRA}}"
 MASK_SED_EXPR="s/(\\\"?($MASK_KEYS)\\\"?)([[:space:]]*[:=][[:space:]]*)\\\"?[^& ,}\\\"]+( [^& ,}\\\"]+)?\\\"?/\\1\\3***/g"
 

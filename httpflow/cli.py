@@ -60,6 +60,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="default variable embedded in the generated script (repeatable)")
     p_gen.add_argument("--shebang", action="store_true",
                        help="prepend shebang and chmod +x the output file")
+    p_gen.add_argument("--embed-files", action="store_true",
+                       help="embed referenced file contents as base64 into the generated script (bash only)")
     return parser
 
 
@@ -112,6 +114,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     cfg,
                     shebang=args.shebang,
                     default_vars=default_vars,
+                    embed_files=args.embed_files,
+                    toml_path=args.file,
                 )
         except Exception as e:
             print(f"error generating script: {e}", file=sys.stderr)
