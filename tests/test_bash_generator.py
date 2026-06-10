@@ -20,6 +20,82 @@ class _CaptureHandler(BaseHTTPRequestHandler):
     seen_content_type = ""
     me_count = 0
     poll_count = 0
+    multipart_fields: dict[str, str] = {}
+    multipart_files: list[dict[str, object]] = []
+
+    def _parse_multipart(self, body: bytes, content_type: str) -> None:
+        """Parse multipart/form-data body and store fields/files."""
+        ct = content_type or ""
+        boundary = ""
+        if ";" in ct:
+            parts = ct.split(";")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("boundary="):
+                    boundary = part.split("=", 1)[1].strip().strip('"')
+                    break
+        if not boundary:
+            return
+
+        boundary_delim = f"--{boundary}".encode()
+        # Split by the CRLF-delimited boundary
+        raw_parts = body.split(boundary_delim)
+
+        for raw_part in raw_parts:
+            if not raw_part or raw_part in (b"\r\n", b""):
+                continue
+            # Remove trailing CRLF and trailing -- (final boundary marker)
+            raw_part = raw_part.rstrip(b"\r\n")
+            if raw_part.endswith(b"--"):
+                raw_part = raw_part[:-2].rstrip(b"\r\n")
+            if not raw_part:
+                continue
+
+            # Split header block from body by CRLF CRLF
+            header_and_body = raw_part.split(b"\r\n\r\n", 1)
+            if len(header_and_body) != 2:
+                continue
+            header_bytes, part_body = header_and_body
+
+            try:
+                header_text = header_bytes.decode("utf-8", errors="replace")
+            except Exception:
+                continue
+
+            # Parse Content-Disposition header
+            cd_line = ""
+            for h in header_text.split("\r\n"):
+                if h.strip().lower().startswith("content-disposition:"):
+                    cd_line = h.strip()
+                    break
+            if not cd_line:
+                continue
+
+            name = ""
+            filename = ""
+            # Extract name and filename from Content-Disposition: form-data; name="X"; filename="Y"
+            for param in cd_line.split(";"):
+                param = param.strip()
+                if param.lower().startswith('name='):
+                    name = param.split('=', 1)[1].strip().strip('"')
+                elif param.lower().startswith('filename='):
+                    filename = param.split('=', 1)[1].strip().strip('"')
+
+            if filename:
+                # Parse content-type for file
+                file_ct = ""
+                for h in header_text.split("\r\n"):
+                    if h.strip().lower().startswith("content-type:"):
+                        file_ct = h.strip().split(":", 1)[1].strip()
+                        break
+                type(self).multipart_files.append({
+                    "name": name,
+                    "filename": filename,
+                    "content_type": file_ct,
+                    "data": part_body,
+                })
+            else:
+                type(self).multipart_fields[name] = part_body.decode("utf-8", errors="replace")
 
     def _json(self, payload: dict[str, object], *, trace: str = "trace-1") -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -32,7 +108,13 @@ class _CaptureHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
-        type(self).seen_body = self.rfile.read(length).decode("utf-8")
+        raw_body = self.rfile.read(length)
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" in content_type:
+            self._parse_multipart(raw_body, content_type)
+            type(self).seen_body = "<multipart form data>"
+        else:
+            type(self).seen_body = raw_body.decode("utf-8", errors="replace")
         if self.path == "/auth":
             self._json({"access_token": "bash-token", "data": {"id": 7}})
         elif self.path == "/edge":
@@ -1340,18 +1422,90 @@ class TestBashGenerator(unittest.TestCase):
             self.assertNotEqual(res.returncode, 0)
             self.assertIn("multipart file not found", res.stderr)
 
-    def test_body_file_with_template_path(self):
-        """body_file path with ${var.*} template expands at runtime."""
-        toml = textwrap.dedent("""
-            [[requests]]
-            name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
-            body_file = "${var.data_path}"
-        """)
-        script = self._generate_and_check(toml)
-        self.assertIn("body_kind='file'", script)
-        self.assertIn("${VAR_DATA_PATH}", script)
+    def test_body_multipart_template_expansion(self):
+        """body_multipart fields with ${var.*}, ${random.*}, ${time.*} expand at runtime."""
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.multipart_fields = {}
+        _CaptureHandler.multipart_files = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "mform"
+                method = "POST"
+                url = "{base}/upload"
+                body_multipart = [
+                    "name = ${{var.username}}",
+                    "email = test@email.com",
+                    "req_id = ${{random.UUID_HEX}}",
+                    "ts = ${{time.DATE_ISO}}",
+                ]
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+
+            res = subprocess.run(
+                ["bash", str(script_path)],
+                env={**dict(__import__("os").environ), "VAR_USERNAME": "alice"},
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+
+            # Verify fields were expanded, not sent as literals
+            self.assertEqual(_CaptureHandler.multipart_fields["name"], "alice")
+            self.assertEqual(_CaptureHandler.multipart_fields["email"], "test@email.com")
+            # UUID_HEX should have expanded to a 32-char hex string
+            self.assertRegex(_CaptureHandler.multipart_fields["req_id"], r"^[0-9a-f]{32}$")
+            # time.DATE_ISO should expand to ISO-ish timestamp
+            self.assertRegex(_CaptureHandler.multipart_fields["ts"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+            # Verify the script does NOT contain the original placeholders (they were expanded at gen time)
+            self.assertNotIn("${var.username}", script)  # TOML placeholder gone
+            self.assertIn("${VAR_USERNAME}", script)  # Becomes $VAR_USERNAME for shell expansion
+
+    def test_body_multipart_with_file_field(self):
+        """body_multipart with a file field and text fields containing placeholders."""
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.multipart_fields = {}
+        _CaptureHandler.multipart_files = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            file_path = tmp_path / "upload.dat"
+            file_path.write_bytes(b"file-content")
+
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "mform"
+                method = "POST"
+                url = "{base}/upload"
+                body_multipart = [
+                    "username = ${{var.username}}",
+                    "avatar = @{file_path}; filename=avatar.png; type=image/png",
+                ]
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+
+            res = subprocess.run(
+                ["bash", str(script_path)],
+                env={**dict(__import__("os").environ), "VAR_USERNAME": "bob"},
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+
+            self.assertEqual(_CaptureHandler.multipart_fields["username"], "bob")
+            self.assertEqual(len(_CaptureHandler.multipart_files), 1)
+            self.assertEqual(_CaptureHandler.multipart_files[0]["filename"], "avatar.png")
+            self.assertEqual(_CaptureHandler.multipart_files[0]["data"], b"file-content")
 
     def test_body_file_capture_request_body_is_error(self):
         """capture request.body with body_file raises ValueError."""
