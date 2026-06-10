@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from httpflow.model import FileBody, FormBody, HttpStep, MultipartBody, SleepStep, TextBody
+from httpflow.model import FileBody, FormBody, HttpStep, MultipartBody, MultipartField, MultipartFile, SleepStep, TextBody
 
 from .capture import capture_rows
 from .conditions import split_until_condition
 from .placeholders import PlaceholderRenderer
 from .shell import dq_literal, sq
+
+_BODY_KIND_NONE = "none"
+_BODY_KIND_TEXT = "text"
+_BODY_KIND_FORM = "form"
+_BODY_KIND_FILE = "file"
+_BODY_KIND_MULTIPART = "multipart"
 
 
 class StepEmitter:
@@ -32,6 +38,48 @@ class StepEmitter:
             rows.append(f"{self._ph.expand(k)}\t{self._ph.expand(v)}")
         return rows
 
+    def _validate_no_tabs_newlines(self, value: str, context: str) -> None:
+        """Raise ValueError when *value* contains tab or newline."""
+        if "\t" in value or "\n" in value:
+            raise ValueError(f"{context} must not contain tabs or newlines: {value!r}")
+
+    def _multipart_rows(self, parts: list) -> list[str]:
+        """Emit multipart rows as tab-separated internal strings."""
+        rows: list[str] = []
+        for p in parts:
+            if isinstance(p, MultipartField):
+                kind = "field"
+                name = self._ph.expand(p.name)
+                value = self._ph.expand(p.value)
+                path = ""
+                filename = ""
+                content_type = ""
+            else:
+                kind = "file"
+                name = self._ph.expand(p.name)
+                value_or_path = self._ph.expand(p.path)
+                filename = self._ph.expand(p.filename) if p.filename else ""
+                content_type = p.content_type
+                path = value_or_path
+                value = ""
+
+            # Validate no tab/newline in any field
+            if kind == "field":
+                self._validate_no_tabs_newlines(name, f"multipart field name {p.name!r}")
+                self._validate_no_tabs_newlines(value, f"multipart field value {p.value!r}")
+            else:
+                self._validate_no_tabs_newlines(name, f"multipart file name {p.name!r}")
+                self._validate_no_tabs_newlines(path, f"multipart file path {p.path!r}")
+                self._validate_no_tabs_newlines(filename, f"multipart file filename {filename!r}")
+                self._validate_no_tabs_newlines(content_type, f"multipart file type {content_type!r}")
+
+            # kind<TAB>name<TAB>value_or_path<TAB>filename<TAB>content_type
+            if kind == "field":
+                rows.append("\t".join([kind, name, value, "", ""]))
+            else:
+                rows.append("\t".join([kind, name, path, filename, content_type]))
+        return rows
+
     def emit(self, plan: object) -> str:
         """Emit a bash function block for one planned step."""
         step = plan.step
@@ -51,16 +99,16 @@ class StepEmitter:
             f'    local url={self._ph.expr(step.url)}',
             "    local body=",
             "    local body_form_text=",
+            "    local body_kind=",
             "    local headers_text=",
             "    local captures_text=",
         ]
 
-        if isinstance(step.body, (FileBody, MultipartBody)):
-            raise ValueError("bash generator does not support body_file/body_multipart yet")
-
         has_body = False
+        body_kind = _BODY_KIND_NONE
         if isinstance(step.body, TextBody):
             has_body = True
+            body_kind = _BODY_KIND_TEXT
             out.append("    body=$(cat << EOT")
             out.append(self._ph.expand(step.body.text))
             out.append("EOT")
@@ -68,14 +116,36 @@ class StepEmitter:
             out.append('    body="${body}$(printf "\\n")"')
         elif isinstance(step.body, FormBody):
             has_body = True
+            body_kind = _BODY_KIND_FORM
             out.append("    body_form_text=$(cat << EOT")
             out.extend(self._body_form_rows(step.body.fields))
             out.append("EOT")
             out.append(")")
+        elif isinstance(step.body, FileBody):
+            has_body = True
+            body_kind = _BODY_KIND_FILE
+            body_file_path = self._ph.expand(step.body.path)
+            out.append(f"    body={sq(body_file_path)}")
+        elif isinstance(step.body, MultipartBody):
+            has_body = True
+            body_kind = _BODY_KIND_MULTIPART
+            multipart_rows = self._multipart_rows(step.body.parts)
+            out.append("    body_form_text=$(cat <<'EOT'")
+            out.extend(multipart_rows)
+            out.append("EOT")
+            out.append(")")
+        out.append(f"    body_kind={sq(body_kind)}")
 
         header_lines = [self._ph.expand(f"{k}: {v}") for k, v in step.headers.items()]
         if isinstance(step.body, FormBody) and not self._has_header(step.headers, "Content-Type"):
             header_lines.append("Content-Type: application/x-www-form-urlencoded")
+        if isinstance(step.body, FileBody) and not self._has_header(step.headers, "Content-Type"):
+            header_lines.append("Content-Type: application/octet-stream")
+        if isinstance(step.body, MultipartBody) and self._has_header(step.headers, "Content-Type"):
+            raise ValueError(
+                f"body_multipart step {step.name!r}: Content-Type is set automatically by curl; "
+                f"remove the user-specified Content-Type header"
+            )
         if header_lines:
             out.append("    headers_text=$(cat << EOT")
             out.extend(header_lines)
@@ -91,7 +161,7 @@ class StepEmitter:
 
         out.append(
             f"    http_step {sq(step.name)} {sq(step.method.upper())} \"$url\" "
-            f"{1 if has_body else 0} \"$body\" \"$body_form_text\" \"$headers_text\" \"$captures_text\" "
+            f"{1 if has_body else 0} \"$body_kind\" \"$body\" \"$body_form_text\" \"$headers_text\" \"$captures_text\" "
             f"{sq(step.description or '')}"
         )
         out.append("}")

@@ -16,6 +16,8 @@ from httpflow import bash_generator
 class _CaptureHandler(BaseHTTPRequestHandler):
     seen_auth = ""
     seen_body = ""
+    seen_body_bytes = b""
+    seen_content_type = ""
     me_count = 0
     poll_count = 0
 
@@ -37,6 +39,13 @@ class _CaptureHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "empty": "nil", "items": [{"access-token": "edge-token"}]})
         else:
             self._json({"ok": False})
+
+    def do_PUT(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        type(self).seen_body_bytes = self.rfile.read(length)
+        type(self).seen_content_type = self.headers.get("Content-Type", "")
+        type(self).seen_body = type(self).seen_body_bytes.decode("utf-8", errors="replace")
+        self._json({"ok": True, "size": len(type(self).seen_body_bytes)})
 
     def do_GET(self):
         if self.path == "/me":
@@ -220,7 +229,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("body_form_text=$(cat << EOT", script)
         self.assertIn("user\talice", script)
         self.assertIn("pass\tsecret", script)
-        self.assertIn('cmd+=(--data-urlencode "$form_key=$form_value")', script)
+        self.assertIn('cmd+=(--data-urlencode "$multipart_name=$multipart_value")', script)
 
     def test_form_body_placeholders_expand_before_urlencode(self):
         toml = textwrap.dedent("""
@@ -717,7 +726,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("mask_lines()", script)
         self.assertIn('$(mask "$url")', script)
         self.assertNotIn('printf "> %s\\n" "$header"', script)
-        self.assertIn('printf "%s" "$body" | jq_or_cat | prefix_lines "> "', script)
+        self.assertIn('printf "%s" "$body_log" | jq_or_cat | prefix_lines "> "', script)
         self.assertIn("sed -E", script)
         self.assertNotIn("perl -pe", script)
         self.assertIn("MASK_KEYS_DEFAULT='[aA]uthorization|[cC]ookie", script)
@@ -1123,3 +1132,289 @@ class TestBashGenerator(unittest.TestCase):
             self.assertEqual(res.returncode, 0, msg=res.stderr)
             self.assertIn("prod}", res.stdout)
             self.assertIn("alice{foo}", res.stdout)
+
+    def test_body_file_generation_syntax(self):
+        """body_file generated script passes bash -n."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "upload"
+            method = "PUT"
+            url = "http://example.com/upload"
+            body_file = "/tmp/data.bin"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("body_kind='file'", script)
+        self.assertIn("--data-binary", script)
+        self.assertIn("body_file:", script)
+
+    def test_body_file_sends_exact_bytes(self):
+        """body_file sends exact file content via --data-binary."""
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.seen_body_bytes = b""
+        _CaptureHandler.seen_content_type = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "data.bin"
+            data_path.write_bytes(b"\x00\x01\x02\xffbinary-data")
+
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "upload"
+                method = "PUT"
+                url = "{base}/upload"
+                body_file = "{data_path}"
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            syntax = subprocess.run(
+                ["bash", "-n", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(syntax.returncode, 0, msg=syntax.stderr)
+
+            res = subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+            self.assertEqual(_CaptureHandler.seen_body_bytes, b"\x00\x01\x02\xffbinary-data")
+            self.assertIn("application/octet-stream", _CaptureHandler.seen_content_type)
+
+    def test_body_file_content_type_auto_added(self):
+        """Content-Type: application/octet-stream is added automatically for body_file."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "upload"
+            method = "PUT"
+            url = "http://example.com/upload"
+            body_file = "/tmp/data.bin"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("Content-Type: application/octet-stream", script)
+
+    def test_body_file_respects_user_content_type(self):
+        """User-specified Content-Type for body_file is not overridden."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "upload"
+            method = "PUT"
+            url = "http://example.com/upload"
+            headers = ["Content-Type: image/png"]
+            body_file = "/tmp/data.bin"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertEqual(script.count("Content-Type:"), 1)
+        self.assertIn("Content-Type: image/png", script)
+        self.assertNotIn("application/octet-stream", script)
+
+    def test_body_file_missing_fails_at_runtime(self):
+        """body_file referencing a non-existent path fails with clear error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml = textwrap.dedent("""
+                [[requests]]
+                name = "upload"
+                method = "PUT"
+                url = "http://example.com/upload"
+                body_file = "/nonexistent/file.bin"
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            syntax = subprocess.run(
+                ["bash", "-n", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(syntax.returncode, 0, msg=syntax.stderr)
+
+            res = subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True, timeout=10,
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("body_file not found", res.stderr)
+
+    def test_body_multipart_fields(self):
+        """body_multipart with regular text fields uses --form-string."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "mform"
+            method = "POST"
+            url = "http://example.com/upload"
+            body_multipart = [
+                "name = alice",
+                "email = alice@example.com",
+            ]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("body_kind='multipart'", script)
+        self.assertIn("--form-string", script)
+        self.assertIn("name\talice", script)
+        self.assertIn("email\talice@example.com", script)
+
+    def test_body_multipart_literal_at_sign(self):
+        """body_multipart with @@value sends literal @value via --form-string."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "mform"
+            method = "POST"
+            url = "http://example.com/upload"
+            body_multipart = [
+                "greeting = @@hello",
+            ]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("--form-string", script)
+        self.assertIn("greeting\t@hello", script)
+
+    def test_body_multipart_file_field(self):
+        """body_multipart file field uses curl -F with @path."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "mform"
+            method = "POST"
+            url = "http://example.com/upload"
+            body_multipart = [
+                "file = @/tmp/data.bin; filename=upload.dat; type=image/png",
+            ]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("body_kind='multipart'", script)
+        self.assertIn("-F ", script)
+        self.assertIn("upload.dat", script)
+        self.assertIn("image/png", script)
+
+    def test_body_multipart_content_type_is_error(self):
+        """body_multipart with user-specified Content-Type raises ValueError."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "mform"
+            method = "POST"
+            url = "http://example.com/upload"
+            headers = ["Content-Type: multipart/form-data"]
+            body_multipart = [
+                "name = alice",
+            ]
+        """)
+        with self.assertRaises(ValueError) as ctx:
+            self._generate_and_check(toml)
+        self.assertIn("Content-Type is set automatically by curl", str(ctx.exception))
+
+    def test_body_multipart_missing_file_fails_runtime(self):
+        """body_multipart referencing non-existent file fails with clear error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml = textwrap.dedent("""
+                [[requests]]
+                name = "mform"
+                method = "POST"
+                url = "http://example.com/upload"
+                body_multipart = [
+                    "file = @/nonexistent/file.bin",
+                ]
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            syntax = subprocess.run(
+                ["bash", "-n", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(syntax.returncode, 0, msg=syntax.stderr)
+
+            res = subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True, timeout=10,
+            )
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("multipart file not found", res.stderr)
+
+    def test_body_file_with_template_path(self):
+        """body_file path with ${var.*} template expands at runtime."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "upload"
+            method = "PUT"
+            url = "http://example.com/upload"
+            body_file = "${var.data_path}"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("body_kind='file'", script)
+        self.assertIn("${VAR_DATA_PATH}", script)
+
+    def test_body_file_capture_request_body_is_error(self):
+        """capture request.body with body_file raises ValueError."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "upload"
+            method = "PUT"
+            url = "http://example.com/upload"
+            body_file = "/tmp/data.bin"
+            capture = ["sent = request.body"]
+        """)
+        with self.assertRaises(ValueError) as ctx:
+            self._generate_and_check(toml)
+        self.assertIn("cannot capture request.body with body_file", str(ctx.exception))
+
+    def test_body_multipart_capture_request_body_is_error(self):
+        """capture request.body with body_multipart raises ValueError."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "mform"
+            method = "POST"
+            url = "http://example.com/upload"
+            body_multipart = [
+                "name = alice",
+            ]
+            capture = ["sent = request.body"]
+        """)
+        with self.assertRaises(ValueError) as ctx:
+            self._generate_and_check(toml)
+        self.assertIn("cannot capture request.body", str(ctx.exception))
+
+    def test_body_multipart_tab_in_name_raises(self):
+        """multipart field name with tab raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["na\\tme = value"]\n'
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml_content, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            with self.assertRaises(ValueError) as ctx:
+                bash_generator.generate(wf)
+            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
+
+    def test_body_multipart_tab_in_value_raises(self):
+        """multipart field value with tab raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["name = val\\tue"]\n'
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml_content, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            with self.assertRaises(ValueError) as ctx:
+                bash_generator.generate(wf)
+            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
+
+    def test_body_multipart_tab_in_file_path_raises(self):
+        """multipart file path with tab raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["file = @/tmp/da\\tta.bin"]\n'
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml_content, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            with self.assertRaises(ValueError) as ctx:
+                bash_generator.generate(wf)
+            self.assertIn("must not contain tabs or newlines", str(ctx.exception))

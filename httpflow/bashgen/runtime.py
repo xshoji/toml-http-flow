@@ -242,14 +242,17 @@ http_step() {
     local method=$2
     local url=$3
     local has_body=$4
-    local body=$5
-    local body_form_text=$6
-    local headers_text=$7
-    local captures_text=$8
-    local description=$9
-    local trace_file line header form_key form_value
+    local body_kind=$5
+    local body=$6
+    local body_form_text=$7
+    local headers_text=$8
+    local captures_text=$9
+    local description=${10}
+    local trace_file line header multipart_kind multipart_name multipart_value
+    local multipart_filename multipart_type file_size
     local -a cmd
     local boundary_inserted=0
+    local body_log=""
 
     print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
@@ -271,22 +274,68 @@ http_step() {
         cmd+=(-H "$header")
     done <<< "$headers_text"
 
-    if [ -n "$body_form_text" ]; then
-        notice="Note: Values are shown before URL encoding.
+    case "$body_kind" in
+        form)
+            body_log="Note: Values are shown before URL encoding.
 "
-        body=
-        while IFS=$'\t' read -r form_key form_value || [ -n "$form_key$form_value" ]; do
-            [ -z "$form_key" ] && continue
-            cmd+=(--data-urlencode "$form_key=$form_value")
-            if [ -n "$body" ]; then
-                body+="&"
+            while IFS=$'\t' read -r multipart_name multipart_value || [ -n "$multipart_name$multipart_value" ]; do
+                [ -z "$multipart_name" ] && continue
+                cmd+=(--data-urlencode "$multipart_name=$multipart_value")
+                if [ -n "$body_log" ]; then
+                    body_log="${body_log}&"
+                fi
+                body_log+="$multipart_name=$multipart_value"
+            done <<< "$body_form_text"
+            ;;
+
+        file)
+            if [ ! -f "$body" ]; then
+                echo "error: body_file not found: $body" >&2
+                return 1
             fi
-            body+="$form_key=$form_value"
-        done <<< "$body_form_text"
-        body="${notice}${body}"
-    elif [ "$has_body" = "1" ]; then
-        cmd+=(-d "$body")
-    fi
+            cmd+=(--data-binary "@$body")
+            file_size=$(wc -c < "$body")
+            body_log="Note: binary body from file: $body (${file_size} bytes)"
+            echo "# body_file: $body (${file_size} bytes)"
+            ;;
+
+        multipart)
+            while IFS=$'\t' read -r multipart_kind multipart_name multipart_value multipart_filename multipart_type || [ -n "$multipart_kind" ]; do
+                [ -z "$multipart_kind" ] && continue
+                case "$multipart_kind" in
+                    field)
+                        cmd+=(--form-string "$multipart_name=$multipart_value")
+                        echo "# multipart field: $multipart_name"
+                        ;;
+                    file)
+                        if [ ! -f "$multipart_value" ]; then
+                            echo "error: multipart file not found: $multipart_value" >&2
+                            return 1
+                        fi
+                        if [ -n "$multipart_filename" ] && [ -n "$multipart_type" ]; then
+                            cmd+=(-F "$multipart_name=@$multipart_value;filename=$multipart_filename;type=$multipart_type")
+                        elif [ -n "$multipart_filename" ]; then
+                            cmd+=(-F "$multipart_name=@$multipart_value;filename=$multipart_filename")
+                        elif [ -n "$multipart_type" ]; then
+                            cmd+=(-F "$multipart_name=@$multipart_value;type=$multipart_type")
+                        else
+                            cmd+=(-F "$multipart_name=@$multipart_value")
+                        fi
+                        file_size=$(wc -c < "$multipart_value")
+                        echo "# multipart file: $multipart_name = $multipart_value (${file_size} bytes)"
+                        ;;
+                esac
+            done <<< "$body_form_text"
+            ;;
+
+        text)
+            cmd+=(-d "$body")
+            body_log="$body"
+            ;;
+
+        *)
+            ;;
+    esac
     cmd+=("$url")
 
     # Only curl/pipeline failures fail the step here; HTTP 4xx/5xx responses
@@ -308,7 +357,7 @@ http_step() {
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
                         # Request body echoed by this script; curl -v omits it.
-                        printf "%s" "$body" | jq_or_cat | prefix_lines "> "
+                        printf "%s" "$body_log" | jq_or_cat | prefix_lines "> "
                     fi
                     ;;
                 *)
@@ -322,7 +371,7 @@ http_step() {
     fi
 
     if [ -n "$captures_text" ]; then
-        run_captures "$captures_text" "$url" "$body" "$headers_text" "$trace_file" || {
+        run_captures "$captures_text" "$url" "$body_log" "$headers_text" "$trace_file" || {
             return 1
         }
     fi

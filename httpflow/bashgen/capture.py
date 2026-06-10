@@ -60,10 +60,19 @@ def capture_kind_and_arg(source: str) -> tuple[str, str]:
 
 def capture_rows(step: HttpStep) -> list[str]:
     """Emit capture metadata rows for an HTTP step."""
+    from httpflow.model import FileBody, MultipartBody
+
     rows: list[str] = []
     for var, source in step.capture.items():
         if any(ch in var or ch in source for ch in "\t\n"):
             raise ValueError("capture names and sources must not contain tabs or newlines")
+
+        if isinstance(step.body, (FileBody, MultipartBody)) and source == "request.body":
+            raise ValueError(
+                f"step {step.name!r}: cannot capture request.body with "
+                f"body_file or body_multipart in bash generation"
+            )
+
         kind, arg = capture_kind_and_arg(source)
         if "\t" in arg or "\n" in arg:
             raise ValueError("capture helper arguments must not contain tabs or newlines")
