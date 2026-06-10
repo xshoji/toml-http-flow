@@ -52,7 +52,7 @@ class StepEmitter:
         if "\t" in value or "\n" in value or '"' in value:
             raise ValueError(f"{context} must not contain tabs, newlines, or double quotes: {value!r}")
 
-    def _multipart_rows(self, parts: list) -> list[str]:
+    def _multipart_rows(self, parts: list[MultipartField | MultipartFile]) -> list[str]:
         """Emit multipart rows as tab-separated internal strings."""
         rows: list[str] = []
         for p in parts:
@@ -68,7 +68,7 @@ class StepEmitter:
                 name = self._ph.expand(p.name)
                 value_or_path = self._ph.expand(p.path)
                 filename = self._ph.expand(p.filename) if p.filename else ""
-                content_type = p.content_type
+                content_type = self._ph.expand(p.content_type)
                 path = value_or_path
                 value = ""
 

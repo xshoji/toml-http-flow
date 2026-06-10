@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from httpflow.model import HttpStep
+from httpflow.model import FileBody, HttpStep, MultipartBody
 
 from .names import env_name
 
@@ -60,8 +60,6 @@ def capture_kind_and_arg(source: str) -> tuple[str, str]:
 
 def capture_rows(step: HttpStep) -> list[str]:
     """Emit capture metadata rows for an HTTP step."""
-    from httpflow.model import FileBody, MultipartBody
-
     rows: list[str] = []
     for var, source in step.capture.items():
         if any(ch in var or ch in source for ch in "\t\n"):
