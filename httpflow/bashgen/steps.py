@@ -248,12 +248,12 @@ class StepEmitter:
             f"{function_name}() {{",
             f'    local seconds={self._ph.expr(step.seconds)}',
             '    print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"',
-            f'    printf "==> %s [%s] SLEEP %s\\n" "$(now)" {sq(step.name)} "$seconds"',
+            f'    printf "==> %s [%s] SLEEP %s\\n" "$(time_date_iso)" {sq(step.name)} "$seconds"',
         ]
         if step.description:
             for dl in step.description.splitlines():
                 out.append(f'    printf "# %s\\n" {sq(dl)}')
         out.append('    sleep "$seconds"')
-        out.append(f'    printf "<== %s [%s] done\\n" "$(now)" {sq(step.name)}')
+        out.append(f'    printf "<== %s [%s] done\\n" "$(time_date_iso)" {sq(step.name)}')
         out.append("}")
         return "\n".join(out)

@@ -44,14 +44,6 @@ print_blank_lines() {
     done
 }
 
-now() {
-    if date '+%Y-%m-%d %H:%M:%S.%3N' | grep -Eq '[0-9]{3}$'; then
-        date '+%Y-%m-%d %H:%M:%S.%3N'
-    else
-        date '+%Y-%m-%d %H:%M:%S.000'
-    fi
-}
-
 uuid() {
     if command -v uuidgen &>/dev/null; then
         uuidgen | awk '{print tolower($1)}'
@@ -266,7 +258,7 @@ http_step() {
 
     print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
-    echo "==> $(now) [$step_name] $method $(mask "$url")"
+    echo "==> $(time_date_iso) [$step_name] $method $(mask "$url")"
     if [ -n "$description" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             echo "# $line"
@@ -368,7 +360,7 @@ http_step() {
                 "< HTTP/"*)
                     if [ "$boundary_inserted" = "0" ]; then
                         boundary_inserted=1
-                        printf "<== %s [%s]\n" "$(now)" "$step_name"
+                        printf "<== %s [%s]\n" "$(time_date_iso)" "$step_name"
                     fi
                     printf "%s\n" "$line"
                     ;;

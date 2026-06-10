@@ -253,7 +253,7 @@ class TestBashGenerator(unittest.TestCase):
             res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
 
         self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
-        ts = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}"
+        ts = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+([+-]\d{2}:\d{2})?"
         self.assertRegex(res.stdout, rf"==> {ts} \[ping\] GET {base}/echo")
         self.assertRegex(res.stdout, rf"<== {ts} \[ping\]")
 
@@ -294,7 +294,7 @@ class TestBashGenerator(unittest.TestCase):
         lines = res.stdout.splitlines()
         boundary_idx = lines.index("> ")
         self.assertEqual(lines[boundary_idx + 1], '> {"name":"test"}')
-        self.assertRegex(lines[boundary_idx + 2], r"^<== \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[create\]")
+        self.assertRegex(lines[boundary_idx + 2], r"^<== \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+([+-]\d{2}:\d{2})? \[create\]")
         self.assertTrue(lines[boundary_idx + 3].startswith("< HTTP/"))
 
     def test_form_body(self):
@@ -392,9 +392,9 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("step_wait()", script)
         self.assertIn('seconds="0.05"', script)
         self.assertIn('print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"', script)
-        self.assertIn('SLEEP %s\\n" "$(now)" \'wait\' "$seconds"', script)
+        self.assertIn('SLEEP %s\\n" "$(time_date_iso)" \'wait\' "$seconds"', script)
         self.assertIn('sleep "$seconds"', script)
-        self.assertIn('done\\n" "$(now)" \'wait\'', script)
+        self.assertIn('done\\n" "$(time_date_iso)" \'wait\'', script)
 
     def test_sleep_step_with_shell_variable(self):
         toml = textwrap.dedent("""
@@ -405,7 +405,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn('seconds="${WAIT_SECONDS}"', script)
-        self.assertIn('SLEEP %s\\n" "$(now)" \'wait\' "$seconds"', script)
+        self.assertIn('SLEEP %s\\n" "$(time_date_iso)" \'wait\' "$seconds"', script)
         self.assertIn('sleep "$seconds"', script)
 
     def test_shebang(self):
