@@ -110,6 +110,24 @@ body_form = [
     "nickname = new_name",
     "email    = test@example.com",
 ]
+
+
+[[requests]]
+name    = "uploadAvatar"
+method  = "POST"
+url     = "https://api.example.com/avatar"
+body_file = "./avatar.png"
+
+
+[[requests]]
+name    = "submitForm"
+method  = "POST"
+url     = "https://api.example.com/form"
+body_multipart = [
+    "name    = Taro",
+    "title   = Hello",
+    "file    = @./photo.jpg;filename=photo.jpg;type=image/jpeg",
+]
 ```
 
 ### Field list
@@ -120,10 +138,28 @@ body_form = [
 | `method`    | ✓        | string         | HTTP method (GET/POST/PUT/DELETE) or special step (`SLEEP`) |
 | `url`       | ✓        | string         | Request URL, or the parameter for a special step (e.g. seconds for SLEEP) |
 | `headers`   | -        | array[string]  | `"Key: Value"` form |
-| `body`      | -        | string         | Raw text body (mutually exclusive with `body_form`) |
-| `body_form` | -        | array[string]  | `"key = value"` form; `application/x-www-form-urlencoded` is auto-added |
-| `capture`   | -        | array[string]  | `"var_name = source"` form (see "Capture sources" below) |
-| `until`     | -        | array[string]  | Polling settings (see below). Repeat the request until a condition is met |
+| `body`         | -        | string          | Raw text body (mutually exclusive with other `body_*` fields) |
+| `body_form`    | -        | array[string]   | `"key = value"` form; `application/x-www-form-urlencoded` is auto-added |
+| `body_file`    | -        | string          | Path to a file whose raw bytes are sent as the request body; template variables are expanded; `application/octet-stream` is auto-added when no `Content-Type` header is set |
+| `body_multipart`| -       | array[string]   | Multipart entries for `multipart/form-data` (see below) |
+| `capture`      | -        | array[string]   | `"var_name = source"` form (see "Capture sources" below) |
+| `until`        | -        | array[string]   | Polling settings (see below). Repeat the request until a condition is met |
+
+### `body_multipart` syntax
+
+Each entry in `body_multipart` defines a part in order. The value determines the part type:
+
+| Value form                     | Type    | Description                                    |
+|--------------------------------|---------|------------------------------------------------|
+| `"name = value"`               | field   | Regular text field (sent via `--form-string`)  |
+| `"name = @@value"`             | field   | Literal text field starting with `@` (`@@` → `@`) |
+| `"name = @path"`               | file    | File upload from `path` (sent via `-F`)        |
+| `"name = @path;filename=F"`    | file    | File upload with custom `filename`             |
+| `"name = @path;type=MIME"`     | file    | File upload with custom `Content-Type`         |
+| `"name = @path;filename=F;type=MIME"` | file | File upload with both filename and MIME type   |
+
+- `Content-Type: multipart/form-data; boundary=...` is generated automatically; setting an explicit `Content-Type` header is an error.
+- `capture = ["v = request.body"]` is **not supported** for `body_file` and `body_multipart` (the body is not representable as a simple string).
 
 ### Parse rules
 
@@ -330,6 +366,45 @@ Common editing use cases:
 The runtime helpers (`render` / `extract` / `do_request` / `run_step` / `mask_*`) are
 inlined at the top of the generated script from `runtime/*.py` (flattened via
 `generator._flatten_modules()`) and do not depend on this tool's codebase.
+
+### `generate --format bash`
+
+When invoked with `--format bash`, the generator emits a standalone bash script
+that uses `curl` + `jq` (if capture is needed) instead of Python.
+
+Dependencies:
+
+- `curl` — required (version-checked at the top of the script)
+- `jq` — required only when any step uses JSON capture (checked at the top)
+
+Environment variables for invocation:
+
+| Variable | Purpose |
+|----------|---------|
+| `HTTPFLOW_PRETTY_JSON` | Set to `1` to pretty-print JSON response bodies (equivalent to `--pretty-json`) |
+| `HTTPFLOW_NO_MASK` | Set to any non-empty value to disable secret masking (equivalent to `--no-mask`) |
+| `HTTPFLOW_MASK_EXTRA` | Pipe-separated list of extra key names to mask (`"key1\|key2"`) |
+| `HTTPFLOW_BLANK_LINE` | Number of blank lines to print before each step (equivalent to `--blank-line`) |
+
+Variables injected via `-v key=value` in the generator are embedded as `VAR_<KEY>`
+environment variables with an `if [ -z "${VAR_<KEY>:-}" ]` guard — exporting the
+same name before invocation overrides the embedded default.
+
+Template placeholders in TOML are translated to bash expansions:
+
+| `httpflow` notation | bash expansion |
+|---|---|
+| `${var.<name>}` | `${VAR_<NAME>}` |
+| `<name>` (captured var shorthand) | `${VAR_<NAME>}` |
+| `${env.<NAME>}` | `${<NAME>}` (passthrough) |
+| `${random.UUID}` | `$(uuid)` |
+| `${random.UUID_HEX}` | `$(uuid_hex)` |
+| `${time.DATE_ISO}` | `$(time_date_iso)` |
+| `${time.DATE_YMD}` | `$(time_date_ymd)` |
+| `${time.DATE_YMDHMS}` | `$(time_date_ymdhms)` |
+
+An undefined variable referenced in `${...}` or `<name>` form causes a runtime
+error (bash `-u` mode on `VAR_*` variables).
 
 ---
 
