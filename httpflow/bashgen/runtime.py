@@ -302,8 +302,13 @@ http_step() {
             ;;
 
         multipart)
-            while IFS=$'\t' read -r multipart_kind multipart_name multipart_value multipart_filename multipart_type || [ -n "$multipart_kind" ]; do
-                [ -z "$multipart_kind" ] && continue
+            while IFS= read -r line || [ -n "$line" ]; do
+                [ -z "$line" ] && continue
+                local multipart_kind=${line%%$'\t'*}; line=${line#*$'\t'}
+                local multipart_name=${line%%$'\t'*}; line=${line#*$'\t'}
+                local multipart_value=${line%%$'\t'*}; line=${line#*$'\t'}
+                local multipart_filename=${line%%$'\t'*}; line=${line#*$'\t'}
+                local multipart_type=$line
                 case "$multipart_kind" in
                     field)
                         cmd+=(--form-string "$multipart_name=$multipart_value")

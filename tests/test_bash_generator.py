@@ -1267,6 +1267,46 @@ class TestBashGenerator(unittest.TestCase):
             self.assertEqual(_CaptureHandler.seen_body_bytes, b"\x00\x01\x02\xffbinary-data")
             self.assertIn("application/octet-stream", _CaptureHandler.seen_content_type)
 
+    def test_body_file_with_template_path_runtime(self):
+        """body_file with ${var.data_path} resolves at runtime via env var."""
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.seen_body_bytes = b""
+        _CaptureHandler.seen_content_type = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "data.bin"
+            data_path.write_bytes(b"\x00\x01\x02\xffbinary-data")
+
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "upload"
+                method = "PUT"
+                url = "{base}/upload"
+                body_file = "${{var.data_path}}"
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            syntax = subprocess.run(
+                ["bash", "-n", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(syntax.returncode, 0, msg=syntax.stderr)
+
+            res = subprocess.run(
+                ["bash", str(script_path)],
+                env={**dict(__import__("os").environ), "VAR_DATA_PATH": str(data_path)},
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+            self.assertEqual(_CaptureHandler.seen_body_bytes, b"\x00\x01\x02\xffbinary-data")
+            self.assertIn("application/octet-stream", _CaptureHandler.seen_content_type)
+
     def test_body_file_content_type_auto_added(self):
         """Content-Type: application/octet-stream is added automatically for body_file."""
         toml = textwrap.dedent("""
@@ -1507,6 +1547,43 @@ class TestBashGenerator(unittest.TestCase):
             self.assertEqual(_CaptureHandler.multipart_files[0]["filename"], "avatar.png")
             self.assertEqual(_CaptureHandler.multipart_files[0]["data"], b"file-content")
 
+    def test_body_multipart_file_no_filename_uses_basename(self):
+        """body_multipart file field without explicit filename uses basename of path."""
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.multipart_fields = {}
+        _CaptureHandler.multipart_files = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            file_path = tmp_path / "upload.dat"
+            file_path.write_bytes(b"file-content")
+
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "mform"
+                method = "POST"
+                url = "{base}/upload"
+                body_multipart = [
+                    "doc = @{file_path}",
+                ]
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+
+            res = subprocess.run(
+                ["bash", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+
+            self.assertEqual(len(_CaptureHandler.multipart_files), 1)
+            self.assertEqual(_CaptureHandler.multipart_files[0]["filename"], "upload.dat")
+            self.assertEqual(_CaptureHandler.multipart_files[0]["data"], b"file-content")
+
     def test_body_file_capture_request_body_is_error(self):
         """capture request.body with body_file raises ValueError."""
         toml = textwrap.dedent("""
@@ -1547,7 +1624,7 @@ class TestBashGenerator(unittest.TestCase):
             wf = cfg_mod.load(str(toml_path))
             with self.assertRaises(ValueError) as ctx:
                 bash_generator.generate(wf)
-            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
+            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
 
     def test_body_multipart_tab_in_value_raises(self):
         """multipart field value with tab raises ValueError."""
@@ -1559,7 +1636,7 @@ class TestBashGenerator(unittest.TestCase):
             wf = cfg_mod.load(str(toml_path))
             with self.assertRaises(ValueError) as ctx:
                 bash_generator.generate(wf)
-            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
+            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
 
     def test_body_multipart_tab_in_file_path_raises(self):
         """multipart file path with tab raises ValueError."""
@@ -1571,19 +1648,19 @@ class TestBashGenerator(unittest.TestCase):
             wf = cfg_mod.load(str(toml_path))
             with self.assertRaises(ValueError) as ctx:
                 bash_generator.generate(wf)
-            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
+            self.assertIn("must not contain tabs or newlines", str(ctx.exception))
 
-    def test_body_multipart_double_quote_in_field_name_raises(self):
-        """multipart field name with double quote raises ValueError."""
+    def test_body_multipart_double_quote_in_file_name_raises(self):
+        """multipart file part name with double quote raises ValueError."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["na\\"me = value"]\n'
+            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["na\\"me = @/tmp/test.bin; type=application/octet-stream"]\n'
             toml_path = tmp_path / "workflow.toml"
             toml_path.write_text(toml_content, encoding="utf-8")
             wf = cfg_mod.load(str(toml_path))
             with self.assertRaises(ValueError) as ctx:
                 bash_generator.generate(wf)
-            self.assertIn("must not contain tabs, newlines, or double quotes", str(ctx.exception))
+            self.assertIn("must not contain double quotes", str(ctx.exception))
 
     def test_embed_files_body_file(self):
         """--embed-files embeds body_file content as base64 in the script."""
@@ -1684,6 +1761,49 @@ class TestBashGenerator(unittest.TestCase):
             self.assertIn("__HF_EMBED_step_mform_mp1", script)
             # The decode temp file path should replace the original path in the multipart TSV
             self.assertNotIn(str(avatar_path), script)
+
+    def test_embed_files_multipart_multiple_files(self):
+        """--embed-files embeds multiple multipart files correctly."""
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.multipart_fields = {}
+        _CaptureHandler.multipart_files = []
+        with tempfile.TemporaryDirectory() as tmp:
+            first_path = Path(tmp) / "first.bin"
+            first_path.write_bytes(b"AAAA-first")
+            second_path = Path(tmp) / "second.bin"
+            second_path.write_bytes(b"BBBB-second")
+
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "mform"
+                method = "POST"
+                url = "{base}/upload"
+                body_multipart = [
+                    "first = @{first_path}; filename=first.bin; type=application/octet-stream",
+                    "second = @{second_path}; filename=second.bin; type=application/octet-stream",
+                ]
+            """)
+            toml_path = Path(tmp) / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf, embed_files=True, toml_path=str(toml_path))
+
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path)], capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+
+            self.assertEqual(len(_CaptureHandler.multipart_files), 2)
+            # First file
+            self.assertEqual(_CaptureHandler.multipart_files[0]["name"], "first")
+            self.assertEqual(_CaptureHandler.multipart_files[0]["filename"], "first.bin")
+            self.assertEqual(_CaptureHandler.multipart_files[0]["data"], b"AAAA-first")
+            # Second file
+            self.assertEqual(_CaptureHandler.multipart_files[1]["name"], "second")
+            self.assertEqual(_CaptureHandler.multipart_files[1]["filename"], "second.bin")
+            self.assertEqual(_CaptureHandler.multipart_files[1]["data"], b"BBBB-second")
 
     def test_embed_files_placeholder_path_skips_embed(self):
         """--embed-files skips embedding when path contains placeholders."""

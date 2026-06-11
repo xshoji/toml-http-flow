@@ -43,9 +43,15 @@ class StepEmitter:
         return rows
 
     def _validate_no_tabs_newlines(self, value: str, context: str) -> None:
-        """Raise ValueError when *value* contains tab, newline, or double quote."""
-        if "\t" in value or "\n" in value or '"' in value:
-            raise ValueError(f"{context} must not contain tabs, newlines, or double quotes: {value!r}")
+        """Raise ValueError when *value* contains tab or newline."""
+        if "\t" in value or "\n" in value:
+            raise ValueError(f"{context} must not contain tabs or newlines: {value!r}")
+
+    def _validate_curl_form_safe(self, value: str, context: str) -> None:
+        """Raise ValueError when *value* would break curl -F quoted syntax."""
+        self._validate_no_tabs_newlines(value, context)
+        if '"' in value:
+            raise ValueError(f"{context} must not contain double quotes: {value!r}")
 
     def _multipart_rows(self, parts: list[MultipartField | MultipartFile]) -> list[str]:
         """Emit multipart rows as tab-separated internal strings."""
@@ -67,15 +73,14 @@ class StepEmitter:
                 path = value_or_path
                 value = ""
 
-            # Validate no tab/newline in any field
             if kind == "field":
                 self._validate_no_tabs_newlines(name, f"multipart field name {p.name!r}")
                 self._validate_no_tabs_newlines(value, f"multipart field value {p.value!r}")
             else:
-                self._validate_no_tabs_newlines(name, f"multipart file name {p.name!r}")
-                self._validate_no_tabs_newlines(path, f"multipart file path {p.path!r}")
-                self._validate_no_tabs_newlines(filename, f"multipart file filename {filename!r}")
-                self._validate_no_tabs_newlines(content_type, f"multipart file type {content_type!r}")
+                self._validate_curl_form_safe(name, f"multipart file name {p.name!r}")
+                self._validate_curl_form_safe(path, f"multipart file path {p.path!r}")
+                self._validate_curl_form_safe(filename, f"multipart file filename {filename!r}")
+                self._validate_curl_form_safe(content_type, f"multipart file type {content_type!r}")
 
             # kind<TAB>name<TAB>value_or_path<TAB>filename<TAB>content_type
             if kind == "field":
@@ -165,17 +170,13 @@ class StepEmitter:
             for idx, part in enumerate(step.body.parts):
                 if isinstance(part, MultipartFile):
                     embed_var = self._embed_var_name_mp(function_name, idx)
-                    decode = self._emit_decode_file(embed_var)
-                    out.extend(decode)
-                    if decode:
-                        new_path = f"$decode_file"
-                        # Replace the path in the TSV row for this part
-                        for row_idx in range(len(multipart_rows)):
-                            parts = multipart_rows[row_idx].split("\t")
-                            if len(parts) == 5 and parts[0] == "file" and parts[1] == self._ph.expand(part.name):
-                                parts[2] = new_path
-                                multipart_rows[row_idx] = "\t".join(parts)
-                                break
+                    if embed_var in self._embedded:
+                        out.append(f'    local decode_file_{idx}')
+                        out.append(f'    decode_file_{idx}=$(mktemp "$HF_TMPDIR/hf_embed.XXXXXX") || return $?')
+                        out.append(f"    printf '%s' \"${{__HF_EMBED_{embed_var}}}\" | _hf_b64decode > \"$decode_file_{idx}\"")
+                        cols = multipart_rows[idx].split("\t")
+                        cols[2] = f"$decode_file_{idx}"
+                        multipart_rows[idx] = "\t".join(cols)
             out.append("    body_form_text=$(cat << EOT")
             out.extend(multipart_rows)
             out.append("EOT")
