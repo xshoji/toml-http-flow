@@ -15,13 +15,14 @@ _hf_b64decode() {
     return b64decode_impl + """MASK_KEYS_DEFAULT='""" + mask_keys_default + """'
 MASK_KEYS="$MASK_KEYS_DEFAULT${HTTPFLOW_MASK_EXTRA:+|${HTTPFLOW_MASK_EXTRA}}"
 MASK_SED_EXPR="s/(\\\"?($MASK_KEYS)\\\"?)([[:space:]]*[:=][[:space:]]*)\\\"?[^& ,}\\\"]+( [^& ,}\\\"]+)?\\\"?/\\1\\3***/g"
+MASK_HEADER_EXPR="s/^([[:space:]]*[<>]?[[:space:]]*($MASK_KEYS)[[:space:]]*:[[:space:]]*).*/\\1***/"
 
 mask() {
     if [ -n "${HTTPFLOW_NO_MASK:-}" ]; then
         echo "$1"
         return 0
     fi
-    printf '%s\\n' "$1" | sed -E "$MASK_SED_EXPR"
+    printf '%s\\n' "$1" | sed -E "$MASK_HEADER_EXPR; $MASK_SED_EXPR"
 }
 
 mask_lines() {
@@ -466,4 +467,3 @@ until_eval() {
     esac
 }
 '''
-

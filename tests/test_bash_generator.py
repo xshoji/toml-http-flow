@@ -1,4 +1,5 @@
 import shutil
+import shlex
 import subprocess
 import tempfile
 import textwrap
@@ -856,6 +857,46 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn("secret", res.stdout)
         self.assertNotIn("set-cookie-secret", res.stdout)
         self.assertNotIn("06a84af6", res.stdout)
+
+    def test_generated_mask_helper_masks_header_values_with_symbols(self):
+        """Bash mask should hide whole HTTP header values containing symbols."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+        cases = [
+            "Authorization: Bearer abc.def/ghi+jkl=mn_op-qr:st;uv,wx yz",
+            "authorization: Basic abc+def/ghi==",
+            "Cookie: sid=abc.def/ghi+jkl=mn_op-qr:st;uv,wx yz; theme=dark",
+            "Set-Cookie: session=abc.def/ghi+jkl=mn_op-qr:st;uv,wx yz; Path=/; HttpOnly",
+            "X-Api-Key: abc.def/ghi+jkl=mn_op-qr:st;uv,wx yz",
+            "password: abc.def/ghi+jkl=mn_op-qr:st;uv,wx yz",
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            quoted = " ".join(shlex.quote(case) for case in cases)
+            res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {shlex.quote(str(script_path))} >/dev/null || true; "
+                    f"printf '%s\n' {quoted} | mask_lines",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        lines = res.stdout.splitlines()
+        self.assertEqual(len(lines), len(cases))
+        for line in lines:
+            self.assertRegex(line, r"^(Authorization|authorization|Cookie|Set-Cookie|X-Api-Key|password): \*\*\*$")
+        for raw in cases:
+            self.assertNotIn(raw.split(": ", 1)[1], res.stdout)
 
     def test_mask_lines_masks_curl_like_output(self):
         """mask_lines should mask sensitive fields in piped curl-like output."""
