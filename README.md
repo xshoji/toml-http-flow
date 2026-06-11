@@ -12,6 +12,67 @@ It also ships a `generate` subcommand that emits a **single self-contained
 Python script** from a workflow TOML — useful for archiving, distribution,
 and embedding into CI/CD pipelines without this tool installed.
 
+
+## What it looks like
+
+```bash
+# 1. Define workflow
+$ cat demo.toml
+[[requests]]
+description = "GET request to httpbingo.org/get"
+name    = "httpbinorg-get"
+method  = "GET"
+url     = "https://httpbingo.org/get?uuid=${random.UUID}&cliParameter=${var.query1}"
+capture = [
+  "responseBodyUuid      = args.uuid[0]",
+  "responseHeaderServer  = response.header.server",
+]
+
+[[requests]]
+description = "POST request to httpbingo.org/post"
+name    = "httpbinorg-post"
+method  = "POST"
+url     = "https://httpbingo.org/post"
+headers = ["Content-Type: application/json"]
+body    = '''
+{
+  "uuid": "${responseBodyUuid}",
+  "server": "${responseHeaderServer}"
+}
+'''
+
+# 2. Run workflow
+$ python3 -m httpflow run -f demo.toml --var "query1=test-value"
+==> 2026-06-12 02:47:30.398 [httpbinorg-get] GET https://httpbingo.org/get?uuid=5c135e93-abc0-42c6-bbb1-7fc13c5f7529&cliParameter=test-value
+  # GET request to httpbingo.org/get
+  > GET /get?uuid=5c135e93-abc0-42c6-bbb1-7fc13c5f7529&cliParameter=test-value HTTP/1.1
+  > Host: httpbingo.org
+  > User-Agent: Python-urllib/3.12
+  > Accept-Encoding: identity
+<== 2026-06-12 02:47:30.570 [httpbinorg-get]
+  < HTTP/1.1 200 OK
+  < access-control-allow-credentials: true
+...
+  <
+  < {"args": {"cliParameter": ["test-value"], "uuid": ["5c135e93-abc0-42c6-bbb1-7fc13c5f7529"]}, ...
+  * capture responseBodyUuid = '5c135e93-abc0-42c6-bbb1-7fc13c5f7529'
+  * capture responseHeaderServer = 'Fly/02244e829 (2026-06-11)'
+==> 2026-06-12 02:47:30.571 [httpbinorg-post] POST https://httpbingo.org/post
+  # POST request to httpbingo.org/post
+  > POST /post HTTP/1.1
+  > Host: httpbingo.org
+  > Content-Type: application/json
+...
+  >
+  > {"uuid": "5c135e93-abc0-42c6-bbb1-7fc13c5f7529", "server": "Fly/02244e829 (2026-06-11)"}
+<== 2026-06-12 02:47:30.721 [httpbinorg-post]
+  < HTTP/1.1 200 OK
+  < access-control-allow-credentials: true
+  < access-control-allow-origin: *
+...
+```
+
+
 ## Features
 
 - **Request chaining** — describe a workflow as one request per block (`[[requests]]`) in TOML
