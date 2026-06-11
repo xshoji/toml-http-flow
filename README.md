@@ -16,8 +16,8 @@ and embedding into CI/CD pipelines without this tool installed.
 
 - **Request chaining** — describe a workflow as one request per block (`[[requests]]`) in TOML
 - **Value passing** — capture a value from a response and reference it in later steps via `${name}` or `${var.name}`
-- **Built-in dynamic values** — use `${random.UUID}`, `${random.UUID_HEX}`, `${time.DATE_YMD}`, `${env.USER}`, and injected `${var.<name>}` values
-- **External injection** — inject variables with `-v key=value` for environment-specific workflows
+- **Per-request dynamic values** — generate values such as `${random.UUID}`, `${random.UUID_HEX}`, and `${time.DATE_ISO}` when each step runs, without shell glue
+- **Environment and injected values** — use `${env.USER}` and `-v key=value` / `${var.<name>}` for environment-specific workflows
 - **JSON path extraction** — extract values from JSON responses using `data.user.id` / `items[0].id` style paths
 - **Wait steps** — built-in `SLEEP` step lets you insert a wait of N seconds
 - **Polling with `until`** — retry a step until a response-derived condition is satisfied
@@ -30,13 +30,14 @@ and embedding into CI/CD pipelines without this tool installed.
 
 httpflow is not trying to replace every HTTP client or API test tool. Its sweet
 spot is **repeatable HTTP workflows** that should stay compact, structured, and
-portable: describe the flow in TOML, use built-in dynamic values, include
-non-HTTP wait steps, and package the result for CI or operational handoff.
+portable: describe the flow in TOML, generate fresh values at each request,
+include non-HTTP wait steps, and package the result for CI or operational
+handoff.
 
 | Tool | Best at | Where httpflow is different |
 |------|---------|-----------------------------|
 | curl + shell | One-off requests and ad hoc scripts | Captures, variables, retries, masking, and body modes are built into the workflow file instead of hand-written shell glue |
-| Hurl | HTTP request/response assertions and retryable API tests | httpflow emphasizes TOML-structured workflows, built-in dynamic values, explicit non-HTTP wait steps, and standalone Python/Bash generation |
+| Hurl | HTTP request/response assertions and retryable API tests | httpflow emphasizes TOML-structured workflows, per-request random/time values without wrapper scripts, explicit non-HTTP wait steps, and standalone Python/Bash generation |
 | Postman / Insomnia | GUI exploration and team collections | httpflow is text-first, small, dependency-free, and easy to review in Git |
 | Newman | Running Postman collections in CI | httpflow uses compact TOML and can generate a single script for environments where the CLI is not installed |
 
