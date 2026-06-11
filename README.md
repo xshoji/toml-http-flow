@@ -1,8 +1,12 @@
 # toml-http-flow (`httpflow`)
 
-A CLI tool that runs a workflow of HTTP requests defined in TOML, in order.
-Implemented using **only the Python 3.11+ standard library** — zero external
-dependencies.
+`httpflow` is a small CLI for **HTTP workflow automation**.
+Write ordered HTTP steps in TOML, capture values from one response, reuse them
+in later requests, wait or poll when needed, and optionally export the whole
+workflow as a single standalone script.
+
+It is implemented using **only the Python 3.11+ standard library** — zero
+external dependencies.
 
 It also ships a `generate` subcommand that emits a **single self-contained
 Python script** from a workflow TOML — useful for archiving, distribution,
@@ -12,23 +16,32 @@ and embedding into CI/CD pipelines without this tool installed.
 
 - **Request chaining** — describe a workflow as one request per block (`[[requests]]`) in TOML
 - **Value passing** — capture a value from a response and reference it in later steps via `${name}` or `${var.name}`
-- **External injection** — inject variables with `-v key=value` (referenced as `${var.<name>}`)
+- **Built-in dynamic values** — use `${random.UUID}`, `${random.UUID_HEX}`, `${time.DATE_YMD}`, `${env.USER}`, and injected `${var.<name>}` values
+- **External injection** — inject variables with `-v key=value` for environment-specific workflows
 - **JSON path extraction** — extract values from JSON responses using `data.user.id` / `items[0].id` style paths
 - **Wait steps** — built-in `SLEEP` step lets you insert a wait of N seconds
+- **Polling with `until`** — retry a step until a response-derived condition is satisfied
+- **Multiple body modes** — JSON/text body, form body, raw file upload, and multipart form-data
 - **Zero dependencies** — implemented purely on the standard library (`tomllib`, `urllib`, `json`, `argparse`)
-- **Generate standalone scripts** — `generate` subcommand produces a single .py file that runs anywhere without installing this tool
+- **Generate standalone scripts** — `generate` subcommand produces a single `.py` file that runs anywhere without installing this tool
+- **Generate shell scripts** — emit a standalone Bash/curl script when that is easier to hand off
 
 ## Why httpflow?
 
-| Tool | Difficulty of chaining | CI/CD friendly | Self-contained output |
-|------|------------------------|----------------|-----------------------|
-| curl + shell | Values must be parsed by hand (`jq`, `grep`, etc.) and passed via shell variables | Possible but fragile | No |
-| Postman / Insomnia | GUI-first; collection runner requires the app | Newman exists but JSON definitions are verbose | No |
-| Newman | JSON is verbose for simple workflows | Yes | No |
-| **httpflow** | TOML-native value passing with `${...}` | Yes — single TOML file + CLI | **Yes — generate a single .py** |
+httpflow is not trying to replace every HTTP client or API test tool. Its sweet
+spot is **repeatable HTTP workflows** that should stay compact, structured, and
+portable: describe the flow in TOML, use built-in dynamic values, include
+non-HTTP wait steps, and package the result for CI or operational handoff.
+
+| Tool | Best at | Where httpflow is different |
+|------|---------|-----------------------------|
+| curl + shell | One-off requests and ad hoc scripts | Captures, variables, retries, masking, and body modes are built into the workflow file instead of hand-written shell glue |
+| Hurl | HTTP request/response assertions and retryable API tests | httpflow emphasizes TOML-structured workflows, built-in dynamic values, explicit non-HTTP wait steps, and standalone Python/Bash generation |
+| Postman / Insomnia | GUI exploration and team collections | httpflow is text-first, small, dependency-free, and easy to review in Git |
+| Newman | Running Postman collections in CI | httpflow uses compact TOML and can generate a single script for environments where the CLI is not installed |
 
 If you want a **declarative, version-control-friendly HTTP workflow** that fits
-neatly into scripts and CI, httpflow is designed for that.
+neatly into scripts, CI, and runbooks, httpflow is designed for that.
 
 ## Requirements
 
