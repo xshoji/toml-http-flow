@@ -810,6 +810,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn('$(mask "$url")', script)
         self.assertNotIn('printf "> %s\\n" "$header"', script)
         self.assertIn('printf "%s" "$body_log" | jq_or_cat | prefix_lines "> "', script)
+        self.assertIn('printf "%s" "$body_log" | prefix_lines "> "', script)
         self.assertIn("sed -E", script)
         self.assertNotIn("perl -pe", script)
         self.assertIn("MASK_KEYS_DEFAULT='[aA]uthorization|[cC]ookie", script)

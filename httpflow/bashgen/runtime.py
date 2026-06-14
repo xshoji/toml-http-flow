@@ -26,9 +26,11 @@ mask() {
 }
 
 mask_lines() {
-    while IFS= read -r LINE || [ -n "$LINE" ]; do
-        mask "$LINE"
-    done
+    if [ -n "${HTTPFLOW_NO_MASK:-}" ]; then
+        cat
+        return 0
+    fi
+    sed -E "$MASK_HEADER_EXPR; $MASK_SED_EXPR"
 }
 
 print_blank_lines() {
@@ -211,14 +213,15 @@ trace_response_body() {
 }
 
 jq_or_cat() {
-    local input trimmed
-    input=$(cat)
-    trimmed=$(printf '%s' "$input" | sed 's/^[[:space:]]*//' | head -c1)
-
     if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ]; then
-        printf '%s\n' "$input"
+        cat
         return 0
     fi
+
+    local input trimmed
+    input=$(cat)
+    trimmed=${input#"${input%%[![:space:]]*}"}
+    trimmed=${trimmed:0:1}
 
     if [ "$trimmed" != "{" ] && [ "$trimmed" != "[" ]; then
         printf '%s\n' "$input"
@@ -374,11 +377,19 @@ http_step() {
                     printf "%s\n" "$line"
                     if [ "$has_body" = "1" ]; then
                         # Request body echoed by this script; curl -v omits it.
-                        printf "%s" "$body_log" | jq_or_cat | prefix_lines "> "
+                        if [ -n "${HTTPFLOW_PRETTY_JSON:-}" ]; then
+                            printf "%s" "$body_log" | jq_or_cat | prefix_lines "> "
+                        else
+                            printf "%s" "$body_log" | prefix_lines "> "
+                        fi
                     fi
                     ;;
                 *)
-                    printf "%s\n" "$line" | jq_or_cat | prefix_lines ""
+                    if [ -n "${HTTPFLOW_PRETTY_JSON:-}" ]; then
+                        printf "%s\n" "$line" | jq_or_cat | prefix_lines ""
+                    else
+                        printf "%s\n" "$line"
+                    fi
                     ;;
             esac
         done \
