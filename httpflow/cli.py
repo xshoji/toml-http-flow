@@ -26,6 +26,21 @@ def _parse_vars(items: list[str]) -> dict[str, str]:
     return out
 
 
+def _non_negative_int(value: str) -> int:
+    """Parse an argparse integer that must be zero or greater."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected a non-negative integer, got: {value!r}"
+        ) from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(
+            f"expected a non-negative integer, got: {value!r}"
+        )
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="httpflow",
@@ -48,7 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="pretty-print JSON request/response bodies with 2-space indent")
     p_run.add_argument("--no-mask", action="store_true",
                        help="disable masking of sensitive fields in log output (masking is ON by default)")
-    p_run.add_argument("--blank-line", type=int, default=0, metavar="N",
+    p_run.add_argument("--blank-line", type=_non_negative_int, default=0, metavar="N",
                        help="separate step log output with N blank lines")
     p_gen = sub.add_parser("generate", help="emit a standalone runner script")
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
