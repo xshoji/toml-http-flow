@@ -1,5 +1,7 @@
 """Tests for httpflow.runtime.mask and its integration in workflow output."""
 
+from __future__ import annotations
+
 import io
 import json
 import os
@@ -11,41 +13,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from httpflow import config as cfg_mod
 from httpflow import runner
+from tests._helpers import EnvScope, clean_mask_env
 
 
-# ----------------------------------------------------------------- env utils
-
-
-class _EnvScope:
-    """Temporarily set env vars; restore on exit. Supports None to unset."""
-
-    def __init__(self, **kwargs):
-        self._kwargs = kwargs
-        self._saved = {}
-
-    def __enter__(self):
-        for k, v in self._kwargs.items():
-            self._saved[k] = os.environ.get(k)
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-        return self
-
-    def __exit__(self, *exc):
-        for k, v in self._saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-
-def _clean_env():
-    """Force-clear HTTPFLOW_MASK_EXTRA env var."""
-    return _EnvScope(HTTPFLOW_MASK_EXTRA=None)
-
-
-# ----------------------------------------------------------------- unit tests
+# ------------------------------------------------------------------ unit tests
 
 
 class TestNorm(unittest.TestCase):
@@ -61,7 +32,7 @@ class TestMaskJson(unittest.TestCase):
     def test_recursive(self):
         from httpflow.runtime.mask import mask
 
-        with _clean_env():
+        with clean_mask_env():
             out = mask(
                 '{"user":"u","password":"p","nested":{"access_token":"t","keep":"k"}}'
             )
@@ -74,7 +45,7 @@ class TestMaskJson(unittest.TestCase):
     def test_list_of_dicts(self):
         from httpflow.runtime.mask import mask
 
-        with _clean_env():
+        with clean_mask_env():
             out = mask(
                 '{"items":[{"name":"a","secret":"s1"},{"name":"b","secret":"s2"}]}'
             )
@@ -85,7 +56,7 @@ class TestMaskJson(unittest.TestCase):
     def test_disabled(self):
         from httpflow.runtime.mask import mask
 
-        with _clean_env():
+        with clean_mask_env():
             text = '{"password":"p"}'
             self.assertEqual(mask(text, disabled=True), text)
 
@@ -94,7 +65,7 @@ class TestMaskFormUrlencoded(unittest.TestCase):
     def test_basic(self):
         from httpflow.runtime.mask import mask
 
-        with _clean_env():
+        with clean_mask_env():
             out = mask("user=u&password=p&token=abc")
         self.assertIn("user=u", out)
         self.assertIn("password=***", out)
@@ -105,7 +76,7 @@ class TestMaskPlainText(unittest.TestCase):
     def test_untouched(self):
         from httpflow.runtime.mask import mask
 
-        with _clean_env():
+        with clean_mask_env():
             out = mask("just a plain message")
         self.assertEqual(out, "just a plain message")
 
@@ -114,7 +85,7 @@ class TestMaskHeaders(unittest.TestCase):
     def test_defaults_mask_authorization_and_cookie(self):
         from httpflow.runtime.mask import mask_value
 
-        with _clean_env():
+        with clean_mask_env():
             headers = {
                 "Authorization": "Bearer secret-token",
                 "Cookie": "sid=abc",
@@ -128,7 +99,7 @@ class TestMaskHeaders(unittest.TestCase):
     def test_extra_env_adds_x_trace_id(self):
         from httpflow.runtime.mask import mask_value
 
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
+        with clean_mask_env(), EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
             headers = {
                 "Authorization": "Bearer x",
                 "X-Trace-Id": "trace-1",
@@ -142,7 +113,7 @@ class TestMaskUrl(unittest.TestCase):
     def test_query_token_masked(self):
         from httpflow.runtime.mask import mask_url
 
-        with _clean_env():
+        with clean_mask_env():
             out = mask_url("https://x/api?token=abc&page=2")
         self.assertIn("token=***", out)
         self.assertIn("page=2", out)
@@ -150,7 +121,7 @@ class TestMaskUrl(unittest.TestCase):
     def test_no_query_unchanged(self):
         from httpflow.runtime.mask import mask_url
 
-        with _clean_env():
+        with clean_mask_env():
             url = "https://x/api"
             self.assertEqual(mask_url(url), url)
 
@@ -159,24 +130,24 @@ class TestMaskValue(unittest.TestCase):
     def test_sensitive_name_masked(self):
         from httpflow.runtime.mask import mask_value
 
-        with _clean_env():
+        with clean_mask_env():
             self.assertEqual(mask_value("token", "abc"), "***")
             self.assertEqual(mask_value("access_token", "abc"), "***")
 
     def test_non_sensitive_kept(self):
         from httpflow.runtime.mask import mask_value
 
-        with _clean_env():
+        with clean_mask_env():
             self.assertEqual(mask_value("user_id", 7), 7)
 
     def test_extra_env_masks_header_name_too(self):
         from httpflow.runtime.mask import mask_value
 
-        with _clean_env(), _EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
+        with clean_mask_env(), EnvScope(HTTPFLOW_MASK_EXTRA="X-Trace-Id"):
             self.assertEqual(mask_value("X-Trace-Id", "trace-1"), "***")
 
 
-# ----------------------------------------------------------------- workflow integration
+# ------------------------------------------------------------------ workflow integration
 
 
 class _EchoHandler(BaseHTTPRequestHandler):
@@ -240,7 +211,7 @@ class TestWorkflowMasking(unittest.TestCase):
         try:
             cfg = cfg_mod.load(path)
             buf = io.StringIO()
-            with _clean_env(), _EnvScope(**(env or {})):
+            with clean_mask_env(), EnvScope(**(env or {})):
                 store = runner.run(cfg, out=buf, no_mask=no_mask)
             return buf.getvalue(), store
         finally:
@@ -259,7 +230,7 @@ class TestWorkflowMasking(unittest.TestCase):
         self.assertIn("Set-Cookie: ***", output)
         self.assertNotIn("secret-cookie", output)
 
-        # X-Trace-Id is NOT in defaults → must remain visible
+        # X-Trace-Id is NOT in defaults -> must remain visible
         self.assertIn("X-Trace-Id: trace-123", output)
 
         # ---- URL query masked in log ----
@@ -319,7 +290,7 @@ class TestWorkflowMasking(unittest.TestCase):
         try:
             cfg = cfg_mod.load(path)
             buf = io.StringIO()
-            with _clean_env():
+            with clean_mask_env():
                 runner.run(cfg, out=buf)
             output = buf.getvalue()
         finally:

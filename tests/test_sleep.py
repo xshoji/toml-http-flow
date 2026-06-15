@@ -95,22 +95,7 @@ class TestSleepTOMLLoad(unittest.TestCase):
         self.addCleanup(os.unlink, path)
         return path
 
-    def test_toml_sleep_accepts_template_var(self):
-        toml = b"""
-[[requests]]
-name = "wait"
-method = "SLEEP"
-url = "${var.delay}"
-"""
-        path = self._write(toml)
-        wf = cfg_mod.load(path)
-        self.assertEqual(len(wf.steps), 1)
-        step = wf.steps[0]
-        self.assertIsInstance(step, SleepStep)
-        assert isinstance(step, SleepStep)
-        self.assertEqual(step.seconds, "${var.delay}")
-
-    def test_toml_sleep_accepts_template_var(self):
+    def test_toml_sleep_loads(self):
         toml = b"""
 [[requests]]
 name = "wait"

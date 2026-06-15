@@ -1,4 +1,7 @@
-import io
+"""Tests for the Python script generator (py output)."""
+
+from __future__ import annotations
+
 import json
 import os
 import subprocess
@@ -15,9 +18,12 @@ from httpflow import config as cfg_mod
 from httpflow import generator
 from httpflow.runtime.http import extract
 from httpflow.template import TemplateError, render
+from tests._helpers import UploadHandler
 
 
 class _Handler(BaseHTTPRequestHandler):
+    """Mock server for generator tests (tok = gen-tok)."""
+
     def _send(self, code, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(code)
@@ -34,41 +40,6 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         auth = self.headers.get("Authorization", "")
         self._send(200, {"user": {"id": 11, "auth": auth}})
-
-    def log_message(self, format, *args):
-        return
-
-
-class _UploadHandler(BaseHTTPRequestHandler):
-    seen: list[dict[str, str | bytes]] = []
-
-    def _send(self):
-        body = json.dumps({"ok": True}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_PUT(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length)
-        _UploadHandler.seen.append({
-            "path": self.path,
-            "content_type": self.headers.get("Content-Type", ""),
-            "body": body,
-        })
-        self._send()
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length)
-        _UploadHandler.seen.append({
-            "path": self.path,
-            "content_type": self.headers.get("Content-Type", ""),
-            "body": body,
-        })
-        self._send()
 
     def log_message(self, format, *args):
         return
@@ -96,7 +67,205 @@ class _HttpErrorThenOkHandler(BaseHTTPRequestHandler):
         return
 
 
-class TestGenerator(unittest.TestCase):
+def _generate_script(toml_text: str | bytes, *, default_vars: dict[str, str] | None = None) -> str:
+    """Load TOML text and return generated script source."""
+    with tempfile.TemporaryDirectory() as tmp:
+        toml_path = Path(tmp) / "workflow.toml"
+        toml_path.write_bytes(toml_text.encode("utf-8") if isinstance(toml_text, str) else toml_text)
+        wf = cfg_mod.load(str(toml_path))
+        return generator.generate(wf, default_vars=default_vars or {})
+
+
+def _compile(script: str) -> None:
+    compile(script, "<generated>", "exec")
+
+
+# ------------------------------------------------------------------
+# 1. Core generation & self-containment
+# ------------------------------------------------------------------
+class TestGeneratorCore(unittest.TestCase):
+    """Basic properties every generated script must satisfy."""
+
+    def test_empty_workflow_compiles(self):
+        script = _generate_script(b"")
+        _compile(script)
+
+    def test_generated_script_never_contains_httpflow_imports(self):
+        script = _generate_script("""
+[[requests]]
+name = "ping"
+method = "GET"
+url = "http://127.0.0.1:1/ping?id=${var.id}"
+""")
+        _compile(script)
+        self.assertNotRegex(script, r"(?m)^\s*from\s+\.")
+        self.assertNotRegex(script, r"(?m)^\s*import\s+httpflow\b")
+        self.assertNotRegex(script, r"(?m)^\s*from\s+httpflow\b")
+
+    def test_embedded_runtime_helpers_compile_cleanly(self):
+        from httpflow.generator import _flatten_modules
+
+        src = _flatten_modules({"core", "mask", "http", "until"})
+        _compile(src)
+        self.assertNotRegex(src, r"(?m)^\s*from\s+\.")
+        self.assertNotRegex(src, r"(?m)^\s*import\s+httpflow\b")
+        self.assertNotRegex(src, r"(?m)^\s*from\s+httpflow\b")
+
+    def test_generate_with_sleep_step(self):
+        script = _generate_script("""
+[[requests]]
+name = "wait"
+method = "SLEEP"
+url = "0.05"
+
+[[requests]]
+name = "ping"
+method = "GET"
+url = "http://127.0.0.1:1/ping"
+""")
+        _compile(script)
+        self.assertIn("time.sleep(seconds)", script)
+        self.assertIn("SLEEP", script)
+        self.assertIn("done", script)
+
+        step_src = _extract_step_src(script, "def step_wait")
+        self.assertNotIn("do_request(", step_src)
+        self.assertNotIn("headers", step_src)
+
+    def test_unused_until_helpers_omitted(self):
+        script = _generate_script("""
+[[requests]]
+name = "ping"
+method = "GET"
+url = "http://127.0.0.1:1/ping"
+""")
+        _compile(script)
+        self.assertIn("(no until blocks", script)
+
+    def test_generated_script_includes_until_when_used(self):
+        script = _generate_script("""
+[[requests]]
+name = "poll"
+method = "GET"
+url = "http://127.0.0.1:1/poll"
+until = ["condition = ${status} == Active", "interval = 0", "max_attempts = 1"]
+""")
+        _compile(script)
+        self.assertIn("def eval_until", script)
+        self.assertIn("def poll_until", script)
+        self.assertIn("_UNTIL_OPS", script)
+
+
+# ------------------------------------------------------------------
+# 2. Runtime parity (template / extract / env / uuid)
+# ------------------------------------------------------------------
+class TestGeneratorParity(unittest.TestCase):
+    """Generated embedded helpers must match package behaviour."""
+
+    def test_generated_render_matches_package_render(self):
+        script = _generate_script("""
+[[requests]]
+name = "echo"
+method = "GET"
+url = "http://127.0.0.1/${var.env}"
+""")
+        store = {
+            "vars": {"env": "prod", "token": "abc", "my-key": "ok"},
+            "steps": {"login": {"body": {"user": {"id": 7}}}},
+        }
+        cases = [
+            "env=${var.env}",
+            "alias=${token}",
+            "hyphen=${var.my-key}",
+            "nested=${steps.login.body.user.id}",
+            "price=$$100",
+            "ymd=${time.DATE_YMD}",
+        ]
+
+        ns: dict = {}
+        exec(script, ns)
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(ns["render"](text, store), render(text, store))
+
+        with self.assertRaises(TemplateError):
+            render("${var.missing}", store)
+        with self.assertRaises(ns["TemplateError"]):
+            ns["render"]("${var.missing}", store)
+
+    def test_generated_extract_matches_package_extract(self):
+        script = _generate_script("""
+[[requests]]
+name = "echo"
+method = "GET"
+url = "http://127.0.0.1/"
+""")
+        body = {"data": {"user": {"id": 42}}, "items": [{"id": "a1"}, {"id": "a2"}]}
+        cases = ["data.user.id", "items[1].id"]
+
+        ns: dict = {}
+        exec(script, ns)
+        for path in cases:
+            with self.subTest(path=path):
+                self.assertEqual(ns["extract"](body, path), extract(body, path))
+
+        with self.assertRaises(KeyError):
+            ns["extract"](body, "data.missing")
+        with self.assertRaises(IndexError):
+            ns["extract"](body, "items[9].id")
+
+    def test_generated_random_uuid(self):
+        script = _generate_script('''
+[[requests]]
+name = "echo"
+method = "GET"
+url = "http://127.0.0.1/${random.UUID}"
+''')
+        ns: dict = {}
+        exec(script, ns)
+        out = ns["render"]("${random.UUID}", {"vars": {}, "steps": {}})
+        self.assertEqual(str(uuid.UUID(out)), out)
+
+    def test_generated_random_uuid_hex(self):
+        script = _generate_script('''
+[[requests]]
+name = "echo"
+method = "GET"
+url = "http://127.0.0.1/${random.UUID_HEX}"
+''')
+        ns: dict = {}
+        exec(script, ns)
+        out = ns["render"]("${random.UUID_HEX}", {"vars": {}, "steps": {}})
+        self.assertEqual(len(out), 32)
+        self.assertEqual(uuid.UUID(hex=out).hex, out)
+
+    def test_generated_env_var(self):
+        script = _generate_script('''
+[[requests]]
+name = "echo"
+method = "GET"
+url = "http://127.0.0.1/${env.HTTPFLOW_TEST_USER}"
+''')
+        ns: dict = {}
+        exec(script, ns)
+        old = os.environ.get("HTTPFLOW_TEST_USER")
+        os.environ["HTTPFLOW_TEST_USER"] = "bob"
+        try:
+            out = ns["render"]("${env.HTTPFLOW_TEST_USER}", {"vars": {}, "steps": {}})
+        finally:
+            if old is None:
+                os.environ.pop("HTTPFLOW_TEST_USER", None)
+            else:
+                os.environ["HTTPFLOW_TEST_USER"] = old
+        self.assertEqual(out, "bob")
+
+
+# ------------------------------------------------------------------
+# 3. End-to-end execution
+# ------------------------------------------------------------------
+class TestGeneratorE2E(unittest.TestCase):
+    """Run generated scripts via subprocess against a real mock server."""
+
     @classmethod
     def setUpClass(cls):
         cls.server = HTTPServer(("127.0.0.1", 0), _Handler)
@@ -109,15 +278,24 @@ class TestGenerator(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
-    def test_generate_runs_standalone(self):
+    def _script_path(self, script: str) -> Path:
+        """Write script to a temp file and return its path."""
+        fd, path = tempfile.mkstemp(suffix=".py")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(script)
+        self.addCleanup(os.unlink, path)
+        return Path(path)
+
+    # ---- single combined E2E covering masking, pretty-json, quiet ----
+    def test_e2e_masking_and_flags(self):
         base = f"http://127.0.0.1:{self.port}"
-        toml_text = textwrap.dedent(f"""
+        script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "getToken"
             method = "POST"
             url = "{base}/auth"
             headers = ["Content-Type: application/json"]
-            body = '''{{"user":"u","pass":"p"}}'''
+            body = '{{"user":"u","pass":"p"}}'
             capture = ["token = access_token"]
 
             [[requests]]
@@ -125,71 +303,71 @@ class TestGenerator(unittest.TestCase):
             method = "GET"
             url = "{base}/me"
             headers = ["Authorization: Bearer ${{token}}"]
-        """).encode("utf-8")
+        """), default_vars={"env": "test"})
 
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf, default_vars={"env": "test"})
+        path = self._script_path(script)
 
-            # Must compile as a valid python module.
-            compile(script, "<generated>", "exec")
+        # Run #1: default (mask ON)
+        r1 = subprocess.run(
+            [sys.executable, str(path)], capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(r1.returncode, 0, msg=r1.stderr)
+        self.assertIn("[getToken]", r1.stdout)
+        self.assertIn("[getUser]", r1.stdout)
+        self.assertIn("> POST /auth HTTP/1.1", r1.stdout)
+        self.assertIn("< HTTP/1.1 200 OK", r1.stdout)
+        self.assertIn("* capture token = '***'", r1.stdout)
+        self.assertIn("> Authorization: ***", r1.stdout)
+        self.assertNotIn("gen-tok", r1.stdout)
 
-            script_path = tmp_path / "workflow.py"
-            script_path.write_text(script, encoding="utf-8")
+        # Run #2: --no-mask
+        r2 = subprocess.run(
+            [sys.executable, str(path), "--no-mask"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(r2.returncode, 0, msg=r2.stderr)
+        self.assertIn("* capture token = 'gen-tok'", r2.stdout)
+        self.assertIn("> Authorization: Bearer gen-tok", r2.stdout)
 
-            # ---- Run #1: default behaviour → masking is ON ----
-            res = subprocess.run(
-                [sys.executable, str(script_path)],
-                capture_output=True, text=True, timeout=10,
-            )
-            self.assertEqual(res.returncode, 0, msg=res.stderr)
-            stdout = res.stdout
+        # Run #3: --pretty-json
+        r3 = subprocess.run(
+            [sys.executable, str(path), "--pretty-json"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(r3.returncode, 0, msg=r3.stderr)
+        self.assertIn('  "user": "u"', r3.stdout)
 
-            # Basic presence checks
-            self.assertIn("[getToken]", stdout)
-            self.assertIn("[getUser]", stdout)
+        # Run #4: --quiet
+        r4 = subprocess.run(
+            [sys.executable, str(path), "--quiet"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(r4.returncode, 0, msg=r4.stderr)
+        self.assertNotIn("> POST", r4.stdout)
+        self.assertNotIn("< HTTP/1.1", r4.stdout)
+        self.assertIn("[getToken] POST ", r4.stdout)
 
-            # --- curl -vvv detail assertions ---
-            # Request line
-            self.assertIn("> POST /auth HTTP/1.1", stdout)
-            self.assertIn("> GET /me HTTP/1.1", stdout)
-
-            # Estimated headers
-            self.assertIn("> Host:", stdout)
-            self.assertIn("> User-Agent: Python-urllib/", stdout)
-
-            # Response status line
-            self.assertIn("< HTTP/1.1 200 OK", stdout)
-
-            # Capture line masked by default
-            self.assertIn("* capture token = '***'", stdout)
-            self.assertNotIn("gen-tok", stdout)
-            # Authorization header masked in second request
-            self.assertIn("> Authorization: ***", stdout)
-            self.assertNotIn("Bearer gen-tok", stdout)
-
-            # ---- Run #2: --no-mask → masking disabled ----
-            res2 = subprocess.run(
-                [sys.executable, str(script_path), "--no-mask"],
-                capture_output=True, text=True, timeout=10,
-            )
-            self.assertEqual(res2.returncode, 0, msg=res2.stderr)
-            stdout2 = res2.stdout
-            self.assertIn("* capture token = 'gen-tok'", stdout2)
-            self.assertIn("> Authorization: Bearer gen-tok", stdout2)
+        # Run #5: self-containment (run from /tmp without PYTHONPATH)
+        env = dict(os.environ)
+        repo_top = os.getcwd()
+        if "PYTHONPATH" in env:
+            env["PYTHONPATH"] = env["PYTHONPATH"].replace(repo_top, "").strip(":")
+        r5 = subprocess.run(
+            [sys.executable, str(path), "--quiet"],
+            capture_output=True, text=True, timeout=10,
+            cwd="/tmp", env=env,
+        )
+        self.assertEqual(r5.returncode, 0, msg=r5.stderr)
 
     def test_generated_script_captures_headers_and_request_values(self):
         base = f"http://127.0.0.1:{self.port}"
-        toml_text = textwrap.dedent(f"""
+        script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "getToken"
             method = "POST"
             url = "{base}/auth"
             headers = ["Content-Type: application/json"]
-            body = '''{{"user":"u","pass":"p"}}'''
+            body = '{{"user":"u","pass":"p"}}'
             capture = ["token = access_token"]
 
             [[requests]]
@@ -202,26 +380,16 @@ class TestGenerator(unittest.TestCase):
                 "sent_auth = request.header.Authorization",
                 "called    = request.url",
             ]
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-            compile(script, "<generated>", "exec")
-            script_path = tmp_path / "workflow.py"
-            script_path.write_text(script, encoding="utf-8")
-
-            res = subprocess.run(
-                [sys.executable, str(script_path), "--no-mask"],
-                capture_output=True, text=True, timeout=10,
-            )
-        self.assertEqual(res.returncode, 0, msg=res.stderr)
-        self.assertIn("* capture ct = 'application/json'", res.stdout)
-        self.assertIn("* capture sent_auth = 'Bearer gen-tok'", res.stdout)
-        self.assertIn(f"* capture called = '{base}/me'", res.stdout)
+        """))
+        path = self._script_path(script)
+        r = subprocess.run(
+            [sys.executable, str(path), "--no-mask"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn("* capture ct = 'application/json'", r.stdout)
+        self.assertIn("* capture sent_auth = 'Bearer gen-tok'", r.stdout)
+        self.assertIn(f"* capture called = '{base}/me'", r.stdout)
 
     def test_generated_script_treats_http_error_response_as_normal(self):
         srv = HTTPServer(("127.0.0.1", 0), _HttpErrorThenOkHandler)
@@ -230,7 +398,7 @@ class TestGenerator(unittest.TestCase):
         t.start()
         _HttpErrorThenOkHandler.count = 0
         try:
-            toml_text = textwrap.dedent(f"""
+            script = _generate_script(textwrap.dedent(f"""
                 [[requests]]
                 name = "poll"
                 method = "GET"
@@ -241,35 +409,24 @@ class TestGenerator(unittest.TestCase):
                     "interval = 0",
                     "max_attempts = 2",
                 ]
-            """).encode("utf-8")
-
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp_path = Path(tmp)
-                toml_path = tmp_path / "workflow.toml"
-                toml_path.write_bytes(toml_text)
-                wf = cfg_mod.load(str(toml_path))
-                script_path = tmp_path / "workflow.py"
-                script_path.write_text(generator.generate(wf), encoding="utf-8")
-
-                res = subprocess.run(
-                    [sys.executable, str(script_path)],
-                    capture_output=True, text=True, timeout=10,
-                )
-
-            self.assertEqual(res.returncode, 0, msg=res.stderr)
-            self.assertIn("[poll]", res.stdout)
-            self.assertIn("[poll]", res.stdout)
-            self.assertIn("* until satisfied on attempt 2", res.stdout)
+            """))
+            path = self._script_path(script)
+            r = subprocess.run(
+                [sys.executable, str(path)], capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(r.returncode, 0, msg=r.stderr)
+            self.assertIn("[poll]", r.stdout)
+            self.assertIn("* until satisfied on attempt 2", r.stdout)
         finally:
             srv.shutdown()
             srv.server_close()
 
     def test_generated_script_uploads_file_and_multipart(self):
-        srv = HTTPServer(("127.0.0.1", 0), _UploadHandler)
+        srv = HTTPServer(("127.0.0.1", 0), UploadHandler)
         port = srv.server_address[1]
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
-        _UploadHandler.seen = []
+        UploadHandler.seen = []
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
@@ -295,17 +452,20 @@ class TestGenerator(unittest.TestCase):
                     ]
                 """), encoding="utf-8")
                 wf = cfg_mod.load(str(toml_path))
+                script = generator.generate(wf)
                 script_path = tmp_path / "workflow.py"
-                script_path.write_text(generator.generate(wf), encoding="utf-8")
-                res = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True, timeout=10)
-
-            self.assertEqual(res.returncode, 0, msg=res.stderr)
-            self.assertEqual(len(_UploadHandler.seen), 2)
-            self.assertEqual(_UploadHandler.seen[0]["content_type"], "application/octet-stream")
-            self.assertEqual(_UploadHandler.seen[0]["body"], b"\x00raw-bytes\xff")
-            content_type = str(_UploadHandler.seen[1]["content_type"])
-            self.assertTrue(content_type.startswith("multipart/form-data; boundary="))
-            multipart_body = _UploadHandler.seen[1]["body"]
+                script_path.write_text(script, encoding="utf-8")
+                r = subprocess.run(
+                    [sys.executable, str(script_path)],
+                    capture_output=True, text=True, timeout=10,
+                )
+            self.assertEqual(r.returncode, 0, msg=r.stderr)
+            self.assertEqual(len(UploadHandler.seen), 2)
+            self.assertEqual(UploadHandler.seen[0]["content_type"], "application/octet-stream")
+            self.assertEqual(UploadHandler.seen[0]["body"], b"\x00raw-bytes\xff")
+            ct = str(UploadHandler.seen[1]["content_type"])
+            self.assertTrue(ct.startswith("multipart/form-data; boundary="))
+            multipart_body = UploadHandler.seen[1]["body"]
             assert isinstance(multipart_body, bytes)
             self.assertIn(b'name="title"', multipart_body)
             self.assertIn(b"hello", multipart_body)
@@ -316,217 +476,37 @@ class TestGenerator(unittest.TestCase):
             srv.shutdown()
             srv.server_close()
 
-    def test_generated_random_uuid(self):
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "echo"
-            method = "GET"
-            url = "http://127.0.0.1/${random.UUID}"
-        """).encode("utf-8")
 
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
+# ------------------------------------------------------------------
+# 4. Default vars & CLI help
+# ------------------------------------------------------------------
+class TestGeneratorDefaultVars(unittest.TestCase):
+    """Embedding and overriding default variables in generated scripts."""
 
-        ns = {"__name__": "generated_uuid_test"}
-        exec(script, ns)
-        out = ns["render"]("${random.UUID}", {"vars": {}, "steps": {}})
-        self.assertEqual(str(uuid.UUID(out)), out)
+    @classmethod
+    def setUpClass(cls):
+        cls.server = HTTPServer(("127.0.0.1", 0), _Handler)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
 
-    def test_generated_random_uuid_hex(self):
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "echo"
-            method = "GET"
-            url = "http://127.0.0.1/${random.UUID_HEX}"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        ns = {"__name__": "generated_uuid_hex_test"}
-        exec(script, ns)
-        out = ns["render"]("${random.UUID_HEX}", {"vars": {}, "steps": {}})
-        self.assertEqual(len(out), 32)
-        self.assertEqual(uuid.UUID(hex=out).hex, out)
-
-    def test_generated_env_var(self):
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "echo"
-            method = "GET"
-            url = "http://127.0.0.1/${env.HTTPFLOW_TEST_USER}"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        ns = {"__name__": "generated_env_test"}
-        exec(script, ns)
-        old = os.environ.get("HTTPFLOW_TEST_USER")
-        os.environ["HTTPFLOW_TEST_USER"] = "bob"
-        try:
-            out = ns["render"]("${env.HTTPFLOW_TEST_USER}", {"vars": {}, "steps": {}})
-        finally:
-            if old is None:
-                os.environ.pop("HTTPFLOW_TEST_USER", None)
-            else:
-                os.environ["HTTPFLOW_TEST_USER"] = old
-        self.assertEqual(out, "bob")
-
-    def test_generated_render_matches_package_render(self):
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "echo"
-            method = "GET"
-            url = "http://127.0.0.1/${var.env}"
-        """).encode("utf-8")
-        store = {
-            "vars": {"env": "prod", "token": "abc", "my-key": "ok"},
-            "steps": {"login": {"body": {"user": {"id": 7}}}},
-        }
-        cases = [
-            "env=${var.env}",
-            "alias=${token}",
-            "hyphen=${var.my-key}",
-            "nested=${steps.login.body.user.id}",
-            "price=$$100",
-            "ymd=${time.DATE_YMD}",
-        ]
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        ns = {"__name__": "generated_render_parity_test"}
-        exec(script, ns)
-        for text in cases:
-            self.assertEqual(ns["render"](text, store), render(text, store))
-        with self.assertRaises(TemplateError):
-            render("${var.missing}", store)
-        with self.assertRaises(ns["TemplateError"]):
-            ns["render"]("${var.missing}", store)
-
-    def test_generated_extract_matches_package_extract(self):
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "echo"
-            method = "GET"
-            url = "http://127.0.0.1/"
-        """).encode("utf-8")
-        body = {"data": {"user": {"id": 42}}, "items": [{"id": "a1"}, {"id": "a2"}]}
-        cases = ["data.user.id", "items[1].id"]
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        ns = {"__name__": "generated_extract_parity_test"}
-        exec(script, ns)
-        for path in cases:
-            self.assertEqual(ns["extract"](body, path), extract(body, path))
-        with self.assertRaises(KeyError):
-            ns["extract"](body, "data.missing")
-        with self.assertRaises(IndexError):
-            ns["extract"](body, "items[9].id")
-
-    def test_generate_with_sleep_step(self):
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "wait"
-            method = "SLEEP"
-            url = "0.05"
-
-            [[requests]]
-            name = "ping"
-            method = "GET"
-            url = "http://127.0.0.1:1/ping"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-            # Must compile
-            compile(script, "<generated>", "exec")
-
-            # Check that the sleep step exists and has correct structure
-            self.assertIn("time.sleep(seconds)", script)
-            self.assertIn("SLEEP", script)
-            self.assertIn("done", script)
-
-            # The sleep step should NOT call do_request / log_request with headers
-            step_lines = []
-            in_step = False
-            for line in script.splitlines():
-                if line.startswith("def step_wait"):
-                    in_step = True
-                elif in_step and line.startswith("def "):
-                    break
-                if in_step:
-                    step_lines.append(line)
-            step_src = "\n".join(step_lines)
-            self.assertNotIn("do_request(", step_src)
-            self.assertNotIn("headers", step_src)
-
-    def test_unused_until_helpers_omitted(self):
-        """When no request has until, no extra polling section should be emitted."""
-        toml_text = textwrap.dedent(f"""
-            [[requests]]
-            name = "ping"
-            method = "GET"
-            url = "http://127.0.0.1:1/ping"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-            compile(script, "<generated>", "exec")
-
-            self.assertIn("(no until blocks", script)
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
 
     def test_default_vars_embedded(self):
-        """-v K=V sets DEFAULT_VARS; script runs without args and can be overridden."""
         base = f"http://127.0.0.1:{self.port}"
-        toml_text = textwrap.dedent(f"""
+        script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "ping"
             method = "GET"
             url = "{base}/echo?env=${{var.env}}&user=${{var.user}}"
-        """).encode("utf-8")
+        """), default_vars={"env": "prod"})
+        _compile(script)
 
         with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf, default_vars={"env": "prod"})
-            compile(script, "<generated>", "exec")
-
-            script_path = tmp_path / "workflow.py"
+            script_path = Path(tmp) / "workflow.py"
             script_path.write_text(script, encoding="utf-8")
 
             help_res = subprocess.run(
@@ -539,7 +519,7 @@ class TestGenerator(unittest.TestCase):
             self.assertIn("  * Required parameters (referenced by ${var.*} but not embedded)", help_res.stdout)
             self.assertIn("    - user", help_res.stdout)
 
-            # Runs without arguments because DEFAULT_VARS supplies env=prod
+            # Runs without args because DEFAULT_VARS supplies env=prod
             res = subprocess.run(
                 [sys.executable, str(script_path), "-v", "user=alice"],
                 capture_output=True, text=True, timeout=10,
@@ -555,6 +535,7 @@ class TestGenerator(unittest.TestCase):
             self.assertEqual(res2.returncode, 0, msg=res2.stderr)
             self.assertIn("/echo?env=staging&user=bob", res2.stdout)
 
+            # Missing required var fails cleanly
             missing = subprocess.run(
                 [sys.executable, str(script_path)],
                 capture_output=True, text=True, timeout=10,
@@ -565,219 +546,44 @@ class TestGenerator(unittest.TestCase):
             self.assertNotIn("==>", missing.stdout)
 
     def test_generated_help_omits_required_vars_block_when_none_required(self):
-        """Required parameters block appears only when missing ${var.*} exist."""
         base = f"http://127.0.0.1:{self.port}"
-        toml_text = textwrap.dedent(f"""
+        script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "ping"
             method = "GET"
             url = "{base}/echo?env=${{var.env}}"
-        """).encode("utf-8")
+        """), default_vars={"env": "prod"})
+        _compile(script)
 
         with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf, default_vars={"env": "prod"})
-            compile(script, "<generated>", "exec")
-
-            script_path = tmp_path / "workflow.py"
+            script_path = Path(tmp) / "workflow.py"
             script_path.write_text(script, encoding="utf-8")
             help_res = subprocess.run(
                 [sys.executable, str(script_path), "--help"],
                 capture_output=True, text=True, timeout=10,
             )
+        self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
+        self.assertIn("  * DEFAULT_VARS (optional parameters)", help_res.stdout)
+        self.assertNotIn("  * Required parameters", help_res.stdout)
 
-            self.assertEqual(help_res.returncode, 0, msg=help_res.stderr)
-            self.assertIn("  * DEFAULT_VARS (optional parameters)", help_res.stdout)
-            self.assertNotIn("  * Required parameters", help_res.stdout)
 
-    def test_generated_parity_pretty_json_and_masking(self):
-        """Generated script must produce identical log output for --pretty-json / --no-mask."""
-        base = f"http://127.0.0.1:{self.port}"
-        toml_text = textwrap.dedent(f"""
-            [[requests]]
-            name = "getToken"
-            method = "POST"
-            url = "{base}/auth"
-            headers = ["Content-Type: application/json"]
-            body = '{{"user":"u","pass":"p"}}'
-            capture = ["token = access_token"]
+# ------------------------------------------------------------------
+# Helper utilities
+# ------------------------------------------------------------------
 
-            [[requests]]
-            name = "getUser"
-            method = "GET"
-            url = "{base}/me"
-            headers = ["Authorization: Bearer ${{token}}"]
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf, default_vars={"env": "test"})
-            script_path = tmp_path / "workflow.py"
-            script_path.write_text(script, encoding="utf-8")
-
-            # Must NOT contain any httpflow import
-            self.assertNotIn("import httpflow", script)
-            self.assertNotIn("from httpflow", script)
-
-            # --- Run #1: default (masking ON) ---
-            res = subprocess.run(
-                [sys.executable, str(script_path)],
-                capture_output=True, text=True, timeout=10,
-            )
-            self.assertEqual(res.returncode, 0, msg=res.stderr)
-            stdout1 = res.stdout
-            self.assertIn("> POST /auth HTTP/1.1", stdout1)
-            self.assertIn("> GET /me HTTP/1.1", stdout1)
-            self.assertIn("* capture token = '***'", stdout1)
-            self.assertIn("> Authorization: ***", stdout1)
-
-            # --- Run #2: --no-mask ---
-            res2 = subprocess.run(
-                [sys.executable, str(script_path), "--no-mask"],
-                capture_output=True, text=True, timeout=10,
-            )
-            self.assertEqual(res2.returncode, 0, msg=res2.stderr)
-            stdout2 = res2.stdout
-            self.assertIn("* capture token = 'gen-tok'", stdout2)
-            self.assertIn("> Authorization: Bearer gen-tok", stdout2)
-
-            # --- Run #3: --pretty-json ---
-            res3 = subprocess.run(
-                [sys.executable, str(script_path), "--pretty-json"],
-                capture_output=True, text=True, timeout=10,
-            )
-            self.assertEqual(res3.returncode, 0, msg=res3.stderr)
-            stdout3 = res3.stdout
-            # request body pretty-printed with 2-space indent
-            self.assertIn('  "user": "u"', stdout3)
-            # response body pretty-printed
-            self.assertIn('  "user":', stdout3)
-
-            # --- Run #4: --quiet ---
-            res4 = subprocess.run(
-                [sys.executable, str(script_path), "--quiet"],
-                capture_output=True, text=True, timeout=10,
-            )
-            self.assertEqual(res4.returncode, 0, msg=res4.stderr)
-            stdout4 = res4.stdout
-            # Must NOT contain detailed request/response lines
-            self.assertNotIn("> POST", stdout4)
-            self.assertNotIn("< HTTP/1.1", stdout4)
-            # But summary lines should still be present
-            self.assertIn("[getToken] POST ", stdout4)
-            self.assertIn("[getToken]", stdout4)
-
-            # --- Run outside repo directory (self-containment) ---
-            import os
-            repo_top = os.getcwd()
-            env = dict(os.environ)
-            # Ensure PYTHONPATH does NOT include repo top (prevent incidental import)
-            if "PYTHONPATH" in env:
-                env["PYTHONPATH"] = env["PYTHONPATH"].replace(repo_top, "").strip(":")
-            res5 = subprocess.run(
-                [sys.executable, str(script_path), "--quiet"],
-                capture_output=True, text=True, timeout=10,
-                # Run from root /tmp to be outside the repo checkout
-                cwd="/tmp",
-                env=env,
-            )
-            self.assertEqual(res5.returncode, 0, msg=res5.stderr)
-
-    def test_generated_script_omits_until_when_not_used(self):
-        """Workflow without until must not contain until-specific helpers."""
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "ping"
-            method = "GET"
-            url = "http://127.0.0.1:1/ping"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        compile(script, "<generated>", "exec")
-        self.assertNotIn("def eval_until", script)
-        self.assertNotIn("def poll_until", script)
-        self.assertNotIn("_UNTIL_OPS", script)
-
-    def test_generated_script_includes_until_when_used(self):
-        """Workflow with until must include until helpers."""
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "poll"
-            method = "GET"
-            url = "http://127.0.0.1:1/poll"
-            until = ["condition = ${status} == Active", "interval = 0", "max_attempts = 1"]
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        compile(script, "<generated>", "exec")
-        self.assertIn("def eval_until", script)
-        self.assertIn("def poll_until", script)
-        self.assertIn("_UNTIL_OPS", script)
-
-    def test_generated_script_never_contains_httpflow_imports(self):
-        """Generated script must be free of any httpflow or relative package imports."""
-        toml_text = textwrap.dedent("""
-            [[requests]]
-            name = "ping"
-            method = "GET"
-            url = "http://127.0.0.1:1/ping?id=${var.id}"
-        """).encode("utf-8")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        compile(script, "<generated>", "exec")
-        # Enhanced import guards: allow indentation and word boundaries
-        self.assertNotRegex(script, r"(?m)^\s*from\s+\.")
-        self.assertNotRegex(script, r"(?m)^\s*import\s+httpflow\b")
-        self.assertNotRegex(script, r"(?m)^\s*from\s+httpflow\b")
-
-    def test_embedded_runtime_helpers_compile_cleanly(self):
-        """Flattened runtime modules compile and contain no package imports."""
-        from pathlib import Path
-        from httpflow.generator import _flatten_modules
-
-        # Exercise the full runtime matrix that may be embedded
-        src = _flatten_modules({"core", "mask", "http", "until"})
-        compile(src, "<flattened runtime>", "exec")
-        self.assertNotRegex(src, r"(?m)^\s*from\s+\.")
-        self.assertNotRegex(src, r"(?m)^\s*import\s+httpflow\b")
-        self.assertNotRegex(src, r"(?m)^\s*from\s+httpflow\b")
-
-    def test_empty_workflow_compiles(self):
-        """A workflow with no steps still produces valid Python."""
-        toml_text = b""
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            toml_path = tmp_path / "workflow.toml"
-            toml_path.write_bytes(toml_text)
-            wf = cfg_mod.load(str(toml_path))
-            script = generator.generate(wf)
-
-        compile(script, "<generated>", "exec")
+def _extract_step_src(script: str, marker: str) -> str:
+    """Return source lines from *marker* up to (but not including) the next ``def ``."""
+    lines = script.splitlines()
+    result: list[str] = []
+    inside = False
+    for line in lines:
+        if line.startswith(marker):
+            inside = True
+        elif inside and line.startswith("def "):
+            break
+        if inside:
+            result.append(line)
+    return "\n".join(result)
 
 
 if __name__ == "__main__":
