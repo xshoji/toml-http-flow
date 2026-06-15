@@ -985,6 +985,40 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn("mypass", res.stdout)
         self.assertNotIn('"password":"secret"', res.stdout)
 
+    def test_mask_lines_masks_values_with_commas(self):
+        """Comma inside non-header values must not terminate masking."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {shlex.quote(str(script_path))} >/dev/null || true; "
+                    "printf '%s\\n' "
+                    "'\"Authorization\":\"Bearer abc,def\"' "
+                    "'token=abc,def&key=value' "
+                    "'password: abc,def/ghi' "
+                    "| mask_lines",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertIn('"Authorization":***', res.stdout)
+        self.assertIn("token=***&key=value", res.stdout)
+        self.assertIn("password: ***", res.stdout)
+        self.assertNotIn("abc,def", res.stdout)
+        self.assertNotIn("abc", res.stdout)
+
     def test_mask_extra_env_var_in_bash_script(self):
         """HTTPFLOW_MASK_EXTRA env var extends masking keys in bash script."""
         toml = textwrap.dedent("""

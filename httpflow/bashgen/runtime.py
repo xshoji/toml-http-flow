@@ -14,7 +14,7 @@ _hf_b64decode() {
 """ if include_b64decode else ""
     return b64decode_impl + """MASK_KEYS_DEFAULT='""" + mask_keys_default + """'
 MASK_KEYS="$MASK_KEYS_DEFAULT${HTTPFLOW_MASK_EXTRA:+|${HTTPFLOW_MASK_EXTRA}}"
-MASK_SED_EXPR="s/(\\\"?($MASK_KEYS)\\\"?)([[:space:]]*[:=][[:space:]]*)\\\"?[^& ,}\\\"]+( [^& ,}\\\"]+)?\\\"?/\\1\\3***/g"
+MASK_SED_EXPR="s/(\\"?($MASK_KEYS)\\"?)([[:space:]]*[:=][[:space:]]*)\\"?[^& }\\"]+( [^& }\\"]+)?\\"?/\\1\\3***/g"
 MASK_HEADER_EXPR="s/^([[:space:]]*[<>]?[[:space:]]*($MASK_KEYS)[[:space:]]*:[[:space:]]*).*/\\1***/"
 
 mask() {
