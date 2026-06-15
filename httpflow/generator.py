@@ -400,9 +400,10 @@ def generate(
     for index, step in enumerate(spec.steps):
         fn = _sanitize_ident(step.name, used)
         step_blocks.append(_emit_step(step, fn))
+        blank_line_arg = "0" if index == 0 else "args.blank_line"
         step_calls.append(
             f"{fn}(store, quiet=args.quiet, pretty_json=args.pretty_json, "
-            f"no_mask=args.no_mask, blank_line=args.blank_line if {index} > 0 else 0)"
+            f"no_mask=args.no_mask, blank_line={blank_line_arg})"
         )
 
     if not step_blocks:
