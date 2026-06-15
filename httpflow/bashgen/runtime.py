@@ -18,11 +18,7 @@ MASK_SED_EXPR="s/(\\\"?($MASK_KEYS)\\\"?)([[:space:]]*[:=][[:space:]]*)\\\"?[^& 
 MASK_HEADER_EXPR="s/^([[:space:]]*[<>]?[[:space:]]*($MASK_KEYS)[[:space:]]*:[[:space:]]*).*/\\1***/"
 
 mask() {
-    if [ -n "${HTTPFLOW_NO_MASK:-}" ]; then
-        echo "$1"
-        return 0
-    fi
-    printf '%s\\n' "$1" | sed -E "$MASK_HEADER_EXPR; $MASK_SED_EXPR"
+    printf '%s\\n' "$1" | mask_lines
 }
 
 mask_lines() {
@@ -284,10 +280,13 @@ http_step() {
         form)
             body_log="Note: Values are shown before URL encoding.
 "
+            local first_form_field=1
             while IFS=$'\t' read -r form_key form_value || [ -n "$form_key$form_value" ]; do
                 [ -z "$form_key" ] && continue
                 cmd+=(--data-urlencode "$form_key=$form_value")
-                if [ -n "$body_log" ]; then
+                if [ "$first_form_field" = "1" ]; then
+                    first_form_field=0
+                else
                     body_log="${body_log}&"
                 fi
                 body_log+="$form_key=$form_value"

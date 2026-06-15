@@ -899,6 +899,50 @@ class TestBashGenerator(unittest.TestCase):
         for raw in cases:
             self.assertNotIn(raw.split(": ", 1)[1], res.stdout)
 
+    def test_generated_mask_helper_masks_comma_separated_header_values(self):
+        """Bash mask should hide whole comma-separated sensitive header values."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {shlex.quote(str(script_path))} >/dev/null || true; "
+                    "mask 'Authorization: Bearer a,b'; "
+                    "mask 'Cookie: a=b, c=d'; "
+                    "printf '%s\n' "
+                    "'> Authorization: Bearer a,b' "
+                    "'> Cookie: a=b, c=d' "
+                    "'< Set-Cookie: sid=a,b; Path=/' "
+                    "'X-Api-Key: key-a,key-b' "
+                    "'Accept: application/json, text/plain' "
+                    "| mask_lines",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertIn("Authorization: ***", res.stdout)
+        self.assertIn("Cookie: ***", res.stdout)
+        self.assertIn("> Authorization: ***", res.stdout)
+        self.assertIn("> Cookie: ***", res.stdout)
+        self.assertIn("< Set-Cookie: ***", res.stdout)
+        self.assertIn("X-Api-Key: ***", res.stdout)
+        self.assertIn("Accept: application/json, text/plain", res.stdout)
+        self.assertNotIn("Bearer a,b", res.stdout)
+        self.assertNotIn("a=b, c=d", res.stdout)
+        self.assertNotIn("sid=a,b", res.stdout)
+        self.assertNotIn("key-a,key-b", res.stdout)
+
     def test_mask_lines_masks_curl_like_output(self):
         """mask_lines should mask sensitive fields in piped curl-like output."""
         toml = textwrap.dedent("""
