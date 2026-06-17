@@ -985,6 +985,40 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn("mypass", res.stdout)
         self.assertNotIn('"password":"secret"', res.stdout)
 
+    def test_mask_lines_masks_json_values_with_spaces(self):
+        """Bash mask should hide JSON values containing multiple words."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "http://example.com/ping"
+        """)
+        script = self._generate_and_check(toml)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {script_path} >/dev/null || true; "
+                    "printf '%s\\n' "
+                    "\"{\\\"password\\\": \\\"my secret token with spaces\\\"}\" "
+                    "\"{\\\"token\\\": \\\"foo bar baz qux\\\"}\" "
+                    "\"{\\\"normal\\\": \\\"keep this value\\\"}\" "
+                    "| mask_lines",
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr)
+        self.assertIn('"password": ***', res.stdout)
+        self.assertIn('"token": ***', res.stdout)
+        self.assertIn('"normal": "keep this value"', res.stdout)
+        self.assertNotIn("my secret token with spaces", res.stdout)
+        self.assertNotIn("foo bar baz qux", res.stdout)
+
     def test_mask_lines_masks_values_with_commas(self):
         """Comma inside non-header values must not terminate masking."""
         toml = textwrap.dedent("""
