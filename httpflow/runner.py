@@ -92,6 +92,9 @@ def run(
     When ``steps`` is given, only the named steps are executed (in TOML
     order); validation of required vars then applies to that subset only.
     """
+    if blank_line < 0:
+        raise ValueError(f"blank_line must be >= 0, got {blank_line}")
+
     if steps:
         spec = select_steps(spec, steps)
 

@@ -34,6 +34,11 @@ class TestCLISmoke(unittest.TestCase):
         self.assertIn("--output", res.stdout)
         self.assertIn("--shebang", res.stdout)
 
+    def test_run_rejects_negative_blank_line(self):
+        res = self._run(["run", "-f", "missing.toml", "--blank-line", "-1"])
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("non-negative integer", res.stderr)
+
     def test_version(self):
         res = self._run(["--version"])
         self.assertEqual(res.returncode, 0, msg=res.stderr)

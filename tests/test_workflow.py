@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from httpflow import config as cfg_mod
 from httpflow import runner
+from httpflow.model import WorkflowSpec
 from tests._helpers import JsonHandler, PlainTextHandler, ServerMixin, write_toml
 
 
@@ -309,6 +310,10 @@ class TestWorkflowCapture(ServerMixin, unittest.TestCase):
 # ------------------------------------------------------------------
 class TestWorkflowLogOutput(ServerMixin, unittest.TestCase):
     _handler_cls = JsonHandler
+
+    def test_blank_line_rejects_negative_value(self):
+        with self.assertRaisesRegex(ValueError, "blank_line must be >= 0"):
+            runner.run(WorkflowSpec(), out=io.StringIO(), blank_line=-1)
 
     def test_request_line_and_estimated_headers(self):
         base = f"http://127.0.0.1:{self.port}"

@@ -155,6 +155,18 @@ until = ["condition = ${status} == Active", "interval = 0", "max_attempts = 1"]
         self.assertIn("def poll_until", script)
         self.assertIn("_UNTIL_OPS", script)
 
+    def test_generated_script_rejects_negative_blank_line(self):
+        script = _generate_script(b"")
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.py"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                [sys.executable, str(script_path), "--blank-line", "-1"],
+                capture_output=True, text=True, timeout=10,
+            )
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("non-negative integer", res.stderr)
+
 
 # ------------------------------------------------------------------
 # 2. Runtime parity (template / extract / env / uuid)

@@ -354,7 +354,7 @@ def main():
 ```
 
 - Each step function accepts `blank_line` parameter; only the second and subsequent steps in main execute the blank-line logic (the first step passes `0` unconditionally).
-- Generated scripts support `-v`, `-q`/`--quiet`, `--pretty-json`, `--no-mask`, `--blank-line`.
+- Generated scripts support `-v`, `-q`/`--quiet`, `--pretty-json`, `--no-mask`, `--blank-line`; `--blank-line` must be a non-negative integer.
 
 Common editing use cases:
 
