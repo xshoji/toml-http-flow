@@ -22,10 +22,7 @@ mask() {
 }
 
 mask_lines() {
-    if [ -n "${HTTPFLOW_NO_MASK:-}" ]; then
-        cat
-        return 0
-    fi
+    [[ -n "${HTTPFLOW_NO_MASK:-}" ]] && { cat; return 0; }
     sed -E "$MASK_HEADER_EXPR; $MASK_SED_EXPR"
 }
 
@@ -82,9 +79,7 @@ def capture_helpers() -> str:
 capture_log() {
     local name=$1
     local value=$2
-    if printf '%s\n' "$name" | grep -Eiq "^($MASK_KEYS)$"; then
-        value="***"
-    fi
+    printf '%s\n' "$name" | grep -Eiq "^($MASK_KEYS)$" && value="***"
     printf "* capture %s = '%s'\n" "$name" "$value"
 }
 
@@ -105,14 +100,14 @@ capture_json() {
     local trace_file=$4
     local filter=$5
     local value
-    if ! value=$(trace_response_body "$trace_file" | jq -r "$filter"); then
+    ! value=$(trace_response_body "$trace_file" | jq -r "$filter") && {
         echo "capture failed: $display_name <- $source" >&2
         return 1
-    fi
-    if [ -z "$value" ] || [ "$value" = "null" ]; then
+    }
+    [[ -z "$value" || "$value" == "null" ]] && {
         echo "capture failed: $display_name <- $source" >&2
         return 1
-    fi
+    }
     capture_value "$env_name" "$display_name" "$source" "$value"
 }
 
@@ -123,12 +118,7 @@ capture_header() {
     local input_source=$4
     local header_name=$5
     local value mode
-    if [ -f "$input_source" ]; then
-        mode=trace
-        input_source=$(cat "$input_source")
-    else
-        mode=text
-    fi
+    [[ -f "$input_source" ]] && { mode=trace; input_source=$(cat "$input_source"); } || mode=text
     if ! value=$(awk -v name="$header_name" -v mode="$mode" '
             BEGIN { want=tolower(name) ":"; found=0; value="" }
             mode == "trace" && /^< HTTP\// { found=0; value=""; next }
@@ -178,20 +168,17 @@ trace_response_body() {
 }
 
 jq_or_cat() {
-    if [ -z "${HTTPFLOW_PRETTY_JSON:-}" ]; then
-        cat
-        return 0
-    fi
+    [[ -z "${HTTPFLOW_PRETTY_JSON:-}" ]] && { cat; return 0; }
 
     local input trimmed
     input=$(cat)
     trimmed=${input#"${input%%[![:space:]]*}"}
     trimmed=${trimmed:0:1}
 
-    if [ "$trimmed" != "{" ] && [ "$trimmed" != "[" ]; then
+    [[ "$trimmed" != "{" && "$trimmed" != "[" ]] && {
         printf '%s\n' "$input"
         return 0
-    fi
+    }
 
     if printf '%s\n' "$input" | jq . > /dev/null 2>&1; then
         printf '%s\n' "$input" | jq .
@@ -221,11 +208,11 @@ http_step() {
     print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
     echo "==> $(time_date_iso) [$step_name] $method $(mask "$url")"
-    if [ -n "$description" ]; then
+    [[ -n "$description" ]] && {
         while IFS= read -r line || [ -n "$line" ]; do
             echo "# $line"
         done <<< "$description"
-    fi
+    }
 
     trace_file=$(mktemp "$HF_TMPDIR/hf_trace.XXXXXX")
     : > "$trace_file"
@@ -240,10 +227,10 @@ http_step() {
         | while IFS= read -r line || [ -n "$line" ]; do
             case "$line" in
                 "< HTTP/"*)
-                    if [ "$boundary_inserted" = "0" ]; then
+                    [[ "$boundary_inserted" == "0" ]] && {
                         boundary_inserted=1
                         printf "<== %s [%s]\n" "$(time_date_iso)" "$step_name"
-                    fi
+                    }
                     printf "%s\n" "$line"
                     ;;
                 ">"|"> "|$'> \r')
@@ -259,9 +246,9 @@ http_step() {
                     ;;
                 *)
                     if [ -n "${HTTPFLOW_PRETTY_JSON:-}" ]; then
-                        printf "%s\n" "$line" | jq_or_cat | prefix_lines ""
+                        printf '%s\n' "$line" | jq_or_cat | prefix_lines ""
                     else
-                        printf "%s\n" "$line"
+                        printf '%s\n' "$line"
                     fi
                     ;;
             esac
@@ -303,9 +290,7 @@ until_regex() {
     esac
 
     old_nocasematch=$(shopt -p nocasematch || true)
-    if [[ "$flags" == *i* ]]; then
-        shopt -s nocasematch
-    fi
+    [[ "$flags" == *i* ]] && shopt -s nocasematch
     [[ "$lhs" =~ $pattern ]]
     result=$?
     eval "$old_nocasematch"

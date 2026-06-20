@@ -1179,8 +1179,8 @@ class TestBashGenerator(unittest.TestCase):
                 msg=f"syntax error:\n{syntax.stderr}\n--- script ---\n{script}",
             )
 
-            self.assertIn('if [ -z "${VAR_ENV:-}" ]; then VAR_ENV=\'prod\'; fi', script)
-            self.assertIn('if [ -z "${VAR_USER:-}" ]; then VAR_USER=\'alice\'; fi', script)
+            self.assertIn('[[ -z "${VAR_ENV:-}" ]] && VAR_ENV=\'prod\'', script)
+            self.assertIn('[[ -z "${VAR_USER:-}" ]] && VAR_USER=\'alice\'', script)
             # Ensure they are defined *before* main / step functions so they act as defaults
             defaults_pos = script.find("# ─── defaults")
             steps_pos = script.find("# ─── step functions")
@@ -1198,7 +1198,7 @@ class TestBashGenerator(unittest.TestCase):
             url = "http://example.com/${var.user}"
         """)
         script = self._generate_and_check(toml)
-        self.assertIn('if [ -z "${VAR_USER:-}" ]; then', script)
+        self.assertIn('[[ -z "${VAR_USER:-}" ]] && {', script)
         self.assertIn('Export it before running: export VAR_USER=<value>', script)
 
         with tempfile.TemporaryDirectory() as tmp:

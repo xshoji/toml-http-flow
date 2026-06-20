@@ -166,10 +166,7 @@ class StepEmitter:
 
     def _emit_file_body(self, out: list[str], path_inner: str) -> None:
         """Append lines for a body_file step (existence check + curl arg + log)."""
-        out.append(f'    if [ ! -f "{path_inner}" ]; then')
-        out.append(f'        echo "error: body_file not found: {path_inner}" >&2')
-        out.append("        return 1")
-        out.append("    fi")
+        out.append(f'    [[ -f "{path_inner}" ]] || {{ echo "error: body_file not found: {path_inner}" >&2; return 1; }}')
         out.append(f'    cmd+=(--data-binary "@{path_inner}")')
         out.append(f'    file_size=$(($(wc -c < "{path_inner}")))')
         out.append(f'    body_log="Note: binary body from file: {path_inner} (${{file_size}} bytes)"')
@@ -217,10 +214,7 @@ class StepEmitter:
         if type_e:
             self._validate_curl_form_safe(type_e, f"multipart file type {part.content_type!r}")
 
-        out.append(f'    if [ ! -f "{path_inner}" ]; then')
-        out.append(f'        echo "error: multipart file not found: {path_inner}" >&2')
-        out.append("        return 1")
-        out.append("    fi")
+        out.append(f'    [[ -f "{path_inner}" ]] || {{ echo "error: multipart file not found: {path_inner}" >&2; return 1; }}')
 
         # Wrap path and filename in double quotes so curl treats `;`, `,` and
         # `"` inside them as literal characters rather than option separators
@@ -270,14 +264,11 @@ class StepEmitter:
             f"        {attempt_fn} || return $?",
             f"        until_lhs={self._ph.expr(lhs)}",
             f"        until_rhs={self._ph.expr(rhs)}",
-            f'        if until_eval "$until_lhs" {sq(op)} "$until_rhs"; then',
-            '            echo "    * until satisfied on attempt $attempt"',
-            "            return 0",
-            "        fi",
-            '        if [ "$attempt" -lt "$max_attempts" ]; then',
+            f'        until_eval "$until_lhs" {sq(op)} "$until_rhs" && {{ echo "    * until satisfied on attempt $attempt"; return 0; }}',
+            '        [[ "$attempt" -lt "$max_attempts" ]] && {',
             '            echo "    * until not satisfied (attempt $attempt/$max_attempts), retrying in ${interval}s"',
             '            sleep "$interval"',
-            "        fi",
+            "        }",
             "    done",
             f"    echo {dq_literal(f'step {step.name!r}: until condition not satisfied after ')}\"$max_attempts\"{dq_literal(f' attempts: {step.until.condition!r}')} >&2",
             "    return 1",

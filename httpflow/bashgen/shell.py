@@ -20,7 +20,7 @@ def dq_literal(s: str) -> str:
 
 def default_assignment(name: str, value: str) -> str:
     """Emit a bash line that sets a default for an env-style variable."""
-    return f'if [ -z "${{{name}:-}}" ]; then {name}={sq(value)}; fi'
+    return f'[[ -z "${{{name}:-}}" ]] && {name}={sq(value)}'
 
 
 

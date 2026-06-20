@@ -115,11 +115,11 @@ main "$@"
         for name in names:
             env = env_name("VAR", name)
             lines.extend([
-                f'if [ -z "${{{env}:-}}" ]; then',
+                f'[[ -z "${{{env}:-}}" ]] && {{',
                 f'    echo "error: missing required variable: {name}" >&2',
                 f'    echo "Export it before running: export {env}=<value>" >&2',
                 "    exit 1",
-                "fi",
+                "}",
             ])
         lines.append("")
         return "\n".join(lines)
