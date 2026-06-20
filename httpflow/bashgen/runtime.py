@@ -153,46 +153,15 @@ capture_header() {
 '''
 
 
-def http_helpers(has_capture: bool) -> str:
-    """Return bash helper functions used by generated HTTP steps."""
-    capture_dispatch = r'''
+def http_helpers() -> str:
+    """Return bash helper functions used by generated HTTP steps.
 
-run_captures() {
-    local captures_text=$1
-    local url=$2
-    local body=$3
-    local req_headers_text=$4
-    local trace_file=$5
-    local env_name display_name kind source arg
-
-    while IFS=$'\t' read -r env_name display_name kind source arg; do
-        [ -z "${env_name:-}" ] && continue
-        case "$kind" in
-            json)
-                capture_json "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
-                ;;
-            response_header)
-                capture_header "$env_name" "$display_name" "$source" "$trace_file" "$arg" || return $?
-                ;;
-            request_header)
-                capture_header "$env_name" "$display_name" "$source" "$req_headers_text" "$arg" || return $?
-                ;;
-            request_url)
-                capture_value "$env_name" "$display_name" "$source" "$url" || return $?
-                ;;
-            request_body)
-                capture_value "$env_name" "$display_name" "$source" "$body" || return $?
-                ;;
-            *)
-                echo "capture failed: $display_name <- $source" >&2
-                return 1
-                ;;
-        esac
-    done <<< "$captures_text"
-}
-''' if has_capture else ""
+    ``http_step`` is a thin executor: it receives a fully-assembled curl
+    command array from the step function, runs it through the log/mask
+    pipeline, and exposes the trace file path via ``HF_TRACE_FILE`` so the
+    step function can issue ``capture_*`` calls afterwards.
+    """
     return r'''
-''' + capture_dispatch + r'''
 trace_response_body() {
     awk '
         /^< HTTP\// { in_headers=1; n=0; seen=1; next }
@@ -242,19 +211,12 @@ http_step() {
     local step_name=$1
     local method=$2
     local url=$3
-    local body_kind=$4
-    local body=$5
-    local body_form_text=$6
-    local headers_text=$7
-    local captures_text=$8
-    local description=${9}
-    local trace_file line header form_key form_value multipart_kind multipart_name multipart_value
-    local multipart_filename multipart_type file_size
-    local -a cmd
-    local boundary_inserted=0
-    local body_log=""
-    local has_body=0
-    [ "$body_kind" != "none" ] && has_body=1
+    local body_log=$4
+    local has_body=$5
+    local description=$6
+    shift 6
+    local -a cmd=("$@")
+    local trace_file boundary_inserted=0
 
     print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
@@ -267,95 +229,7 @@ http_step() {
 
     trace_file=$(mktemp "$HF_TMPDIR/hf_trace.XXXXXX")
     : > "$trace_file"
-
-    cmd=(curl -sS -L -v --no-buffer --stderr -)
-    cmd+=(-X "$method")
-
-    while IFS= read -r header || [ -n "$header" ]; do
-        [ -z "$header" ] && continue
-        cmd+=(-H "$header")
-    done <<< "$headers_text"
-
-    case "$body_kind" in
-        form)
-            body_log="Note: Values are shown before URL encoding.
-"
-            local first_form_field=1
-            while IFS=$'\t' read -r form_key form_value || [ -n "$form_key$form_value" ]; do
-                [ -z "$form_key" ] && continue
-                cmd+=(--data-urlencode "$form_key=$form_value")
-                if [ "$first_form_field" = "1" ]; then
-                    first_form_field=0
-                else
-                    body_log="${body_log}&"
-                fi
-                body_log+="$form_key=$form_value"
-            done <<< "$body_form_text"
-            ;;
-
-        file)
-            if [ ! -f "$body" ]; then
-                echo "error: body_file not found: $body" >&2
-                return 1
-            fi
-            cmd+=(--data-binary "@$body")
-            file_size=$(($(wc -c < "$body")))
-            body_log="Note: binary body from file: $body (${file_size} bytes)"
-            echo "# body_file: $body (${file_size} bytes)"
-            ;;
-
-        multipart)
-            while IFS= read -r line || [ -n "$line" ]; do
-                [ -z "$line" ] && continue
-                local multipart_kind=${line%%$'\t'*}; line=${line#*$'\t'}
-                local multipart_name=${line%%$'\t'*}; line=${line#*$'\t'}
-                local multipart_value=${line%%$'\t'*}; line=${line#*$'\t'}
-                local multipart_filename=${line%%$'\t'*}; line=${line#*$'\t'}
-                local multipart_type=$line
-                case "$multipart_kind" in
-                    field)
-                        cmd+=(--form-string "$multipart_name=$multipart_value")
-                        echo "# multipart field: $multipart_name"
-                        ;;
-                    file)
-                        if [ ! -f "$multipart_value" ]; then
-                            echo "error: multipart file not found: $multipart_value" >&2
-                            return 1
-                        fi
-                        # Wrap path and filename in double quotes so curl treats
-                        # `;`, `,` and `"` inside them as literal characters
-                        # rather than option separators (curl 7.55+).
-                        local quoted_path="\"$multipart_value\""
-                        local quoted_filename=""
-                        if [ -n "$multipart_filename" ]; then
-                            quoted_filename="\"$multipart_filename\""
-                        fi
-                        local quoted_type="$multipart_type"
-                        if [ -n "$multipart_filename" ] && [ -n "$multipart_type" ]; then
-                            cmd+=(-F "$multipart_name=@$quoted_path;filename=$quoted_filename;type=$quoted_type")
-                        elif [ -n "$multipart_filename" ]; then
-                            cmd+=(-F "$multipart_name=@$quoted_path;filename=$quoted_filename")
-                        elif [ -n "$multipart_type" ]; then
-                            cmd+=(-F "$multipart_name=@$quoted_path;type=$quoted_type")
-                        else
-                            cmd+=(-F "$multipart_name=@$quoted_path")
-                        fi
-                        file_size=$(($(wc -c < "$multipart_value")))
-                        echo "# multipart file: $multipart_name = $multipart_value (${file_size} bytes)"
-                        ;;
-                esac
-            done <<< "$body_form_text"
-            ;;
-
-        text)
-            cmd+=(-d "$body")
-            body_log="$body"
-            ;;
-
-        *)
-            ;;
-    esac
-    cmd+=("$url")
+    HF_TRACE_FILE="$trace_file"
 
     # Only curl/pipeline failures fail the step here; HTTP 4xx/5xx responses
     # are preserved for capture/until evaluation and are not treated as errors.
@@ -395,12 +269,6 @@ http_step() {
         | tee -a "$trace_file" \
         | mask_lines; then
         return 1
-    fi
-
-    if [ -n "$captures_text" ]; then
-        run_captures "$captures_text" "$url" "$body_log" "$headers_text" "$trace_file" || {
-            return 1
-        }
     fi
 }
 '''

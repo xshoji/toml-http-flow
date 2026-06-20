@@ -167,12 +167,16 @@ workflow.sh
 - ステップ関数名はステップ名を `[A-Za-z0-9_]` に正規化し、衝突時は数字サフィックスで一意化
 - ログ出力時は `authorization` / `password` / `token` などの既定キーワードに対して、`sed` で値部分を `***` に置換する（JSON/form/query の構造保持は保証しない）
 - `${random.UUID}` は `uuid`、`${random.UUID_HEX}` は `uuid_hex` 関数呼び出しとして生成し、参照ごとに新しい UUID v4 を生成する
-- **HTTP ステップ**は関数内で `curl -sS -L -v --no-buffer --stderr -` を `local -a cmd=(...)` 配列で構築し、`grep -v '^\({\|}\) \[.*bytes data\]'` と `grep -v '^\*'` で curl の転送量メタ行・SSL等の診断行を除外してから、`tee` で標準出力と一時 trace ファイルへ同時に出力する。capture はこの trace ファイルから最終レスポンスのステータス・ヘッダー・ボディを best-effort で抽出する
-- `curl -v` はリクエストボディを出力しないため、ボディがある場合は curl 実行前に httpflow がラベル付きでボディを出力し、同じ trace ファイルに保存する
-- **ボディ（text）**は `body=$(cat << EOF ... EOF)` による heredocument で渡す
-- **ボディ（form）**は値の変数展開後に bash 実行時の `urlencode` ヘルパーで `application/x-www-form-urlencoded` にし、`Content-Type` ヘッダを自動付与
+- **HTTP ステップ**は各 step 関数が直接 `local -a cmd=(curl -sS -L -v --no-buffer --stderr - -X <METHOD>)` を初期化し、body / headers / form / multipart に応じて `cmd+=(-H "...")`, `cmd+=(-d "$body")`, `cmd+=(--data-urlencode "k=v")`, `cmd+=(--data-binary "@$path")`, `cmd+=(--form-string "name=value")`, `cmd+=(-F "name=@path;filename=...;type=...")` のように **curl 引数をそのまま組み立てる**。これにより各 step 関数を見るだけで実行される curl コマンドが分かる
+- `http_step` ヘルパは **curl 実行 + ログ出力 + trace_file 作成のみ** を担う薄い executor となり、body 種別の分岐や文字列再パースは行わない。step 関数から `http_step "$step_name" "$method" "$url" "$body_log" "$has_body" "$headers_text" "$description" "${cmd[@]}"` の形式で呼び出す。`http_step` は作成した一時 trace ファイルのパスをグローバル変数 `HF_TRACE_FILE` にセットし、step 関数が capture に利用できるようにする
+- curl 出力は `grep -v '^\({\|}\) \[.*bytes data\]'` と `grep -v '^\*'` で転送量メタ行・SSL等の診断行を除外してから、`tee` で標準出力と一時 trace ファイルへ同時に出力する
+- `curl -v` はリクエストボディを出力しないため、ボディがある場合は curl 実行後に `>` 行のタイミングで `body_log` をラベル付きで出力し、同じ trace ファイルに保存する
+- **ボディ（text）**は `body=$(cat << EOT ... EOT)` による heredocument で変数に格納し、`cmd+=(-d "$body")` で渡す
+- **ボディ（form）**は各フィールドを `cmd+=(--data-urlencode "k=v")` で直接展開し、`Content-Type: application/x-www-form-urlencoded` ヘッダを自動付与する。ログ用の `body_log` は `k1=v1&k2=v2` 形式でstep関数内で構築する
+- **ボディ（file）**は `cmd+=(--data-binary "@$path")` で渡し、step 関数内でファイル存在チェックと `body_log` 構築を行う
+- **ボディ（multipart）**は各パートを `cmd+=(--form-string "name=value")` または `cmd+=(-F "name=@\"path\";filename=\"...\";type=\"...\"")` で直接展開し、ファイル存在チェックも step 関数内で行う。`body_kind` / `body_form_text` のような中間表現は使わない
 - **SLEEP ステップ**は `sleep <seconds>` を実行
-- **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する
+- **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する。capture 定義は `captures_text` のタブ区切りデータを経由せず、各 step 関数が `http_step` 呼び出しの後に `capture_json "..."` / `capture_header "..."` / `capture_value "..."` を直接呼び出す形で展開する
 - **until** 指定ありの HTTP ステップは、各試行で通常のリクエスト・レスポンス出力・capture を実行した後に条件を評価する。条件が満たされると `* until satisfied on attempt N` を出力し、満たされない場合は `* until not satisfied (attempt N/M), retrying in Xs` を出力して `interval` 秒待つ。`max_attempts` で満たされなければ標準エラーに失敗理由を出力し非ゼロ終了する。`curl --fail` は使わないため HTTP 4xx/5xx は通常レスポンスとして扱い、capture や条件評価の対象になる
 - `main()` は step 呼び出しを1行ずつ並べるだけ（スキップ・並べ替えがコメントアウトで容易）
 - テンプレートファイルは使わず、`bashgen/` パッケージ（`bashgen/steps.py` 等）のコード内で完結して出力する

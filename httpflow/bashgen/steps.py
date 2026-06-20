@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from httpflow.model import FileBody, FormBody, HttpStep, MultipartBody, MultipartField, MultipartFile, SleepStep, TextBody
 
-from .capture import capture_rows
+from .capture import capture_calls
 from .conditions import split_until_condition
 from .placeholders import PlaceholderRenderer
-from .shell import dq_literal, sq
-
+from .shell import dq_literal, dq_preserve_expansion, sq
 
 
 class StepEmitter:
-    """Emit bash functions for workflow steps."""
+    """Emit bash functions for workflow steps.
+
+    Each HTTP step function assembles its own ``cmd`` (curl argument) array
+    inline so the generated script shows the exact curl command that will
+    run. The shared ``http_step`` helper is only a thin executor (curl run +
+    log + trace file). Capture calls are issued directly after ``http_step``
+    returns, using the trace file path exposed via ``$HF_TRACE_FILE``.
+    """
 
     def __init__(
         self,
@@ -33,15 +39,6 @@ class StepEmitter:
         """Return True when headers already define *name* case-insensitively."""
         return any(k.lower() == name.lower() for k in headers)
 
-    def _body_form_rows(self, fields: dict[str, str]) -> list[str]:
-        """Emit body_form rows as tab-separated key/value strings."""
-        rows: list[str] = []
-        for k, v in fields.items():
-            self._validate_no_tabs_newlines(k, f"body_form key {k!r}")
-            self._validate_no_tabs_newlines(v, f"body_form value {v!r}")
-            rows.append(f"{self._ph.expand(k)}\t{self._ph.expand(v)}")
-        return rows
-
     def _validate_no_tabs_newlines(self, value: str, context: str) -> None:
         """Raise ValueError when *value* contains tab or newline."""
         if "\t" in value or "\n" in value:
@@ -52,42 +49,6 @@ class StepEmitter:
         self._validate_no_tabs_newlines(value, context)
         if '"' in value:
             raise ValueError(f"{context} must not contain double quotes: {value!r}")
-
-    def _multipart_rows(self, parts: list[MultipartField | MultipartFile]) -> list[str]:
-        """Emit multipart rows as tab-separated internal strings."""
-        rows: list[str] = []
-        for p in parts:
-            if isinstance(p, MultipartField):
-                kind = "field"
-                name = self._ph.expand(p.name)
-                value = self._ph.expand(p.value)
-                path = ""
-                filename = ""
-                content_type = ""
-            else:
-                kind = "file"
-                name = self._ph.expand(p.name)
-                value_or_path = self._ph.expand(p.path)
-                filename = self._ph.expand(p.filename) if p.filename else ""
-                content_type = self._ph.expand(p.content_type)
-                path = value_or_path
-                value = ""
-
-            if kind == "field":
-                self._validate_no_tabs_newlines(name, f"multipart field name {p.name!r}")
-                self._validate_no_tabs_newlines(value, f"multipart field value {p.value!r}")
-            else:
-                self._validate_curl_form_safe(name, f"multipart file name {p.name!r}")
-                self._validate_curl_form_safe(path, f"multipart file path {p.path!r}")
-                self._validate_curl_form_safe(filename, f"multipart file filename {filename!r}")
-                self._validate_curl_form_safe(content_type, f"multipart file type {content_type!r}")
-
-            # kind<TAB>name<TAB>value_or_path<TAB>filename<TAB>content_type
-            if kind == "field":
-                rows.append("\t".join([kind, name, value, "", ""]))
-            else:
-                rows.append("\t".join([kind, name, path, filename, content_type]))
-        return rows
 
     def emit(self, plan: object) -> str:
         """Emit a bash function block for one planned step."""
@@ -109,8 +70,8 @@ class StepEmitter:
         if var_name not in self._embedded:
             return []
         return [
-            f'    local decode_file',
-            f'    decode_file=$(mktemp "$HF_TMPDIR/hf_embed.XXXXXX") || return $?',
+            '    local decode_file',
+            '    decode_file=$(mktemp "$HF_TMPDIR/hf_embed.XXXXXX") || return $?',
             f"    printf '%s' \"${{__HF_EMBED_{var_name}}}\" | _hf_b64decode > \"$decode_file\"",
         ]
 
@@ -123,7 +84,12 @@ class StepEmitter:
         return f"{function_name}_mp{idx}"
 
     def emit_http(self, step: HttpStep, function_name: str) -> str:
-        """Emit an HTTP step function."""
+        """Emit an HTTP step function.
+
+        The function builds the ``cmd`` (curl) array directly from the step
+        definition, calls ``http_step`` to execute it, then issues any
+        ``capture_*`` calls using the trace file left in ``$HF_TRACE_FILE``.
+        """
 
         # Validate multipart Content-Type before anything else (fail fast).
         if isinstance(step.body, MultipartBody) and self._has_header(step.headers, "Content-Type"):
@@ -135,81 +101,156 @@ class StepEmitter:
         out: list[str] = [
             f"{function_name}() {{",
             f'    local url={self._ph.expr(step.url)}',
-            "    local body=",
-            "    local body_form_text=",
-            "    local body_kind=",
-            "    local headers_text=",
-            "    local captures_text=",
+            "    local body",
+            '    local body_log=""',
+            "    local has_body=0",
+            '    local headers_text=""',
+            f'    local -a cmd=(curl -sS -L -v --no-buffer --stderr - -X {step.method.upper()})',
         ]
 
-        if isinstance(step.body, TextBody):
-            body_kind = "text"
+        self._emit_body(step, function_name, out)
+        self._emit_headers(step, out)
+        out.append('    cmd+=("$url")')
+
+        out.append(
+            f'    http_step {sq(step.name)} {sq(step.method.upper())} "$url" "$body_log" "$has_body" '
+            f'{sq(step.description or "")} "${{cmd[@]}}" || return $?'
+        )
+
+        out.extend(capture_calls(step))
+
+        out.append("}")
+        return "\n".join(out)
+
+    def _emit_body(self, step: HttpStep, function_name: str, out: list[str]) -> None:
+        """Append lines that build ``cmd``/``body_log``/``has_body`` for the step body."""
+        body = step.body
+        if isinstance(body, TextBody):
             out.append("    body=$(cat << EOT")
-            out.append(self._ph.expand(step.body.text))
+            out.append(self._ph.expand(body.text))
             out.append("EOT")
-            out.append(")")
+            out.append(')')
             out.append('    body="${body}$(printf "\\n")"')
-        elif isinstance(step.body, FormBody):
-            body_kind = "form"
-            out.append("    body_form_text=$(cat << EOT")
-            out.extend(self._body_form_rows(step.body.fields))
-            out.append("EOT")
-            out.append(")")
-        elif isinstance(step.body, FileBody):
-            body_kind = "file"
+            out.append('    body_log="$body"')
+            out.append("    has_body=1")
+            out.append('    cmd+=(-d "$body")')
+        elif isinstance(body, FormBody):
+            log_parts: list[str] = []
+            for k, v in body.fields.items():
+                self._validate_no_tabs_newlines(k, f"body_form key {k!r}")
+                self._validate_no_tabs_newlines(v, f"body_form value {v!r}")
+                k_e = self._ph.expand(k)
+                v_e = self._ph.expand(v)
+                out.append(f'    cmd+=(--data-urlencode {dq_preserve_expansion(f"{k_e}={v_e}")})')
+                log_parts.append(f"{k_e}={v_e}")
+            body_log_text = "Note: Values are shown before URL encoding.\n" + "&".join(log_parts)
+            out.append(f'    body_log={dq_preserve_expansion(body_log_text)}')
+            out.append("    has_body=1")
+        elif isinstance(body, FileBody):
             embed_var = self._embed_var_name_file_body(function_name)
             decode = self._emit_decode_file(embed_var)
-            out.extend(decode)
             if decode:
-                out.append(f"    body=\"$decode_file\"")
+                out.extend(decode)
+                path_inner = "$decode_file"
             else:
-                out.append(f"    body={self._ph.expr(step.body.path)}")
-        elif isinstance(step.body, MultipartBody):
-            body_kind = "multipart"
-            multipart_rows = self._multipart_rows(step.body.parts)
-            for idx, part in enumerate(step.body.parts):
-                if isinstance(part, MultipartFile):
-                    embed_var = self._embed_var_name_mp(function_name, idx)
-                    if embed_var in self._embedded:
-                        out.append(f'    local decode_file_{idx}')
-                        out.append(f'    decode_file_{idx}=$(mktemp "$HF_TMPDIR/hf_embed.XXXXXX") || return $?')
-                        out.append(f"    printf '%s' \"${{__HF_EMBED_{embed_var}}}\" | _hf_b64decode > \"$decode_file_{idx}\"")
-                        cols = multipart_rows[idx].split("\t")
-                        cols[2] = f"$decode_file_{idx}"
-                        multipart_rows[idx] = "\t".join(cols)
-            out.append("    body_form_text=$(cat << EOT")
-            out.extend(multipart_rows)
-            out.append("EOT")
-            out.append(")")
-        else:
-            body_kind = "none"
-        out.append(f"    body_kind={sq(body_kind)}")
+                path_inner = self._ph.expand(body.path)
+            self._emit_file_body(out, path_inner)
+        elif isinstance(body, MultipartBody):
+            for idx, part in enumerate(body.parts):
+                if isinstance(part, MultipartField):
+                    self._emit_multipart_field(out, part)
+                else:
+                    self._emit_multipart_file(out, step, function_name, idx, part)
+            out.append("    has_body=1")
+        # else: no body, leave has_body=0 and body_log=""
 
+    def _emit_file_body(self, out: list[str], path_inner: str) -> None:
+        """Append lines for a body_file step (existence check + curl arg + log)."""
+        out.append(f'    if [ ! -f "{path_inner}" ]; then')
+        out.append(f'        echo "error: body_file not found: {path_inner}" >&2')
+        out.append("        return 1")
+        out.append("    fi")
+        out.append(f'    cmd+=(--data-binary "@{path_inner}")')
+        out.append(f'    file_size=$(($(wc -c < "{path_inner}")))')
+        out.append(f'    body_log="Note: binary body from file: {path_inner} (${{file_size}} bytes)"')
+        out.append(f'    echo "# body_file: {path_inner} (${{file_size}} bytes)"')
+        out.append("    has_body=1")
+
+    def _emit_multipart_field(self, out: list[str], part: MultipartField) -> None:
+        """Append lines for a multipart field part (--form-string + log)."""
+        name_e = self._ph.expand(part.name)
+        value_e = self._ph.expand(part.value)
+        self._validate_no_tabs_newlines(name_e, f"multipart field name {part.name!r}")
+        self._validate_no_tabs_newlines(value_e, f"multipart field value {part.value!r}")
+        out.append(f'    cmd+=(--form-string {dq_preserve_expansion(f"{name_e}={value_e}")})')
+        out.append(f'    echo "# multipart field: {name_e}"')
+
+    def _emit_multipart_file(
+        self,
+        out: list[str],
+        step: HttpStep,
+        function_name: str,
+        idx: int,
+        part: MultipartFile,
+    ) -> None:
+        """Append lines for a multipart file part (existence check + curl -F + log)."""
+        name_e = self._ph.expand(part.name)
+        filename_e = self._ph.expand(part.filename) if part.filename else ""
+        type_e = self._ph.expand(part.content_type)
+        self._validate_curl_form_safe(name_e, f"multipart file name {part.name!r}")
+
+        embed_var = self._embed_var_name_mp(function_name, idx)
+        if embed_var in self._embedded:
+            out.append(f"    local decode_file_{idx}")
+            out.append(f'    decode_file_{idx}=$(mktemp "$HF_TMPDIR/hf_embed.XXXXXX") || return $?')
+            out.append(
+                f"    printf '%s' \"${{__HF_EMBED_{embed_var}}}\" | _hf_b64decode > \"$decode_file_{idx}\""
+            )
+            path_inner = f"$decode_file_{idx}"
+        else:
+            path_e = self._ph.expand(part.path)
+            self._validate_curl_form_safe(path_e, f"multipart file path {part.path!r}")
+            path_inner = path_e
+
+        if filename_e:
+            self._validate_curl_form_safe(filename_e, f"multipart file filename {part.filename!r}")
+        if type_e:
+            self._validate_curl_form_safe(type_e, f"multipart file type {part.content_type!r}")
+
+        out.append(f'    if [ ! -f "{path_inner}" ]; then')
+        out.append(f'        echo "error: multipart file not found: {path_inner}" >&2')
+        out.append("        return 1")
+        out.append("    fi")
+
+        # Wrap path and filename in double quotes so curl treats `;`, `,` and
+        # `"` inside them as literal characters rather than option separators
+        # (curl 7.55+).
+        f_arg = f'{name_e}=@\\"{path_inner}\\"'
+        if filename_e:
+            f_arg += f';filename=\\"{filename_e}\\"'
+            if type_e:
+                f_arg += f';type={type_e}'
+        elif type_e:
+            f_arg += f';type={type_e}'
+        out.append(f'    cmd+=(-F "{f_arg}")')
+        out.append(f'    file_size=$(($(wc -c < "{path_inner}")))')
+        out.append(f'    echo "# multipart file: {name_e} = {path_inner} (${{file_size}} bytes)"')
+
+    def _emit_headers(self, step: HttpStep, out: list[str]) -> None:
+        """Append lines that build ``headers_text`` and the matching ``cmd+=(-H ...)`` args."""
         header_lines = [self._ph.expand(f"{k}: {v}") for k, v in step.headers.items()]
         if isinstance(step.body, FormBody) and not self._has_header(step.headers, "Content-Type"):
             header_lines.append("Content-Type: application/x-www-form-urlencoded")
         if isinstance(step.body, FileBody) and not self._has_header(step.headers, "Content-Type"):
             header_lines.append("Content-Type: application/octet-stream")
-        if header_lines:
-            out.append("    headers_text=$(cat << EOT")
-            out.extend(header_lines)
-            out.append("EOT")
-            out.append(")")
-
-        capture_lines = capture_rows(step)
-        if capture_lines:
-            out.append("    captures_text=$(cat <<'EOT'")
-            out.extend(capture_lines)
-            out.append("EOT")
-            out.append(")")
-
-        out.append(
-            f"    http_step {sq(step.name)} {sq(step.method.upper())} \"$url\" "
-            f"\"$body_kind\" \"$body\" \"$body_form_text\" \"$headers_text\" \"$captures_text\" "
-            f"{sq(step.description or '')}"
-        )
-        out.append("}")
-        return "\n".join(out)
+        if not header_lines:
+            return
+        out.append("    headers_text=$(cat << EOT")
+        out.extend(header_lines)
+        out.append("EOT")
+        out.append(")")
+        for line in header_lines:
+            out.append(f'    cmd+=(-H {dq_preserve_expansion(line)})')
 
     def emit_http_until(self, step: HttpStep, function_name: str, attempt_function_name: str | None = None) -> str:
         """Emit an HTTP step wrapped in an until polling loop."""

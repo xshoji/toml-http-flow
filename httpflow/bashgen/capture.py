@@ -6,6 +6,7 @@ import re
 from httpflow.model import FileBody, HttpStep, MultipartBody
 
 from .names import env_name
+from .shell import sq
 
 def is_json_capture_source(source: str) -> bool:
     """Return True when capture source reads the response body JSON."""
@@ -58,9 +59,24 @@ def capture_kind_and_arg(source: str) -> tuple[str, str]:
 
 
 
-def capture_rows(step: HttpStep) -> list[str]:
-    """Emit capture metadata rows for an HTTP step."""
-    rows: list[str] = []
+def capture_calls(
+    step: HttpStep,
+    *,
+    url_expr: str = '"$url"',
+    body_log_expr: str = '"$body_log"',
+    headers_text_expr: str = '"$headers_text"',
+    trace_file_expr: str = '"$HF_TRACE_FILE"',
+    indent: str = "    ",
+) -> list[str]:
+    """Emit per-capture ``capture_*`` call lines for an HTTP step.
+
+    Each line is a complete bash statement (e.g.
+    ``capture_json 'VAR_FOO' 'foo' 'foo' "$HF_TRACE_FILE" '.["foo"]?' || return $?``)
+    intended to be placed in the step function body right after the
+    ``http_step`` call. The ``*_expr`` parameters are the bash expressions
+    referencing the step function's local variables.
+    """
+    lines: list[str] = []
     for var, source in step.capture.items():
         if any(ch in var or ch in source for ch in "\t\n"):
             raise ValueError("capture names and sources must not contain tabs or newlines")
@@ -74,7 +90,28 @@ def capture_rows(step: HttpStep) -> list[str]:
         kind, arg = capture_kind_and_arg(source)
         if "\t" in arg or "\n" in arg:
             raise ValueError("capture helper arguments must not contain tabs or newlines")
-        rows.append("\t".join([env_name("VAR", var), var, kind, source, arg]))
-    return rows
 
-
+        env = env_name("VAR", var)
+        if kind == "json":
+            lines.append(
+                f"{indent}capture_json {sq(env)} {sq(var)} {sq(source)} {trace_file_expr} {sq(arg)} || return $?"
+            )
+        elif kind == "response_header":
+            lines.append(
+                f"{indent}capture_header {sq(env)} {sq(var)} {sq(source)} {trace_file_expr} {sq(arg)} || return $?"
+            )
+        elif kind == "request_header":
+            lines.append(
+                f"{indent}capture_header {sq(env)} {sq(var)} {sq(source)} {headers_text_expr} {sq(arg)} || return $?"
+            )
+        elif kind == "request_url":
+            lines.append(
+                f"{indent}capture_value {sq(env)} {sq(var)} {sq(source)} {url_expr} || return $?"
+            )
+        elif kind == "request_body":
+            lines.append(
+                f"{indent}capture_value {sq(env)} {sq(var)} {sq(source)} {body_log_expr} || return $?"
+            )
+        else:  # pragma: no cover - capture_kind_and_arg is exhaustive
+            raise ValueError(f"unknown capture kind: {kind!r}")
+    return lines

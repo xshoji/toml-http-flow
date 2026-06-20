@@ -176,13 +176,13 @@ class WorkflowSpec:
 | モジュール | 責務 |
 |-----------|------|
 | `bashgen/analysis.py` | ワークフロー解析：capture／until／form／template の要否検出 |
-| `bashgen/capture.py` | capture 定義 → bash 変数 export コード |
+| `bashgen/capture.py` | capture 定義 → 各 step 関数内の `capture_*` 呼び出しコード生成 |
 | `bashgen/conditions.py` | until 条件式 → bash `if ... then` コード |
 | `bashgen/names.py` | 変数名の正規化（`VAR_<NAME>` 形式） |
 | `bashgen/placeholders.py` | `${time.*}` / `${random.*}` 等 → bash コード |
-| `bashgen/runtime.py` | mask／uuid／capture_* 等のランタイム helper 関数群の生成 |
+| `bashgen/runtime.py` | mask／uuid／capture_* 等のランタイム helper 関数群の生成。`http_step` は curl 実行 + ログ + trace_file 作成のみを行う薄い executor |
 | `bashgen/shell.py` | シェルエスケープ・引用符ユーティリティ |
-| `bashgen/steps.py` | 各 step 関数のコード生成 |
+| `bashgen/steps.py` | 各 step 関数のコード生成。step 関数内で直接 `cmd+=(...)` により curl 引数を組み立て、`http_step` 呼び出し後に `capture_*` を直接呼び出す |
 | `bashgen/script.py` | スクリプト全体の組み立て |
 
 ## 2.7 httpflow/cli.py

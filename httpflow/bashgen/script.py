@@ -56,7 +56,7 @@ curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 {('jq --version >/dev/null || { echo "jq is required for JSON capture" >&2; exit 1; }' if analysis.needs_jq else '')}
 {base_helpers(bash_mask_keys_default, include_b64decode=include_b64decode)}
 {capture_helpers() if analysis.has_capture else ''}
-{http_helpers(analysis.has_capture)}
+{http_helpers()}
 {until_helpers() if analysis.has_until else ''}
 {defaults_block}
 {embedded_block}
