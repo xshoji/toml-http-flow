@@ -360,12 +360,10 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         # The user-specified Content-Type must be the only one passed to curl.
-        # (It also appears once in headers_text for capture use, so the total
-        # string count is 2: one heredoc line + one cmd+=(-H ...).)
-        self.assertEqual(
-            script.count('cmd+=(-H "Content-Type: application/x-www-form-urlencoded"'),
-            1,
-        )
+        # It appears once in headers_text; cmd is built via the while loop.
+        self.assertEqual(script.count("Content-Type: application/x-www-form-urlencoded"), 1)
+        self.assertIn('while IFS= read -r line; do', script)
+        self.assertIn('cmd+=(-H "$line")', script)
 
     def test_form_body_content_type_detection_is_case_insensitive(self):
         toml = textwrap.dedent("""
@@ -784,7 +782,8 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("uuid_hex()", script)
         self.assertIn('url="http://example.com/items/$(uuid_hex)"', script)
         self.assertIn("X-Request-Id: $(uuid)", script)
-        self.assertIn('cmd+=(-H "X-Request-Id: $(uuid)")', script)
+        self.assertIn('while IFS= read -r line; do', script)
+        self.assertIn('cmd+=(-H "$line")', script)
         self.assertIn('{"request_id":"$(uuid)"}', script)
 
     def test_generated_uuid_helpers_return_valid_values(self):
@@ -1499,8 +1498,10 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         # The user-specified Content-Type is the only one passed to curl.
-        # (It also appears once in headers_text for capture use.)
-        self.assertEqual(script.count('cmd+=(-H "Content-Type:'), 1)
+        # It appears once in headers_text; cmd is built via the while loop.
+        self.assertEqual(script.count("Content-Type:"), 1)
+        self.assertIn('while IFS= read -r line; do', script)
+        self.assertIn('cmd+=(-H "$line")', script)
         self.assertIn("Content-Type: image/png", script)
         self.assertNotIn("application/octet-stream", script)
 

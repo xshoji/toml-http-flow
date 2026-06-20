@@ -249,8 +249,9 @@ class StepEmitter:
         out.extend(header_lines)
         out.append("EOT")
         out.append(")")
-        for line in header_lines:
-            out.append(f'    cmd+=(-H {dq_preserve_expansion(line)})')
+        out.append('    while IFS= read -r line; do')
+        out.append('        cmd+=(-H "$line")')
+        out.append('    done <<< "$headers_text"')
 
     def emit_http_until(self, step: HttpStep, function_name: str, attempt_function_name: str | None = None) -> str:
         """Emit an HTTP step wrapped in an until polling loop."""
