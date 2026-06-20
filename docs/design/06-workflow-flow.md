@@ -1,4 +1,4 @@
-# 7. 処理フロー
+# 6. 処理フロー
 
 1. CLI 引数のパース (`argparse` で `-f`, `-v`, `-s`, `-q`, `--pretty-json`, `--no-mask`, `--blank-line`)
 2. TOML ファイルの読み込み (`tomllib.load()` はバイナリモードで開く必要あり)

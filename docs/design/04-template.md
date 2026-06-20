@@ -1,4 +1,4 @@
-# 5. テンプレート記法
+# 4. テンプレート記法
 
 Pythonの `string.Template` / シェル / Make などで広く使われている
 **`${...}` 記法**を採用する。理由:
@@ -12,7 +12,7 @@ Pythonの `string.Template` / シェル / Make などで広く使われている
 なお、ネストアクセスは `string.Template` 単体ではサポートされないため、
 ドット区切りパスは独自に正規表現で実装する。
 
-## 5.1 ステップ結果の参照
+## 4.1 ステップ結果の参照
 
 ```
 ${<capture_key>}
@@ -24,7 +24,7 @@ ${var.<capture_key>}
 Authorization = "Bearer ${token}"
 ```
 
-## 5.2 CLI引数変数の参照
+## 4.2 CLI引数変数の参照
 
 ```
 ${var.<variable_name>}
@@ -35,7 +35,7 @@ ${var.<variable_name>}
 url = "https://api.${var.env}.example.com/user"
 ```
 
-## 5.3 環境変数の参照
+## 4.3 環境変数の参照
 
 ```
 ${env.<environment_variable_name>}
@@ -51,7 +51,7 @@ headers = ["Authorization: Bearer ${env.API_TOKEN}"]
 url = "https://api.example.com/users/${env.USER}"
 ```
 
-## 5.5 現在時刻の参照
+## 4.5 現在時刻の参照
 
 ```
 ${time.DATE_ISO}
@@ -67,7 +67,7 @@ ${time.DATE_YMDHMS}
 | `${time.DATE_YMD}` | `20260609` | `%Y%m%d` |
 | `${time.DATE_YMDHMS}` | `20260609123456` | `%Y%m%d%H%M%S` |
 
-## 5.6 ランダム値の参照
+## 4.6 ランダム値の参照
 
 ```
 ${random.UUID}
@@ -85,7 +85,7 @@ body = '{"request_id":"${random.UUID}"}'
 headers = ["X-Request-Id: ${random.UUID_HEX}"]
 ```
 
-## 5.7 リテラル `$` のエスケープ
+## 4.7 リテラル `$` のエスケープ
 
 `string.Template` の慣例に倣い `$$` で `$` 1文字として扱う。
 
@@ -93,7 +93,7 @@ headers = ["X-Request-Id: ${random.UUID_HEX}"]
 body = '{"price":"$$100"}'   # → {"price":"$100"}
 ```
 
-## 5.8 パス要素で使える文字
+## 4.8 パス要素で使える文字
 
 `${...}` 内のパス要素には以下を許可する:
 
@@ -111,7 +111,7 @@ body = '{"price":"$$100"}'   # → {"price":"$100"}
 url = "https://api.example.com/x?args=${token}"
 ```
 
-## 5.9 実装方針
+## 4.9 実装方針
 
 `re.sub` のコールバックで置換する。
 値は `store["vars"]` / `env.*` / `random.*` を単一のルックアップ関数で解決する。

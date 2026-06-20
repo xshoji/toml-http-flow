@@ -1,17 +1,17 @@
-# 10. テスト方針
+# 9. テスト方針
 
 `unittest`（標準ライブラリ）で以下をカバー:
 
-## 10.1 単体テスト
+## 9.1 単体テスト
 
 - **template**: 各種記法の展開、ネスト参照、未定義変数のエラー
 - **config**: 正常 TOML のパース、排他フィールドのバリデーション
-- **httpclient**: `http.server` でローカルモックを起動し、E2E で検証
+- **runtime.http**: `http.server` でローカルモックを起動し、E2E で検証
 - **runner**: 複数ステップ間の変数受け渡し、SLEEP ステップ
 - **until**: `==` / `!=` / `~` / `in` 各オペレータの評価
 - **masking**: ヘッダー・ボディ・URL クエリ・capture 値のマスキング
 
-## 10.2 Parity Test（本体実行 vs 生成スクリプト実行）
+## 9.2 Parity Test（本体実行 vs 生成スクリプト実行）
 
 `httpflow/runtime/*.py` を修正した場合、**本体実行と生成スクリプト実行で結果が一致することを担保する**。
 
@@ -39,7 +39,7 @@ for text in cases:
 
 外部 API には依存せず、`http.server.HTTPServer` によるローカルモックサーバで検証する。
 
-## 10.3 CLI Smoke Check
+## 9.3 CLI Smoke Check
 
 変更後は以下を必ず実行:
 
@@ -57,7 +57,7 @@ python3 -m httpflow generate -f <some.toml> -o /tmp/g.py
 python3 -c "import py_compile; py_compile.compile('/tmp/g.py', doraise=True)"
 ```
 
-## 10.4 自己完結性の担保
+## 9.4 自己完結性の担保
 
 生成スクリプトは以下の観点で検証する:
 

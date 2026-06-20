@@ -7,7 +7,7 @@ Read this before changing any code.
 
 - Name: `httpflow` (package / CLI name) / `toml-http-flow` (repository)
 - Type: CLI tool
-- Purpose: run an HTTP workflow defined in TOML in order / emit a single .py script
+- Purpose: run an HTTP workflow defined in TOML in order / emit a single .py or .sh script
 - Specification: each file under [docs/design/](docs/design/) and [docs/design.md](docs/design.md) is the **single source of truth**. Update it first whenever the spec changes.
 
 ## Absolute requirements
@@ -23,14 +23,16 @@ Read this before changing any code.
 
 | Path | Responsibility | Notes when editing |
 |------|----------------|--------------------|
-| [httpflow/config.py](httpflow/config.py) | TOML → `WorkflowSpec` conversion / validation | If you change `parse_kv_list` behavior, also update design doc §4.4 |
-| [httpflow/template.py](httpflow/template.py) | `${...}` expansion / `$$` escaping | Keep the `PATTERN` regex aligned with the generator's equivalent |
+| [httpflow/config.py](httpflow/config.py) | TOML → `WorkflowSpec` conversion / validation | If you change `parse_kv_list` behavior, also update design doc §3.4 |
+| [httpflow/template.py](httpflow/template.py) | `${...}` expansion / `$$` escaping (thin wrapper over `runtime.core`) | Keep the `PATTERN` regex aligned with the generator's equivalent |
 | [httpflow/cli.py](httpflow/cli.py) | `argparse` dispatch | Preserve backward compatibility: when `run` is omitted, treat it as `run` |
 | [httpflow/generator.py](httpflow/generator.py) | TOML → single .py generator | The output must always pass `compile()` syntax validation |
-| [httpflow/model.py](httpflow/model.py) | Normalised workflow models (`WorkflowSpec`, `HttpStep`, `SleepStep`, etc.) | Kept free of runtime helpers to avoid circular deps |
+| [httpflow/bash_generator.py](httpflow/bash_generator.py) | TOML → single .sh generator (dispatches to `bashgen/`) | Keep parity with the Python generator's behavior where applicable |
+| [httpflow/bashgen/](httpflow/bashgen/) | bash script generation engine | Keep [02-architecture.md](docs/design/02-architecture.md) §2.6 in sync |
+| [httpflow/model.py](httpflow/model.py) | Normalised workflow models (`WorkflowSpec`, `HttpStep`, `SleepStep`, `Body` union) | Kept free of runtime helpers to avoid circular deps |
 | [httpflow/runner.py](httpflow/runner.py) | Step execution engine / variable store / repeat iteration | Same `collect_*` logic used by the generator; keep them in sync |
-| [httpflow/runtime/](httpflow/runtime/) | Shared helpers used by both the package and generated scripts (`core`, `http`, `mask`, `until`, `repeat`) | When fixing logic here, always fix the generator template too |
-| [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{STEP_FUNCTIONS}}` `{{STEP_CALLS}}` `{{DEFAULT_VARS}}` `{{VERSION}}` `{{GENERATED_AT}}` `{{UNTIL_HELPERS}}` `{{MAIN_REPEAT_SETUP}}` |
+| [httpflow/runtime/](httpflow/runtime/) | Shared helpers used by both the package and generated scripts (`core`, `http`, `mask`, `until`) | When fixing logic here, the generator flattens these into the output script; no separate template copy to update |
+| [httpflow/templates/runner.py.tmpl](httpflow/templates/runner.py.tmpl) | Base template for the generated script | Replace only the placeholders `{{VERSION}}` `{{GENERATED_AT}}` `{{RUNTIME_HELPERS}}` `{{UNTIL_HELPERS}}` `{{DEFAULT_VARS}}` `{{REQUIRED_VARS}}` `{{STEP_FUNCTIONS}}` `{{STEP_CALLS}}` |
 | [tests/](tests/) | `unittest`-based tests | Follow the convention of standing up a local mock with `http.server` |
 
 ## Project layout
@@ -61,24 +63,39 @@ toml-http-flow/
 │   ├── config.py            # TOML → WorkflowSpec loader / validation
 │   ├── model.py             # WorkflowSpec / HttpStep / SleepStep / Body union
 │   ├── runner.py            # step execution engine and variable store
-│   ├── embedded_runtime.py  # source-of-truth helpers shared with generated scripts
+│   ├── template.py          # ${...} expansion engine (thin wrapper over runtime.core)
 │   ├── generator.py         # WorkflowSpec → standalone .py emitter
-│   ├── httpclient.py        # urllib HTTP client (embedded_runtime wrapper)
-│   ├── template.py          # ${...} expansion engine (embedded_runtime wrapper)
-│   ├── masking.py           # log output masking (embedded_runtime wrapper)
-│   ├── until.py             # until condition evaluator (embedded_runtime wrapper)
-│   ├── workflow.py          # backward-compatible shim → runner
+│   ├── bash_generator.py    # WorkflowSpec → standalone .sh emitter (dispatches to bashgen)
+│   ├── bashgen/             # bash script generation package
+│   │   ├── __init__.py
+│   │   ├── analysis.py      # workflow analysis / feature detection
+│   │   ├── capture.py       # capture definition → bash code generation
+│   │   ├── conditions.py    # until condition → bash code generation
+│   │   ├── names.py         # variable / function name normalization
+│   │   ├── placeholders.py  # ${time.*} / ${random.*} placeholder rendering
+│   │   ├── runtime.py       # runtime helper function generation
+│   │   ├── script.py        # whole script assembly
+│   │   ├── shell.py         # shell escaping / quoting utilities
+│   │   └── steps.py         # per-step function code generation
+│   ├── runtime/             # shared helpers used by both the package and generated scripts
+│   │   ├── __init__.py
+│   │   ├── core.py          # render / render_mapping / TemplateError
+│   │   ├── http.py          # do_request / extract / run_step / logging
+│   │   ├── mask.py          # mask / mask_url / mask_value
+│   │   └── until.py         # eval_until / poll_until
 │   └── templates/
 │       └── runner.py.tmpl   # frame template for generated scripts (placeholders only)
 └── tests/
     ├── __init__.py
+    ├── _helpers.py
+    ├── test_bash_generator.py
     ├── test_cli.py
     ├── test_config.py
     ├── test_description.py
     ├── test_generator.py
-    ├── test_httpclient.py
     ├── test_masking.py
     ├── test_pretty_json.py
+    ├── test_runtime_http.py
     ├── test_sleep.py
     ├── test_template.py
     ├── test_until.py
@@ -90,20 +107,26 @@ toml-http-flow/
 | Module | Responsibility |
 |---|---|
 | `config.py` | TOML parsing → normalized `WorkflowSpec`. No longer returns raw `WorkflowConfig` for `load()`. |
-| `model.py` | `WorkflowSpec`, `HttpStep`, `SleepStep`, `Body` union (`TextBody` / `FormBody`). |
+| `model.py` | `WorkflowSpec`, `HttpStep`, `SleepStep`, `Body` union (`TextBody` / `FormBody` / `FileBody` / `MultipartBody`). |
 | `runner.py` | Execution engine: iteration order, store updates, step branching. |
-| `embedded_runtime.py` | Source-of-truth helpers (`render`, `extract`, `do_request`, `run_step`, `mask_*`, `eval_until`) used by both the package and the generated script. |
-| `generator.py` | Thin emitter: `WorkflowSpec` → Python source. No long runtime strings. |
-| `workflow.py` | Backward-compatible shim that re-exports from `runner`. |
+| `runtime/` | Source-of-truth helpers (`render`, `extract`, `do_request`, `run_step`, `mask_*`, `eval_until`) used by both the package and the generated script. |
+| `generator.py` | Thin emitter: `WorkflowSpec` → Python source. Flattens `runtime/*.py` into the template. |
+| `bash_generator.py` | Thin dispatcher: `WorkflowSpec` → bash source. Delegates to the `bashgen/` package. |
+| `bashgen/` | bash script generation engine (analysis, steps, runtime helpers, script assembly). |
+| `template.py` | Thin wrapper over `runtime.core.render`; adds `find_var_names()` for `${var.*}` extraction. |
 
 ## On the duplicated runtime helpers
 
-Functions equivalent to `render` / `extract` / `do_request` exist in **both
-the main package and the generator template** (a deliberate design choice
-that prioritizes self-containedness over DRY).
+`httpflow/runtime/*.py` is the **single source of truth** for `render`,
+`extract`, `do_request`, `run_step`, `mask*`, and `eval_until`. The
+package imports them directly, and `generator.py` flattens the selected
+modules into the generated script so it has no `httpflow` dependency.
 
-When you fix one side, always fix the other, and use the tests
-(`tests/test_generator.py`) to guarantee logical equivalence.
+When you fix logic in `runtime/*.py`, the generated script automatically
+picks up the change on the next `generate` run — there is no separate
+template copy to keep in sync. Use `tests/test_generator.py` (parity
+tests) to guarantee the generated script behaves identically to the
+package.
 
 ## Tests
 
@@ -150,12 +173,12 @@ python3 -c "import py_compile; py_compile.compile('/tmp/g.py', doraise=True)"
 - Migrate to `pytest` (we are locked to `unittest`)
 - Emit a generated script that imports the `httpflow` package
 - Change the public spec (CLI arguments / TOML fields / template notation) without updating the design doc
-- Silently add fields that are not in the design doc (when extending, align with §12 "Extension points")
+- Silently add fields that are not in the design doc (when extending, align with §11 "Extension points")
 
 ## Decision criteria for extensions
 
 When you want to add a new feature, consult the list in
-[docs/design.md §12 Extension points](docs/design.md).
+[docs/design.md §11 Extension points](docs/design.md).
 If your item is not there, either split it into a separate PR that updates
 the design doc, or — even inside the same PR — write the design-doc section
 first.

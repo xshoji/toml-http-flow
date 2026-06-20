@@ -1,4 +1,4 @@
-# 3. アーキテクチャ
+# 2. アーキテクチャ
 
 ```
 httpflow/
@@ -32,7 +32,7 @@ httpflow/
     └── runner.py.tmpl   # 生成スクリプトの枠（placeholder のみ）
 ```
 
-## 3.1 httpflow/config.py
+## 2.1 httpflow/config.py
 
 - TOML を `tomllib.load()` でパース
 - `dict → WorkflowSpec` への変換ヘルパを提供
@@ -44,7 +44,7 @@ def load(path: str | Path) -> WorkflowSpec:
     """TOML を読み込み、検証済み WorkflowSpec を返す。"""
 ```
 
-## 3.2 httpflow/model.py
+## 2.2 httpflow/model.py
 
 - `config.py` が返す **正規化済みモデル** `WorkflowSpec` を定義する
 - `SLEEP` を `method` の特殊値から独立した `SleepStep` として扱う
@@ -52,31 +52,81 @@ def load(path: str | Path) -> WorkflowSpec:
 - `runner` と `generator` の共通入力として機能
 
 ```python
-@dataclass
+@dataclass(slots=True)
+class TextBody:
+    text: str
+
+
+@dataclass(slots=True)
+class FormBody:
+    fields: dict[str, str]
+
+
+@dataclass(slots=True)
+class FileBody:
+    path: str
+
+
+@dataclass(slots=True)
+class MultipartField:
+    name: str
+    value: str
+
+
+@dataclass(slots=True)
+class MultipartFile:
+    name: str
+    path: str
+    filename: str | None = None
+    content_type: str = "application/octet-stream"
+
+
+MultipartPart: TypeAlias = MultipartField | MultipartFile
+
+
+@dataclass(slots=True)
+class MultipartBody:
+    parts: list[MultipartPart]
+
+
+Body: TypeAlias = TextBody | FormBody | FileBody | MultipartBody
+
+
+@dataclass(slots=True)
+class UntilSpec:
+    condition: str
+    interval: float = 1.0
+    max_attempts: int = 10
+
+
+@dataclass(slots=True)
 class HttpStep:
     name: str
     method: str
     url: str
     description: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
-    body: TextBody | FormBody | None = None
+    body: Body | None = None
     capture: dict[str, str] = field(default_factory=dict)
     until: UntilSpec | None = None
 
-@dataclass
+
+@dataclass(slots=True)
 class SleepStep:
     name: str
     seconds: str                     # テンプレート式、実行時に評価
     description: str | None = None
 
+
 Step: TypeAlias = HttpStep | SleepStep
 
-@dataclass
+
+@dataclass(slots=True)
 class WorkflowSpec:
     steps: list[Step] = field(default_factory=list)
 ```
 
-## 3.3 httpflow/runtime/（本体＋生成スクリプトの共通 helper）
+## 2.3 httpflow/runtime/（本体＋生成スクリプトの共通 helper）
 
 本体実行と生成スクリプトの両方で必要な helper を、機能別にファイル分割して保持する。
 `generator.py` はワークフローに応じて必要なファイルだけ選び、フラット化（`from __future__` と相対 import 行を除去）して生成スクリプトに埋め込む。
@@ -100,7 +150,7 @@ class WorkflowSpec:
 本体では `from .runtime.core import render` や `from .runtime.http import run_step` として import して使う。
 生成時は `runtime/*.py` のソーステキストを選んでフラット化し、`{{RUNTIME_HELPERS}}` に埋め込む。
 
-## 3.4 httpflow/runner.py
+## 2.4 httpflow/runner.py
 
 - `WorkflowSpec` を受け取り、ステップを順次実行
 - 各ステップ実行前にテンプレート展開 (`run_step` 内で実施)
@@ -109,7 +159,7 @@ class WorkflowSpec:
 - `until` 条件付きポーリング対応
 - **責務は「実行順序と store 更新」のみ**。出力整形はすべて `runtime.http.run_step` に委譲
 
-## 3.5 httpflow/generator.py
+## 2.5 httpflow/generator.py
 
 薄い **emitter**。
 
@@ -118,7 +168,7 @@ class WorkflowSpec:
 - 生成後に `compile()` で構文検証
 - **主要な** ランタイム実装文字列を持たない（共通 helper は `httpflow/runtime/*.py` を source-of-truth とする）
 
-## 3.6 httpflow/bashgen/（bash スクリプト生成パッケージ）
+## 2.6 httpflow/bashgen/（bash スクリプト生成パッケージ）
 
 `--format bash` 指定時に使用される bash スクリプト生成エンジン。
 `httpflow/bash_generator.py` がディスパッチ元となり、`bashgen` パッケージ内の各モジュールに処理を委譲する。
@@ -135,7 +185,7 @@ class WorkflowSpec:
 | `bashgen/steps.py` | 各 step 関数のコード生成 |
 | `bashgen/script.py` | スクリプト全体の組み立て |
 
-## 3.7 httpflow/cli.py
+## 2.7 httpflow/cli.py
 
 - `argparse` で `-f`, `-v`, `-s`, `-q`, `--pretty-json`, `--no-mask`, `--blank-line` をパース
 - `-v key=value` を複数回受け取り `vars` 名前空間に格納
