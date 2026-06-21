@@ -156,6 +156,7 @@ class StepEmitter:
                 path_inner = self._ph.expand(body.path)
             self._emit_file_body(out, path_inner)
         elif isinstance(body, MultipartBody):
+            out.append('    body_log="(multipart)"')
             for idx, part in enumerate(body.parts):
                 if isinstance(part, MultipartField):
                     self._emit_multipart_field(out, part)
@@ -165,22 +166,27 @@ class StepEmitter:
         # else: no body, leave has_body=0 and body_log=""
 
     def _emit_file_body(self, out: list[str], path_inner: str) -> None:
-        """Append lines for a body_file step (existence check + curl arg + log)."""
+        """Append lines for a body_file step (existence check + curl arg + body_log).
+
+        The file info goes into ``body_log`` so ``http_step`` prints it inside the
+        request-body section (after the ``==>`` banner), not before the banner.
+        """
         out.append(f'    [[ -f "{path_inner}" ]] || {{ echo "error: body_file not found: {path_inner}" >&2; return 1; }}')
         out.append(f'    cmd+=(--data-binary "@{path_inner}")')
         out.append(f'    file_size=$(($(wc -c < "{path_inner}")))')
         out.append(f'    body_log="Note: binary body from file: {path_inner} (${{file_size}} bytes)"')
-        out.append(f'    echo "# body_file: {path_inner} (${{file_size}} bytes)"')
         out.append("    has_body=1")
 
     def _emit_multipart_field(self, out: list[str], part: MultipartField) -> None:
-        """Append lines for a multipart field part (--form-string + log)."""
+        """Append lines for a multipart field part (--form-string + body_log)."""
         name_e = self._ph.expand(part.name)
         value_e = self._ph.expand(part.value)
         self._validate_no_tabs_newlines(name_e, f"multipart field name {part.name!r}")
         self._validate_no_tabs_newlines(value_e, f"multipart field value {part.value!r}")
         out.append(f'    cmd+=(--form-string {dq_preserve_expansion(f"{name_e}={value_e}")})')
-        out.append(f'    echo "# multipart field: {name_e}"')
+        # Append to body_log so http_step prints it inside the request-body
+        # section (after the ==> banner), not before the banner.
+        out.append(f'    body_log="${{body_log}}\n  {name_e} = {value_e}"')
 
     def _emit_multipart_file(
         self,
@@ -228,7 +234,15 @@ class StepEmitter:
             f_arg += f';type={type_e}'
         out.append(f'    cmd+=(-F "{f_arg}")')
         out.append(f'    file_size=$(($(wc -c < "{path_inner}")))')
-        out.append(f'    echo "# multipart file: {name_e} = {path_inner} (${{file_size}} bytes)"')
+        # Append to body_log so http_step prints it inside the request-body
+        # section (after the ==> banner), not before the banner.
+        file_log_entry = f"  {name_e} = @{path_inner}"
+        if filename_e:
+            file_log_entry += f"; filename={filename_e}"
+        if type_e:
+            file_log_entry += f"; type={type_e}"
+        file_log_entry += f"; bytes=${{file_size}}"
+        out.append(f'    body_log="${{body_log}}\n{file_log_entry}"')
 
     def _emit_headers(self, step: HttpStep, out: list[str]) -> None:
         """Append lines that build ``headers_text`` and the matching ``cmd+=(-H ...)`` args."""

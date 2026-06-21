@@ -177,7 +177,7 @@ workflow.sh
 - **ボディ（text）**は `body=$(cat << EOT ... EOT)` による heredocument で変数に格納し、`cmd+=(-d "$body")` で渡す
 - **ボディ（form）**は各フィールドを `cmd+=(--data-urlencode "k=v")` で直接展開し、`Content-Type: application/x-www-form-urlencoded` ヘッダを自動付与する。ログ用の `body_log` は `k1=v1&k2=v2` 形式でstep関数内で構築する
 - **ボディ（file）**は `cmd+=(--data-binary "@$path")` で渡し、step 関数内でファイル存在チェックと `body_log` 構築を行う
-- **ボディ（multipart）**は各パートを `cmd+=(--form-string "name=value")` または `cmd+=(-F "name=@\"path\";filename=\"...\";type=\"...\"")` で直接展開し、ファイル存在チェックも step 関数内で行う。`body_kind` / `body_form_text` のような中間表現は使わない
+- **ボディ（multipart）**は各パートを `cmd+=(--form-string "name=value")` または `cmd+=(-F "name=@\"path\";filename=\"...\";type=\"...\"")` で直接展開し、ファイル存在チェックも step 関数内で行う。`body_kind` / `body_form_text` のような中間表現は使わない。各パートの情報（field は `name = value`、file は `name = @path; filename=...; type=...; bytes=N`）は `body_log` に `(multipart)` ヘッダ付きで累積し、`http_step` が `>` 行のタイミングでリクエストボディとして出力する。`==>` バナーより前に echo で出力してはならない（前ステップの出力に混入するため）
 - **SLEEP ステップ**は `sleep <seconds>` を実行
 - **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する。capture 定義は `captures_text` のタブ区切りデータを経由せず、各 step 関数が `http_step` 呼び出しの後に `capture_json "..."` / `capture_header "..."` / `capture_value "..."` を直接呼び出す形で展開する
 - **until** 指定ありの HTTP ステップは、各試行で通常のリクエスト・レスポンス出力・capture を実行した後に条件を評価する。条件が満たされると `* until satisfied on attempt N` を出力し、満たされない場合は `* until not satisfied (attempt N/M), retrying in Xs` を出力して `interval` 秒待つ。`max_attempts` で満たされなければ標準エラーに失敗理由を出力し非ゼロ終了する。`curl --fail` は使わないため HTTP 4xx/5xx は通常レスポンスとして扱い、capture や条件評価の対象になる

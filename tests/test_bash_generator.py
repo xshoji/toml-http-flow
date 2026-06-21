@@ -1394,7 +1394,10 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertNotIn("body_kind=", script)
         self.assertIn('cmd+=(--data-binary "@/tmp/data.bin")', script)
-        self.assertIn("body_file:", script)
+        # File info goes into body_log (printed by http_step inside the
+        # request-body section), not as a pre-banner echo.
+        self.assertIn('body_log="Note: binary body from file: /tmp/data.bin', script)
+        self.assertNotIn('echo "# body_file:', script)
 
     def test_body_file_sends_exact_bytes(self):
         """body_file sends exact file content via --data-binary."""
@@ -1552,6 +1555,12 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("--form-string", script)
         self.assertIn('cmd+=(--form-string "name=alice")', script)
         self.assertIn('cmd+=(--form-string "email=alice@example.com")', script)
+        # Part info is in body_log (printed by http_step after the ==> banner),
+        # not in pre-banner echoes.
+        self.assertNotIn('echo "# multipart field:', script)
+        self.assertIn('body_log="(multipart)"', script)
+        self.assertIn('  name = alice', script)
+        self.assertIn('  email = alice@example.com', script)
 
     def test_body_multipart_literal_at_sign(self):
         """body_multipart with @@value sends literal @value via --form-string."""
@@ -1584,6 +1593,9 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("-F ", script)
         self.assertIn("upload.dat", script)
         self.assertIn("image/png", script)
+        # File part info is in body_log, not in a pre-banner echo.
+        self.assertNotIn('echo "# multipart file:', script)
+        self.assertIn('file = @/tmp/data.bin; filename=upload.dat; type=image/png; bytes=${file_size}', script)
 
     def test_body_multipart_content_type_is_error(self):
         """body_multipart with user-specified Content-Type raises ValueError."""
@@ -1754,6 +1766,63 @@ class TestBashGenerator(unittest.TestCase):
             self.assertEqual(len(_CaptureHandler.multipart_files), 1)
             self.assertEqual(_CaptureHandler.multipart_files[0]["filename"], "upload.dat")
             self.assertEqual(_CaptureHandler.multipart_files[0]["data"], b"file-content")
+
+    def test_multipart_body_log_appears_after_banner(self):
+        """Multipart part info is printed inside the step's section (after ==>),
+        not before the banner where it would look like the previous step's output.
+        """
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.multipart_fields = {}
+        _CaptureHandler.multipart_files = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            file_path = tmp_path / "upload.dat"
+            file_path.write_bytes(b"file-content")
+
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "first"
+                method = "POST"
+                url = "{base}/upload"
+                body = "hello"
+
+                [[requests]]
+                name = "second"
+                method = "POST"
+                url = "{base}/upload"
+                body_multipart = [
+                    "title = test upload",
+                    "file = @{file_path}; filename=upload.dat; type=image/png",
+                ]
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+
+            res = subprocess.run(
+                ["bash", str(script_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+
+            # The multipart "(multipart)" marker must appear AFTER the second
+            # step's ==> banner, not before it (which would attach it to the
+            # first step's output). The banner looks like:
+            #   "==> <timestamp> [second] POST <url>"
+            banner_pos = res.stdout.find("[second] POST")
+            self.assertGreater(banner_pos, 0, "second step banner not found")
+            multipart_marker_pos = res.stdout.find("(multipart)")
+            self.assertGreater(multipart_marker_pos, banner_pos,
+                               "multipart info appears before the step banner")
+            # The field name and file info should also be after the banner.
+            self.assertGreater(res.stdout.find("title = test upload"), banner_pos)
+            self.assertGreater(
+                res.stdout.find("file = @" + str(file_path)), banner_pos
+            )
 
     def test_body_file_capture_request_body_is_error(self):
         """capture request.body with body_file raises ValueError."""
