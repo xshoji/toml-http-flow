@@ -33,6 +33,60 @@ class TestCLISmoke(unittest.TestCase):
         self.assertEqual(res.returncode, 0, msg=res.stderr)
         self.assertIn("--output", res.stdout)
         self.assertIn("--shebang", res.stdout)
+        self.assertIn("--format", res.stdout)
+        # bash is the default format
+        self.assertIn("default: bash", res.stdout)
+
+    def test_generate_default_format_is_bash(self):
+        """`generate` without --format should emit a bash script (curl-based)."""
+        import os
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".toml", delete=False, mode="w") as f:
+            f.write(
+                '[[requests]]\n'
+                'name = "ping"\n'
+                'method = "GET"\n'
+                'url = "http://example.com/ping"\n'
+            )
+            toml_path = f.name
+        out_path = tempfile.mktemp(suffix=".sh")
+        try:
+            res = self._run(["generate", "-f", toml_path, "-o", out_path])
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            with open(out_path, encoding="utf-8") as g:
+                content = g.read()
+            self.assertIn("curl", content)
+            self.assertIn("step_ping", content)
+            self.assertNotIn("import urllib", content)
+        finally:
+            os.unlink(toml_path)
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+    def test_generate_format_python_opt_in(self):
+        """`generate --format python` should emit a Python script."""
+        import os
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".toml", delete=False, mode="w") as f:
+            f.write(
+                '[[requests]]\n'
+                'name = "ping"\n'
+                'method = "GET"\n'
+                'url = "http://example.com/ping"\n'
+            )
+            toml_path = f.name
+        out_path = tempfile.mktemp(suffix=".py")
+        try:
+            res = self._run(["generate", "-f", toml_path, "--format", "python", "-o", out_path])
+            self.assertEqual(res.returncode, 0, msg=res.stderr)
+            with open(out_path, encoding="utf-8") as g:
+                content = g.read()
+            self.assertIn("import urllib", content)
+            self.assertIn("def step_ping", content)
+        finally:
+            os.unlink(toml_path)
+            if os.path.exists(out_path):
+                os.unlink(out_path)
 
     def test_version(self):
         res = self._run(["--version"])

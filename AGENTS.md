@@ -7,7 +7,7 @@ Read this before changing any code.
 
 - Name: `httpflow` (package / CLI name) / `toml-http-flow` (repository)
 - Type: CLI tool
-- Purpose: run an HTTP workflow defined in TOML in order / emit a single .py or .sh script
+- Purpose: run an HTTP workflow defined in TOML in order / emit a single .sh or .py script (bash by default, `--format python` for Python)
 - Specification: each file under [docs/design/](docs/design/) and [docs/design.md](docs/design.md) is the **single source of truth**. Update it first whenever the spec changes.
 
 ## Absolute requirements
@@ -152,8 +152,10 @@ python3 -m httpflow --help
 python3 -m httpflow run --help
 python3 -m httpflow generate --help
 
-# 3. `generate` outputs syntactically valid .py
-python3 -m httpflow generate -f <some.toml> -o /tmp/g.py
+# 3. `generate` outputs syntactically valid scripts (bash by default)
+python3 -m httpflow generate -f <some.toml> -o /tmp/g.sh
+bash -n /tmp/g.sh
+python3 -m httpflow generate -f <some.toml> --format python -o /tmp/g.py
 python3 -c "import py_compile; py_compile.compile('/tmp/g.py', doraise=True)"
 ```
 

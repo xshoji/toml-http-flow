@@ -54,8 +54,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gen.add_argument("-f", "--file", required=True, help="workflow TOML file")
     p_gen.add_argument("-o", "--output", default=None,
                        help="output script file (default: stdout)")
-    p_gen.add_argument("--format", choices=["python", "bash"], default="python",
-                       help="output format (default: python)")
+    p_gen.add_argument("--format", choices=["bash", "python"], default="bash",
+                       help="output format (default: bash)")
     p_gen.add_argument("-v", "--var", action="append", default=[],
                        help="default variable embedded in the generated script (repeatable)")
     p_gen.add_argument("--shebang", action="store_true",

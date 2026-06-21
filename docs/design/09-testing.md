@@ -52,8 +52,10 @@ python3 -m httpflow --help
 python3 -m httpflow run --help
 python3 -m httpflow generate --help
 
-# 生成スクリプトの構文検証
-python3 -m httpflow generate -f <some.toml> -o /tmp/g.py
+# 生成スクリプトの構文検証（既定は bash、--format python で Python スクリプト）
+python3 -m httpflow generate -f <some.toml> -o /tmp/g.sh
+bash -n /tmp/g.sh
+python3 -m httpflow generate -f <some.toml> --format python -o /tmp/g.py
 python3 -c "import py_compile; py_compile.compile('/tmp/g.py', doraise=True)"
 ```
 

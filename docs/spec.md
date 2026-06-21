@@ -326,8 +326,11 @@ Referencing an undefined variable raises `TemplateError` and stops execution.
 
 ## Generated script structure
 
-The generated script is laid out to prioritize **readability and ease of
-ad-hoc editing**. Each `[[requests]]` block expands to an independent
+By default, `generate` emits a standalone **bash** script (`--format bash`,
+see [`generate --format bash`](#generate---format-bash) below). With
+`--format python`, it produces the Python script structure documented in
+this section — laid out to prioritize **readability and ease of ad-hoc
+editing**. Each `[[requests]]` block expands to an independent
 `step_<name>` function that calls the shared `run_step` helper.
 
 ```python
@@ -369,7 +372,7 @@ inlined at the top of the generated script from `runtime/*.py` (flattened via
 
 ### `generate --format bash`
 
-When invoked with `--format bash`, the generator emits a standalone bash script
+When invoked with `--format bash` (the default), the generator emits a standalone bash script
 that uses `curl` + `jq` (if capture is needed) instead of Python.
 
 Dependencies:

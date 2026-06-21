@@ -170,7 +170,7 @@ class WorkflowSpec:
 
 ## 2.6 httpflow/bashgen/（bash スクリプト生成パッケージ）
 
-`--format bash` 指定時に使用される bash スクリプト生成エンジン。
+`--format bash`（既定）指定時に使用される bash スクリプト生成エンジン。
 `httpflow/bash_generator.py` がディスパッチ元となり、`bashgen` パッケージ内の各モジュールに処理を委譲する。
 
 | モジュール | 責務 |
@@ -190,5 +190,5 @@ class WorkflowSpec:
 - `argparse` で `-f`, `-v`, `-s`, `-q`, `--pretty-json`, `--no-mask`, `--blank-line` をパース
 - `-v key=value` を複数回受け取り `vars` 名前空間に格納
 - `config.load()` で `WorkflowSpec` を読み込み、`runner.run()` / `generator.generate()` に渡す
-- `generate` サブコマンドは `--format python`（既定）または `--format bash` を選択可能
+- `generate` サブコマンドは `--format bash`（既定）または `--format python` を選択可能
 - 例外をキャッチして非ゼロ終了コードで終了

@@ -9,8 +9,9 @@ It is implemented using **only the Python 3.11+ standard library** — zero
 external dependencies.
 
 It also ships a `generate` subcommand that emits a **single self-contained
-Python script** from a workflow TOML — useful for archiving, distribution,
-and embedding into CI/CD pipelines without this tool installed.
+script** from a workflow TOML — a bash/curl script by default, or a Python
+script with `--format python`. Useful for archiving, distribution, and
+embedding into CI/CD pipelines without this tool installed.
 
 
 ## What it looks like
@@ -84,8 +85,8 @@ $ python3 -m httpflow run -f demo.toml --var "query1=test-value"
 - **Polling with `until`** — retry a step until a response-derived condition is satisfied
 - **Multiple body modes** — JSON/text body, form body, raw file upload, and multipart form-data
 - **Zero dependencies** — implemented purely on the standard library (`tomllib`, `urllib`, `json`, `argparse`)
-- **Generate standalone scripts** — `generate` subcommand produces a single `.py` file that runs anywhere without installing this tool
-- **Generate shell scripts** — emit a standalone Bash/curl script when that is easier to hand off
+- **Generate standalone bash scripts** — `generate` subcommand produces a single bash/curl script by default that runs anywhere without installing this tool
+- **Generate standalone Python scripts** — pass `--format python` to emit a self-contained Python script (standard library only)
 
 ## Why httpflow?
 
@@ -98,7 +99,7 @@ handoff.
 | Tool | Best at | Where httpflow is different |
 |------|---------|-----------------------------|
 | curl + shell | One-off requests and ad hoc scripts | Captures, variables, retries, masking, and body modes are built into the workflow file instead of hand-written shell glue |
-| Hurl | HTTP request/response assertions and retryable API tests | httpflow emphasizes TOML-structured workflows, per-request random/time values without wrapper scripts, explicit non-HTTP wait steps, and standalone Python/Bash generation |
+| Hurl | HTTP request/response assertions and retryable API tests | httpflow emphasizes TOML-structured workflows, per-request random/time values without wrapper scripts, explicit non-HTTP wait steps, and standalone Bash/Python generation |
 | Postman / Insomnia | GUI exploration and team collections | httpflow is text-first, small, dependency-free, and easy to review in Git |
 | Newman | Running Postman collections in CI | httpflow uses compact TOML and can generate a single script for environments where the CLI is not installed |
 
@@ -149,7 +150,12 @@ python3 -m httpflow -f workflow.toml
 ### 3. Generate a standalone script
 
 ```bash
-python3 -m httpflow generate -f workflow.toml -o workflow.py
+# bash script (default)
+python3 -m httpflow generate -f workflow.toml -o workflow.sh
+bash workflow.sh
+
+# Python script
+python3 -m httpflow generate -f workflow.toml --format python -o workflow.py
 python3 workflow.py
 ```
 
@@ -166,9 +172,13 @@ python3 -m httpflow run -f workflow.toml -v env=production -v user_id=123
 # Quiet mode, pretty JSON, no masking
 python3 -m httpflow run -f workflow.toml -q --pretty-json --no-mask
 
-# Generate a self-contained script
-python3 -m httpflow generate -f workflow.toml -o workflow.py
-python3 -m httpflow generate -f workflow.toml -o workflow.py --shebang
+# Generate a self-contained script (bash by default)
+python3 -m httpflow generate -f workflow.toml -o workflow.sh
+python3 -m httpflow generate -f workflow.toml -o workflow.sh --shebang
+
+# Generate a self-contained Python script
+python3 -m httpflow generate -f workflow.toml --format python -o workflow.py
+python3 -m httpflow generate -f workflow.toml --format python -o workflow.py --shebang
 ```
 
 For full specification (TOML fields, template notation, capture sources,
