@@ -146,10 +146,11 @@ capture_header() {
 def http_helpers() -> str:
     """Return bash helper functions used by generated HTTP steps.
 
-    ``http_step`` is a thin executor: it receives a fully-assembled curl
-    command array from the step function, runs it through the log/mask
-    pipeline, and exposes the trace file path via ``HF_TRACE_FILE`` so the
-    step function can issue ``capture_*`` calls afterwards.
+    ``http_step`` is a thin executor: it receives the fully-assembled curl
+    command as a single string (``curl_command``) built by the step
+    function, ``eval``s it to run curl through the log/mask pipeline, and
+    exposes the trace file path via ``HF_TRACE_FILE`` so the step function
+    can issue ``capture_*`` calls afterwards.
     """
     return r'''
 trace_response_body() {
@@ -201,8 +202,7 @@ http_step() {
     local body_log=$4
     local has_body=$5
     local description=$6
-    shift 6
-    local -a cmd=("$@")
+    local curl_command=$7
     local trace_file boundary_inserted=0
 
     print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
@@ -220,7 +220,7 @@ http_step() {
 
     # Only curl/pipeline failures fail the step here; HTTP 4xx/5xx responses
     # are preserved for capture/until evaluation and are not treated as errors.
-    if ! "${cmd[@]}" \
+    if ! eval "$curl_command" \
         | grep -v '^\({\|}\) \[.*bytes data\]' \
         | grep -v '^\*' \
         | sed -e 's/\* Closing.*//' -e 's/\* Connection.*//' \
