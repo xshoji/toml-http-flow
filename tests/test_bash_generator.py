@@ -211,13 +211,13 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_ping()", script)
-        self.assertIn('local -a cmd=(curl -sS -L -v --no-buffer --stderr - -X GET)', script)
+        self.assertIn('curl_command=$(cat << \'EOT\'', script)
+        self.assertIn('curl -sS -L -v --no-buffer --stderr - -X GET "$url"', script)
         self.assertIn("grep -v '^\\({\\|}\\) \\[.*bytes data\\]'", script)
         self.assertIn("grep -v '^\\*'", script)
         self.assertIn('tee -a "$trace_file"', script)
         self.assertNotIn('-D "$resp_headers" -o "$resp_body"', script)
         self.assertIn("http_step 'ping' 'GET'", script)
-        self.assertIn('cmd+=("$url")', script)
 
     def test_time_placeholders(self):
         base = f"http://127.0.0.1:{self.port}"
@@ -273,7 +273,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("body=$(cat << EOT", script)
         self.assertNotIn("__HF_BODY_step_create", script)
         self.assertIn('{"name":"test"}', script)
-        self.assertIn('cmd+=(-d "$body")', script)
+        self.assertIn('-d "$body"', script)
 
     def test_post_body_is_inserted_at_curl_request_response_boundary(self):
         base = f"http://127.0.0.1:{self.port}"
@@ -311,8 +311,8 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("step_login()", script)
         self.assertIn('Content-Type: application/x-www-form-urlencoded', script)
         self.assertNotIn("body_form_text=", script)
-        self.assertIn('cmd+=(--data-urlencode "user=alice")', script)
-        self.assertIn('cmd+=(--data-urlencode "pass=secret")', script)
+        self.assertIn('--data-urlencode "user=alice"', script)
+        self.assertIn('--data-urlencode "pass=secret"', script)
         # body_log spans two physical lines (the "Note:" prefix then the
         # joined key=value pairs); assert each half separately.
         self.assertIn('body_log="Note: Values are shown before URL encoding.', script)
@@ -342,11 +342,11 @@ class TestBashGenerator(unittest.TestCase):
         # Form fields are emitted directly as curl args with placeholders
         # expanded to ${VAR_*} so the shell expands them at runtime (before
         # curl URL-encodes them).
-        self.assertIn('cmd+=(--data-urlencode "nickname=new_name")', script)
-        self.assertIn('cmd+=(--data-urlencode "email=test@email.com")', script)
-        self.assertIn('cmd+=(--data-urlencode "args=${VAR_ARGSAAA}")', script)
-        self.assertIn('cmd+=(--data-urlencode "params=${VAR_PARAMSPARAMB}")', script)
-        self.assertIn('cmd+=(--data-urlencode "token=${VAR_AUTHORIZATION}")', script)
+        self.assertIn('--data-urlencode "nickname=new_name"', script)
+        self.assertIn('--data-urlencode "email=test@email.com"', script)
+        self.assertIn('--data-urlencode "args=${VAR_ARGSAAA}"', script)
+        self.assertIn('--data-urlencode "params=${VAR_PARAMSPARAMB}"', script)
+        self.assertIn('--data-urlencode "token=${VAR_AUTHORIZATION}"', script)
         self.assertNotIn("%24%7Bauthorization%7D", script)
 
     def test_form_body_does_not_duplicate_user_content_type(self):
@@ -360,10 +360,9 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         # The user-specified Content-Type must be the only one passed to curl.
-        # It appears once in headers_text; cmd is built via the while loop.
+        # It appears once inside the curl_command heredoc.
         self.assertEqual(script.count("Content-Type: application/x-www-form-urlencoded"), 1)
-        self.assertIn('while IFS= read -r line; do', script)
-        self.assertIn('cmd+=(-H "$line")', script)
+        self.assertIn('-H "Content-Type: application/x-www-form-urlencoded"', script)
 
     def test_form_body_content_type_detection_is_case_insensitive(self):
         toml = textwrap.dedent("""
@@ -440,7 +439,7 @@ class TestBashGenerator(unittest.TestCase):
             url = "http://example.com/ping?id=$ITEM_ID"
         """)
         script = self._generate_and_check(toml)
-        self.assertIn('cmd+=("$url")', script)
+        self.assertIn('"$url"', script)
 
     def test_var_placeholders_become_shell_env_names(self):
         toml = textwrap.dedent("""
@@ -781,9 +780,7 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("uuid()", script)
         self.assertIn("uuid_hex()", script)
         self.assertIn('url="http://example.com/items/$(uuid_hex)"', script)
-        self.assertIn("X-Request-Id: $(uuid)", script)
-        self.assertIn('while IFS= read -r line; do', script)
-        self.assertIn('cmd+=(-H "$line")', script)
+        self.assertIn('X-Request-Id: $(uuid)', script)
         self.assertIn('{"request_id":"$(uuid)"}', script)
 
     def test_generated_uuid_helpers_return_valid_values(self):
@@ -1393,7 +1390,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertNotIn("body_kind=", script)
-        self.assertIn('cmd+=(--data-binary "@/tmp/data.bin")', script)
+        self.assertIn('--data-binary "@/tmp/data.bin"', script)
         # File info goes into body_log (printed by http_step inside the
         # request-body section), not as a pre-banner echo.
         self.assertIn('body_log="Note: binary body from file: /tmp/data.bin', script)
@@ -1501,11 +1498,9 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         # The user-specified Content-Type is the only one passed to curl.
-        # It appears once in headers_text; cmd is built via the while loop.
+        # It appears once inside the curl_command heredoc.
         self.assertEqual(script.count("Content-Type:"), 1)
-        self.assertIn('while IFS= read -r line; do', script)
-        self.assertIn('cmd+=(-H "$line")', script)
-        self.assertIn("Content-Type: image/png", script)
+        self.assertIn('-H "Content-Type: image/png"', script)
         self.assertNotIn("application/octet-stream", script)
 
     def test_body_file_missing_fails_at_runtime(self):
@@ -1553,8 +1548,8 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertNotIn("body_kind=", script)
         self.assertIn("--form-string", script)
-        self.assertIn('cmd+=(--form-string "name=alice")', script)
-        self.assertIn('cmd+=(--form-string "email=alice@example.com")', script)
+        self.assertIn('--form-string "name=alice"', script)
+        self.assertIn('--form-string "email=alice@example.com"', script)
         # Part info is in body_log (printed by http_step after the ==> banner),
         # not in pre-banner echoes.
         self.assertNotIn('echo "# multipart field:', script)
@@ -1575,7 +1570,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("--form-string", script)
-        self.assertIn('cmd+=(--form-string "greeting=@hello")', script)
+        self.assertIn('--form-string "greeting=@hello"', script)
 
     def test_body_multipart_file_field(self):
         """body_multipart file field uses curl -F with @path."""
@@ -1933,7 +1928,7 @@ class TestBashGenerator(unittest.TestCase):
             self.assertIn("__HF_EMBED_step_upload_body", script)
             self.assertIn("readonly __HF_EMBED_step_upload_body=", script)
             self.assertIn("printf '%s' \"${__HF_EMBED_step_upload_body}\" | _hf_b64decode > \"$decode_file\"", script)
-            self.assertIn('cmd+=(--data-binary "@$decode_file")', script)
+            self.assertIn('--data-binary "@$decode_file"', script)
 
     def test_embed_files_body_file_runtime(self):
         """--embed-files body_file decodes and sends the correct content at runtime."""
