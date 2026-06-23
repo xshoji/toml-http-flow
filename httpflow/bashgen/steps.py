@@ -96,9 +96,17 @@ class StepEmitter:
         """Emit an HTTP step function.
 
         The function builds the full ``curl`` command as a single string
-        (``curl_command``) from the step definition, calls ``http_step`` to
-        ``eval`` and execute it, then issues any ``capture_*`` calls using
-        the trace file left in ``$HF_TRACE_FILE``.
+        (``curl_command``) from the step definition, then calls
+        ``http_step``. ``http_step`` expands ``curl_command`` once into a
+        bash array, derives the request-body log (``body_log``) from those
+        expanded values, runs curl via the same array, and exposes the
+        trace file path in ``$HF_TRACE_FILE`` so the step function can
+        issue ``capture_*`` calls afterwards. Building the log inside
+        ``http_step`` (instead of constructing ``body_log`` separately in
+        the step function) guarantees the log and the actual request
+        share identical values, including dynamic ones like
+        ``$(uuid)`` / ``$(time_date_ymd)`` that would otherwise evaluate
+        twice and diverge.
         """
 
         # Validate multipart Content-Type before anything else (fail fast).
@@ -111,9 +119,6 @@ class StepEmitter:
         out: list[str] = [
             f"{function_name}() {{",
             f'    local url={self._ph.expr(step.url)}',
-            "    local body",
-            '    local body_log=""',
-            "    local has_body=0",
             "    local curl_command",
         ]
 
@@ -135,7 +140,7 @@ class StepEmitter:
         out.append(")")
 
         out.append(
-            f'    http_step {sq(step.name)} {sq(step.method.upper())} "$url" "$body_log" "$has_body" '
+            f'    http_step {sq(step.name)} {sq(step.method.upper())} "$url" '
             f'{sq(step.description or "")} "$curl_command" || return $?'
         )
 
@@ -175,34 +180,28 @@ class StepEmitter:
         return []
 
     def _emit_text_body(self, body: TextBody, out: list[str]) -> list[str]:
-        """Append heredoc/body_log lines and return the ``-d`` curl arg."""
+        """Append the body heredoc and return the ``-d`` curl arg."""
+        out.append("    local body")
         out.append("    body=$(cat << EOT")
         out.append(self._ph.expand(body.text))
         out.append("EOT")
         out.append(")")
         out.append('    body="${body}$(printf \"\\n\")"')
-        out.append('    body_log="$body"')
-        out.append("    has_body=1")
         return ['-d "$body"']
 
     def _emit_form_body(self, body: FormBody, out: list[str]) -> list[str]:
-        """Append body_log lines and return ``--data-urlencode`` curl args."""
+        """Return ``--data-urlencode`` curl args for the form fields."""
         args: list[str] = []
-        log_parts: list[str] = []
         for k, v in body.fields.items():
             self._validate_no_tabs_newlines(k, f"body_form key {k!r}")
             self._validate_no_tabs_newlines(v, f"body_form value {v!r}")
             k_e = self._ph.expand(k)
             v_e = self._ph.expand(v)
             args.append(f'--data-urlencode {dq_preserve_expansion(f"{k_e}={v_e}")}')
-            log_parts.append(f"{k_e}={v_e}")
-        body_log_text = "Note: Values are shown before URL encoding.\n" + "&".join(log_parts)
-        out.append(f'    body_log={dq_preserve_expansion(body_log_text)}')
-        out.append("    has_body=1")
         return args
 
     def _emit_file_body(self, body: FileBody, function_name: str, out: list[str]) -> list[str]:
-        """Append existence check/body_log lines and return the ``--data-binary`` curl arg."""
+        """Append the existence check and return the ``--data-binary`` curl arg."""
         embed_var = self._embed_var_name_file_body(function_name)
         decode = self._emit_decode_file(embed_var)
         if decode:
@@ -211,30 +210,24 @@ class StepEmitter:
         else:
             path_inner = self._ph.expand(body.path)
         out.append(f'    [[ -f "{path_inner}" ]] || {{ echo "error: body_file not found: {path_inner}" >&2; return 1; }}')
-        out.append(f'    file_size=$(($(wc -c < "{path_inner}")))')
-        out.append(f'    body_log="Note: binary body from file: {path_inner} (${{file_size}} bytes)"')
-        out.append("    has_body=1")
         return [f'--data-binary "@{path_inner}"']
 
     def _emit_multipart_body(self, body: MultipartBody, step: HttpStep, function_name: str, out: list[str]) -> list[str]:
-        """Append body_log/has_body lines and return ``--form-string``/``-F`` curl args."""
+        """Return ``--form-string``/``-F`` curl args for the multipart parts."""
         args: list[str] = []
-        out.append('    body_log="(multipart)"')
         for idx, part in enumerate(body.parts):
             if isinstance(part, MultipartField):
                 args.append(self._emit_multipart_field(part, out))
             else:
                 args.append(self._emit_multipart_file(step, function_name, idx, part, out))
-        out.append("    has_body=1")
         return args
 
     def _emit_multipart_field(self, part: MultipartField, out: list[str]) -> str:
-        """Append body_log line and return the ``--form-string`` curl arg."""
+        """Validate and return the ``--form-string`` curl arg for a text part."""
         name_e = self._ph.expand(part.name)
         value_e = self._ph.expand(part.value)
         self._validate_no_tabs_newlines(name_e, f"multipart field name {part.name!r}")
         self._validate_no_tabs_newlines(value_e, f"multipart field value {part.value!r}")
-        out.append(f'    body_log="${{body_log}}\\n  {name_e} = {value_e}"')
         return f'--form-string {dq_preserve_expansion(f"{name_e}={value_e}")}'
 
     def _emit_multipart_file(
@@ -276,7 +269,7 @@ class StepEmitter:
         # (curl 7.55+).
         # Both path and filename are wrapped in `\"` (a single backslash + double
         # quote) so that, after the quoted heredoc preserves them literally and
-        # http_step's `eval` re-parses the line, the arg curl receives is
+        # http_step's single eval re-parses the line, the arg curl receives is
         # `name=@"path";filename="name";type=mime` — the same form the old array
         # approach produced. Using more backslashes here would leave literal
         # backslashes inside the curl `-F` argument.
@@ -287,17 +280,6 @@ class StepEmitter:
                 f_arg += f';type={type_e}'
         elif type_e:
             f_arg += f';type={type_e}'
-
-        out.append(f'    file_size=$(($(wc -c < "{path_inner}")))')
-        # Append to body_log so http_step prints it inside the request-body
-        # section (after the ==> banner), not before the banner.
-        file_log_entry = f"  {name_e} = @{path_inner}"
-        if filename_e:
-            file_log_entry += f"; filename={filename_e}"
-        if type_e:
-            file_log_entry += f"; type={type_e}"
-        file_log_entry += f"; bytes=${{file_size}}"
-        out.append(f'    body_log="${{body_log}}\\n{file_log_entry}"')
 
         return f'-F "{f_arg}"'
 

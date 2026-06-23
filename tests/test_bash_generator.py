@@ -300,11 +300,12 @@ class TestBashGenerator(unittest.TestCase):
         self.assertTrue(lines[boundary_idx + 3].startswith("< HTTP/"))
 
     def test_form_body(self):
-        toml = textwrap.dedent("""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
             [[requests]]
             name = "login"
             method = "POST"
-            url = "http://example.com/auth"
+            url = "{base}/auth"
             body_form = ["user = alice", "pass = secret"]
         """)
         script = self._generate_and_check(toml)
@@ -313,10 +314,22 @@ class TestBashGenerator(unittest.TestCase):
         self.assertNotIn("body_form_text=", script)
         self.assertIn('--data-urlencode "user=alice"', script)
         self.assertIn('--data-urlencode "pass=secret"', script)
-        # body_log spans two physical lines (the "Note:" prefix then the
-        # joined key=value pairs); assert each half separately.
-        self.assertIn('body_log="Note: Values are shown before URL encoding.', script)
-        self.assertIn('user=alice&pass=secret"', script)
+        # body_log is derived inside http_step from the parsed curl_command,
+        # not pre-built in the step function. The old prebuilt form assigned
+        # a *multi-line* body_log (newline inside the quotes) directly in the
+        # step function; the helper builds the log line-by-line instead, so
+        # this multi-line assignment pattern must be absent from the script.
+        self.assertNotIn('body_log="Note: Values are shown before URL encoding.\n', script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        # The runtime body log (built from the expanded curl args) should
+        # appear in the request-body section, prefixed with `> `.
+        self.assertIn("> Note: Values are shown before URL encoding.", res.stdout)
+        self.assertIn("> user=alice&pass=secret", res.stdout)
 
     def test_form_body_placeholders_expand_before_urlencode(self):
         toml = textwrap.dedent("""
@@ -1391,9 +1404,11 @@ class TestBashGenerator(unittest.TestCase):
         script = self._generate_and_check(toml)
         self.assertNotIn("body_kind=", script)
         self.assertIn('--data-binary "@/tmp/data.bin"', script)
-        # File info goes into body_log (printed by http_step inside the
-        # request-body section), not as a pre-banner echo.
-        self.assertIn('body_log="Note: binary body from file: /tmp/data.bin', script)
+        # body_log is no longer pre-built in the step function; it is derived
+        # inside http_step from the parsed curl_command. The "Note: binary
+        # body from file:" template lives in the http_step helper now.
+        self.assertIn("Note: binary body from file:", script)
+        self.assertNotIn('body_log="Note: binary body from file: /tmp/data.bin', script)
         self.assertNotIn('echo "# body_file:', script)
 
     def test_body_file_sends_exact_bytes(self):
@@ -1535,11 +1550,14 @@ class TestBashGenerator(unittest.TestCase):
 
     def test_body_multipart_fields(self):
         """body_multipart with regular text fields uses --form-string."""
-        toml = textwrap.dedent("""
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.multipart_fields = {}
+        _CaptureHandler.multipart_files = []
+        toml = textwrap.dedent(f"""
             [[requests]]
             name = "mform"
             method = "POST"
-            url = "http://example.com/upload"
+            url = "{base}/upload"
             body_multipart = [
                 "name = alice",
                 "email = alice@example.com",
@@ -1550,12 +1568,29 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("--form-string", script)
         self.assertIn('--form-string "name=alice"', script)
         self.assertIn('--form-string "email=alice@example.com"', script)
-        # Part info is in body_log (printed by http_step after the ==> banner),
-        # not in pre-banner echoes.
+        # Part info is no longer pre-built in the step function; http_step
+        # derives it from the parsed curl_command. The old prebuilt form
+        # appended to body_log inside the step using
+        # `body_log="${body_log}\n..."` (literal backslash-n inside the
+        # quotes); the helper uses `$'\n'` instead, so this literal append
+        # pattern must be absent from the generated script.
         self.assertNotIn('echo "# multipart field:', script)
-        self.assertIn('body_log="(multipart)"', script)
-        self.assertIn('  name = alice', script)
-        self.assertIn('  email = alice@example.com', script)
+        self.assertNotIn('body_log="${body_log}\\n', script)
+        self.assertIn('(multipart)', script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        # Runtime body log (built from expanded curl args) appears after the
+        # banner in the request-body section.
+        self.assertIn("> (multipart)", res.stdout)
+        self.assertIn(">   name = alice", res.stdout)
+        self.assertIn(">   email = alice@example.com", res.stdout)
+        # And the fields were actually sent.
+        self.assertEqual(_CaptureHandler.multipart_fields["name"], "alice")
+        self.assertEqual(_CaptureHandler.multipart_fields["email"], "alice@example.com")
 
     def test_body_multipart_literal_at_sign(self):
         """body_multipart with @@value sends literal @value via --form-string."""
@@ -1574,23 +1609,50 @@ class TestBashGenerator(unittest.TestCase):
 
     def test_body_multipart_file_field(self):
         """body_multipart file field uses curl -F with @path."""
-        toml = textwrap.dedent("""
-            [[requests]]
-            name = "mform"
-            method = "POST"
-            url = "http://example.com/upload"
-            body_multipart = [
-                "file = @/tmp/data.bin; filename=upload.dat; type=image/png",
-            ]
-        """)
-        script = self._generate_and_check(toml)
+        base = f"http://127.0.0.1:{self.port}"
+        _CaptureHandler.multipart_fields = {}
+        _CaptureHandler.multipart_files = []
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            data_path = tmp_path / "data.bin"
+            data_path.write_bytes(b"file-bytes")
+            toml = textwrap.dedent(f"""
+                [[requests]]
+                name = "mform"
+                method = "POST"
+                url = "{base}/upload"
+                body_multipart = [
+                    "file = @{data_path}; filename=upload.dat; type=image/png",
+                ]
+            """)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf)
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            syntax = subprocess.run(["bash", "-n", str(script_path)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(syntax.returncode, 0, msg=syntax.stderr + "\n" + script)
+
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
         self.assertNotIn("body_kind=", script)
         self.assertIn("-F ", script)
         self.assertIn("upload.dat", script)
         self.assertIn("image/png", script)
-        # File part info is in body_log, not in a pre-banner echo.
+        # File part info is no longer pre-built in the step function; the
+        # `file = @path; filename=...; type=...; bytes=N` log line is derived
+        # inside http_step from the parsed -F argument.
         self.assertNotIn('echo "# multipart file:', script)
-        self.assertIn('file = @/tmp/data.bin; filename=upload.dat; type=image/png; bytes=${file_size}', script)
+        self.assertNotIn('bytes=${file_size}', script)
+        # Runtime log: the file part info appears after the banner, with the
+        # actual file size (10 bytes for "file-bytes").
+        self.assertIn("> (multipart)", res.stdout)
+        self.assertIn(f">   file = @{data_path}; filename=upload.dat; type=image/png; bytes=10", res.stdout)
+        # And the file was actually sent.
+        self.assertEqual(len(_CaptureHandler.multipart_files), 1)
+        self.assertEqual(_CaptureHandler.multipart_files[0]["filename"], "upload.dat")
+        self.assertEqual(_CaptureHandler.multipart_files[0]["data"], b"file-bytes")
 
     def test_body_multipart_content_type_is_error(self):
         """body_multipart with user-specified Content-Type raises ValueError."""

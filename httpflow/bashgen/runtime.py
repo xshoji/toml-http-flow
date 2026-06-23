@@ -150,9 +150,16 @@ def http_helpers() -> str:
 
     ``http_step`` is a thin executor: it receives the fully-assembled curl
     command as a single string (``curl_command``) built by the step
-    function, ``eval``s it to run curl through the log/mask pipeline, and
-    exposes the trace file path via ``HF_TRACE_FILE`` so the step function
-    can issue ``capture_*`` calls afterwards.
+    function. The heredoc that produced ``curl_command`` used a quoted
+    delimiter so ``${VAR_*}`` / ``$(uuid)`` etc. are still literal in the
+    string. ``http_step`` expands them **once** into a bash array
+    (``cmd_args``) and uses that same array both to derive the request-body
+    log (``body_log``) and to run curl, so the log and the actual request
+    observe identical values — including dynamic ones such as
+    ``$(uuid)`` / ``$(time_date_ymd)`` that would otherwise differ between
+    the two evaluations. The trace file path is exposed via
+    ``HF_TRACE_FILE`` so the step function can issue ``capture_*`` calls
+    afterwards.
     """
     return r'''
 trace_response_body() {
@@ -201,11 +208,15 @@ http_step() {
     local step_name=$1
     local method=$2
     local url=$3
-    local body_log=$4
-    local has_body=$5
-    local description=$6
-    local curl_command=$7
+    local description=$4
+    local curl_command=$5
     local trace_file boundary_inserted=0
+    local body_log=""
+    local body_log_pairs=""
+    local has_body=0
+    local -a cmd_args=()
+    local i n arg val name rest fpath fsize file_part path_seg after_path entry k v
+    local -a segs=()
 
     print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"
 
@@ -216,13 +227,137 @@ http_step() {
         done <<< "$description"
     }
 
+    # Expand the curl_command once into a bash array. The heredoc that built
+    # curl_command used a quoted delimiter so ${VAR_*} / $(uuid) etc. are
+    # still literal here; this single eval expands them once so the body log
+    # and the actual curl invocation observe identical values (UUIDs and
+    # timestamps included). Newlines become spaces first so eval parses the
+    # whole command as one array assignment.
+    eval "cmd_args=(${curl_command//$'\n'/ })"
+
+    # Derive body_log from the expanded args so it reflects what curl sends.
+    n=${#cmd_args[@]}
+    i=0
+    while ((i < n)); do
+        arg="${cmd_args[i]}"
+        case "$arg" in
+            -d|--data|--data-raw)
+                if ((i + 1 < n)); then
+                    body_log="${cmd_args[i+1]}"
+                    has_body=1
+                    i=$((i + 2))
+                    continue
+                fi
+                ;;
+            --data-binary)
+                if ((i + 1 < n)); then
+                    val="${cmd_args[i+1]}"
+                    if [[ "$val" == @* ]]; then
+                        fpath="${val:1}"
+                        fsize=$(($(wc -c < "$fpath")))
+                        body_log="Note: binary body from file: $fpath ($fsize bytes)"
+                    else
+                        body_log="$val"
+                    fi
+                    has_body=1
+                    i=$((i + 2))
+                    continue
+                fi
+                ;;
+            --data-urlencode)
+                if ((i + 1 < n)); then
+                    val="${cmd_args[i+1]}"
+                    if [[ -z "$body_log_pairs" ]]; then
+                        body_log="Note: Values are shown before URL encoding."
+                        body_log_pairs="$val"
+                    else
+                        body_log_pairs="${body_log_pairs}&${val}"
+                    fi
+                    has_body=1
+                    i=$((i + 2))
+                    continue
+                fi
+                ;;
+            --form-string)
+                if ((i + 1 < n)); then
+                    val="${cmd_args[i+1]}"
+                    [[ -z "$body_log" ]] && body_log="(multipart)"
+                    name="${val%%=*}"
+                    rest="${val#*=}"
+                    body_log="${body_log}"$'\n'"  ${name} = ${rest}"
+                    has_body=1
+                    i=$((i + 2))
+                    continue
+                fi
+                ;;
+            -F|--form)
+                if ((i + 1 < n)); then
+                    val="${cmd_args[i+1]}"
+                    [[ -z "$body_log" ]] && body_log="(multipart)"
+                    name="${val%%=*}"
+                    rest="${val#*=}"
+                    if [[ "$rest" == @* ]]; then
+                        # File part. rest looks like @"path";filename="x";type=mime
+                        # after the single eval (inner \" became literal ").
+                        file_part="${rest:1}"
+                        path_seg="${file_part%%;*}"
+                        after_path=""
+                        # Detect a ';' separator without a glob pattern (the
+                        # `;` would otherwise terminate the [[ ]] conditional).
+                        [[ "$file_part" == "${file_part%%;*}" ]] || after_path="${file_part#*;}"
+                        # Strip surrounding double quotes from the path.
+                        path_seg="${path_seg#\"}"
+                        path_seg="${path_seg%\"}"
+                        fpath="$path_seg"
+                        entry="  ${name} = @${fpath}"
+                        if [[ -n "$after_path" ]]; then
+                            IFS=';' read -ra segs <<< "$after_path"
+                            for seg in "${segs[@]}"; do
+                                [[ "$seg" == *=* ]] || continue
+                                k="${seg%%=*}"
+                                v="${seg#*=}"
+                                # Strip surrounding double quotes from value.
+                                v="${v#\"}"
+                                v="${v%\"}"
+                                entry="${entry}; ${k}=${v}"
+                            done
+                        fi
+                        if [[ -f "$fpath" ]]; then
+                            fsize=$(($(wc -c < "$fpath")))
+                            entry="${entry}; bytes=${fsize}"
+                        fi
+                        body_log="${body_log}"$'\n'"${entry}"
+                    else
+                        body_log="${body_log}"$'\n'"  ${name} = ${rest}"
+                    fi
+                    has_body=1
+                    i=$((i + 2))
+                    continue
+                fi
+                ;;
+        esac
+        i=$((i + 1))
+    done
+
+    # Append accumulated form pairs (joined with &) on a second line.
+    if [[ -n "$body_log_pairs" ]]; then
+        body_log="${body_log}"$'\n'"${body_log_pairs}"
+    fi
+
+    # Expose the derived body log so capture_* calls running after http_step
+    # returns (notably capture of request.body) can reuse the exact value curl
+    # sent, without re-evaluating $(uuid) / ${VAR_*} / etc.
+    HF_BODY_LOG="$body_log"
+
     trace_file=$(mktemp "$HF_TMPDIR/hf_trace.XXXXXX")
     : > "$trace_file"
     HF_TRACE_FILE="$trace_file"
 
     # Only curl/pipeline failures fail the step here; HTTP 4xx/5xx responses
     # are preserved for capture/until evaluation and are not treated as errors.
-    if ! eval "${curl_command//$'\n'/ }" \
+    # Run curl via the expanded array so what curl sends is exactly what was
+    # logged above (single evaluation of $(uuid) / ${VAR_*} / etc.).
+    if ! "${cmd_args[@]}" \
         | grep -v '^\({\|}\) \[.*bytes data\]' \
         | grep -v '^\*' \
         | sed -e 's/\* Closing.*//' -e 's/\* Connection.*//' \

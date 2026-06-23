@@ -63,7 +63,7 @@ def capture_calls(
     step: HttpStep,
     *,
     url_expr: str = '"$url"',
-    body_log_expr: str = '"$body_log"',
+    body_log_expr: str = '"$HF_BODY_LOG"',
     trace_file_expr: str = '"$HF_TRACE_FILE"',
     curl_command_expr: str = '"$curl_command"',
     indent: str = "    ",
@@ -74,7 +74,8 @@ def capture_calls(
     ``capture_json 'VAR_FOO' 'foo' 'foo' "$HF_TRACE_FILE" '.["foo"]?' || return $?``)
     intended to be placed in the step function body right after the
     ``http_step`` call. The ``*_expr`` parameters are the bash expressions
-    referencing the step function's local variables.
+    referencing variables exposed by ``http_step`` (``HF_TRACE_FILE``,
+    ``HF_BODY_LOG``, ``$url``, ``$curl_command``).
     """
     lines: list[str] = []
     for var, source in step.capture.items():
