@@ -145,7 +145,7 @@ capture_header() {
 '''
 
 
-def http_helpers() -> str:
+def http_helpers(*, expose_body_log: bool = False) -> str:
     """Return bash helper functions used by generated HTTP steps.
 
     ``http_step`` is a thin executor: it receives the fully-assembled curl
@@ -160,7 +160,19 @@ def http_helpers() -> str:
     the two evaluations. The trace file path is exposed via
     ``HF_TRACE_FILE`` so the step function can issue ``capture_*`` calls
     afterwards.
+
+    When *expose_body_log* is set, ``http_step`` also publishes the derived
+    body log as ``HF_BODY_LOG`` so ``capture ... = request.body`` calls
+    (which run after ``http_step`` returns) can reuse the exact value curl
+    sent. The assignment is omitted when no step captures ``request.body``
+    to avoid emitting an unused variable.
     """
+    body_log_expose = r'''
+    # Expose the derived body log so capture_* calls running after http_step
+    # returns (notably capture of request.body) can reuse the exact value curl
+    # sent, without re-evaluating $(uuid) / ${VAR_*} / etc.
+    HF_BODY_LOG="$body_log"
+''' if expose_body_log else ''
     return r'''
 trace_response_body() {
     awk '
@@ -343,12 +355,7 @@ http_step() {
     if [[ -n "$body_log_pairs" ]]; then
         body_log="${body_log}"$'\n'"${body_log_pairs}"
     fi
-
-    # Expose the derived body log so capture_* calls running after http_step
-    # returns (notably capture of request.body) can reuse the exact value curl
-    # sent, without re-evaluating $(uuid) / ${VAR_*} / etc.
-    HF_BODY_LOG="$body_log"
-
+''' + body_log_expose + r'''
     trace_file=$(mktemp "$HF_TMPDIR/hf_trace.XXXXXX")
     : > "$trace_file"
     HF_TRACE_FILE="$trace_file"

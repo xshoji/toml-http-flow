@@ -54,6 +54,7 @@ class WorkflowAnalysis:
     has_capture: bool
     has_until: bool
     needs_jq: bool
+    needs_body_log_var: bool = False
     embedded_files: tuple[EmbeddedFile, ...] = ()
 
 
@@ -144,6 +145,13 @@ def analyze_workflow(
         and any(is_json_capture_source(source) for source in s.capture.values())
         for s in spec.steps
     )
+    # HF_BODY_LOG is only consumed by `capture ... = request.body` calls, which
+    # are only valid for text/form bodies (FileBody/MultipartBody raise). Emit
+    # the variable assignment in http_step only when such a capture exists.
+    needs_body_log_var = any(
+        isinstance(s, HttpStep) and "request.body" in s.capture.values()
+        for s in spec.steps
+    )
 
     for i, s in enumerate(spec.steps):
         fn = step_function_name(s.name, used)
@@ -166,5 +174,6 @@ def analyze_workflow(
         has_capture=has_capture,
         has_until=has_until,
         needs_jq=needs_jq,
+        needs_body_log_var=needs_body_log_var,
         embedded_files=tuple(embedded_files),
     )
