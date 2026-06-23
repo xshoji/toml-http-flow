@@ -64,8 +64,8 @@ def capture_calls(
     *,
     url_expr: str = '"$url"',
     body_log_expr: str = '"$body_log"',
-    headers_text_expr: str = '"$headers_text"',
     trace_file_expr: str = '"$HF_TRACE_FILE"',
+    curl_command_expr: str = '"$curl_command"',
     indent: str = "    ",
 ) -> list[str]:
     """Emit per-capture ``capture_*`` call lines for an HTTP step.
@@ -102,7 +102,7 @@ def capture_calls(
             )
         elif kind == "request_header":
             lines.append(
-                f"{indent}capture_header {sq(env)} {sq(var)} {sq(source)} {headers_text_expr} {sq(arg)} || return $?"
+                f"{indent}capture_header {sq(env)} {sq(var)} {sq(source)} {curl_command_expr} {sq(arg)} || return $?"
             )
         elif kind == "request_url":
             lines.append(

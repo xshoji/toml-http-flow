@@ -114,15 +114,14 @@ class StepEmitter:
             "    local body",
             '    local body_log=""',
             "    local has_body=0",
-            '    local headers_text=""',
             "    local curl_command",
         ]
 
         # Body setup lines + curl args for the body.
         body_args = self._emit_body(step, function_name, out)
 
-        # Header args (inline -H or reference to $h_args) + optional headers_text heredoc for capture.
-        header_args = self._emit_headers(step, out)
+        # Header args (inline -H) for curl command.
+        header_args = self._emit_headers(step)
 
         # Assemble the full curl command string.
         # Order: base flags, -X METHOD, body args, header args, then "$url" last.
@@ -147,20 +146,19 @@ class StepEmitter:
 
     @staticmethod
     def _format_curl_command(base: str, args: list[str]) -> list[str]:
-        """Format base + args as multi-line curl command with ``\\`` continuations.
+        """Format base + args as multi-line curl command.
 
         Returns the list of physical lines that go between the heredoc
-        delimiters. The first line is ``base \\``, each middle arg is
-        ``  arg \\``, and the last arg (always ``"$url"``) has no trailing
-        backslash. When there is only the url arg, everything stays on one
-        line.
+        delimiters. Each line is indented with two spaces; no backslash
+        continuations are used — ``http_step`` replaces newlines with spaces
+        before ``eval``. When there is only the url arg everything stays on
+        one line.
         """
         if len(args) <= 1:
             return [f"{base} {args[0]}"] if args else [base]
-        lines = [f"{base} \\"]
-        for arg in args[:-1]:
-            lines.append(f"  {arg} \\")
-        lines.append(f"  {args[-1]}")
+        lines = [base]
+        for arg in args:
+            lines.append(f"  {arg}")
         return lines
 
     def _emit_body(self, step: HttpStep, function_name: str, out: list[str]) -> list[str]:
@@ -303,40 +301,14 @@ class StepEmitter:
 
         return f'-F "{f_arg}"'
 
-    def _emit_headers(self, step: HttpStep, out: list[str]) -> list[str]:
-        """Return inline ``-H`` curl args and emit ``headers_text`` / ``h_args`` if needed.
-
-        ``headers_text`` is only emitted when the step captures a
-        ``request.header.*`` value (the capture helper reads request headers
-        from that text variable). When it is emitted we also build an indexed
-        array ``h_args`` from ``headers_text`` so the ``curl_command`` string
-        references ``"${h_args[@]}"``. After ``eval``, each element is passed
-        as a properly quoted argument to ``curl``, avoiding word-splitting
-        issues with header values that contain spaces.
-        For all other steps the headers live solely in the ``curl_command``
-        string, avoiding duplication.
-        """
+    def _emit_headers(self, step: HttpStep) -> list[str]:
+        """Return inline ``-H`` curl args for the step's curl command."""
         header_lines = [self._ph.expand(f"{k}: {v}") for k, v in step.headers.items()]
         if isinstance(step.body, FormBody) and not self._has_header(step.headers, "Content-Type"):
             header_lines.append("Content-Type: application/x-www-form-urlencoded")
         if isinstance(step.body, FileBody) and not self._has_header(step.headers, "Content-Type"):
             header_lines.append("Content-Type: application/octet-stream")
 
-        needs_headers_text = any(
-            source.startswith("request.header.") for source in step.capture.values()
-        )
-        if needs_headers_text and header_lines:
-            out.append("    headers_text=$(cat << EOT")
-            out.extend(header_lines)
-            out.append("EOT")
-            out.append(")")
-            out.append("    declare -a h_args=()")
-            out.append('    while IFS= read -r line; do')
-            out.append('        [[ -n "$line" ]] && h_args+=("-H" "$line")')
-            out.append('    done <<< "${headers_text}"')
-
-        if needs_headers_text:
-            return ['"${h_args[@]}"'] if header_lines else []
         return [f'-H {dq_preserve_expansion(h)}' for h in header_lines]
 
     def emit_http_until(self, step: HttpStep, function_name: str, attempt_function_name: str | None = None) -> str:

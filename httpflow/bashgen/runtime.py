@@ -70,6 +70,7 @@ time_date_ymdhms() {
     date '+%Y%m%d%H%M%S'
 }
 
+
 """
 
 
@@ -125,7 +126,8 @@ capture_header() {
             mode == "trace" && !/^< / { next }
             mode == "trace" && /^< ?\r?$/ { next }
             mode == "trace" { line=substr($0, 3) }
-            mode != "trace" { line=$0 }
+            mode != "trace" && !/-H "/ { next }
+            mode != "trace" { match($0, /-H "([^"]+)"/); line=substr($0, RSTART + 4, RLENGTH - 5) }
             /^[[:space:]]*$/ { next }
             { sub(/\r$/, "", line); lower=tolower(line) }
             index(lower, want) == 1 {
@@ -220,7 +222,7 @@ http_step() {
 
     # Only curl/pipeline failures fail the step here; HTTP 4xx/5xx responses
     # are preserved for capture/until evaluation and are not treated as errors.
-    if ! eval "$curl_command" \
+    if ! eval "${curl_command//$'\n'/ }" \
         | grep -v '^\({\|}\) \[.*bytes data\]' \
         | grep -v '^\*' \
         | sed -e 's/\* Closing.*//' -e 's/\* Connection.*//' \
