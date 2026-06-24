@@ -133,7 +133,8 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
 | `response.header.<Name>`     | レスポンスヘッダー値（大文字小文字を無視）        | `loc = response.header.Location`         |
 | `request.header.<Name>`      | リクエストヘッダー値（送信した実値、大小無視）    | `sent_auth = request.header.Authorization` |
 | `request.url`                | テンプレート展開後のリクエストURL                 | `called_url = request.url`               |
-| `request.body`              | 送信したリクエストボディ（form は urlencode 済み、file/multipart は UTF-8 replacement decode）| `sent_body = request.body`               |
+| `request.body`              | 送信したリクエストボディ全体（文字列）（form は urlencode 済み、file/multipart は UTF-8 replacement decode）| `sent_body = request.body`               |
+| `request.body.<json.path>`   | リクエストボディをJSONとしてパースしパスで抽出（§3.5.1〜3.5.4 と同じ記法）| `dateIso = request.body.date.time_DATE_ISO` |
 
 - `response.header.*` / `request.header.*` のヘッダー名は大文字小文字を区別しない。
   該当ヘッダーが存在しない場合はエラーで停止する。
@@ -142,6 +143,9 @@ def parse_kv_list(items: list[str], sep: str) -> dict[str, str]:
   `Host` / `User-Agent` / `Content-Length` / `Accept-Encoding` は対象外。
 - `request.url` / `request.body` / `request.header.*` は**レスポンスに現れない値**を
   保存する用途に使う（リクエスト時に確定する値のキャプチャー）。
+- `request.body.<path>` はリクエストボディがJSONとしてパースできる場合のみ成功する。パース失敗時はエラーで停止する。
+- `body_form` の場合は URL エンコード済み文字列をパースしようとするため通常は失敗する（→ エラー）。フォーム値のキャプチャが必要な場合は `${var}` 経由で変数を参照すること。
+- `body_file` / `body_multipart` については `request.body` 同様、`request.body.<path>` もサポート外（バリデーションエラー）とする。
 
 ### 3.5.1 トップレベルフィールドの抽出
 

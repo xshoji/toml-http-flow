@@ -212,6 +212,7 @@ never appear in the response:
 | `request.header.<Name>`      | request header value sent (case-insensitive)          |
 | `request.url`                | request URL after template expansion                  |
 | `request.body`               | request body as sent (urlencoded for `body_form`)     |
+| `request.body.<json.path>`   | JSON path into the request body (parsed as JSON)      |
 
 ```toml
 capture = [
@@ -220,6 +221,7 @@ capture = [
     "sent_auth = request.header.Authorization",  # request header
     "called    = request.url",                   # request URL
     "sent_body = request.body",                  # request body
+    "dateIso   = request.body.date.time_DATE_ISO", # JSON path into request body
 ]
 ```
 
