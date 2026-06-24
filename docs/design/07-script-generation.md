@@ -149,7 +149,7 @@ HTTP リクエストには `curl` を利用する。
 | 自己完結性     | 1ファイルで完結。`httpflow` パッケージには一切依存しない                   |
 | 可読性         | 1 `[[requests]]` ブロック = 1 `step_<name>()` 関数として展開             |
 | 変数展開       | **自前テンプレートエンジンは持たない**。`${random.UUID}` / `${random.UUID_HEX}` は bash ヘルパー、`${var.X}` は `${VAR_X}` に変換し、それ以外の `${...}` や `$VAR` はそのままシェルに渡す |
-| 未対応機能     | --quiet / -v / --no-mask は生成スクリプトでは実装しない |
+| 未対応機能     | --quiet / -v は生成スクリプトでは実装しない |
 | ファイル埋め込み | `--embed-files` 指定時、body_file / body_multipart のリテラルパスを Base64 埋め込みする。`${...}` プレースホルダを含むパスは既存の実行時解決にフォールバックする |
 
 ### 7.8.2 生成スクリプトの構造
@@ -179,7 +179,7 @@ workflow.sh
 - **ボディ（file）**は `cmd+=(--data-binary "@$path")` で渡し、step 関数内でファイル存在チェックと `body_log` 構築を行う
 - **ボディ（multipart）**は各パートを `cmd+=(--form-string "name=value")` または `cmd+=(-F "name=@\"path\";filename=\"...\";type=\"...\"")` で直接展開し、ファイル存在チェックも step 関数内で行う。`body_kind` / `body_form_text` のような中間表現は使わない。各パートの情報（field は `name = value`、file は `name = @path; filename=...; type=...; bytes=N`）は `body_log` に `(multipart)` ヘッダ付きで累積し、`http_step` が `>` 行のタイミングでリクエストボディとして出力する。`==>` バナーより前に echo で出力してはならない（前ステップの出力に混入するため）
 - **SLEEP ステップ**は `sleep <seconds>` を実行
-- **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する。capture 定義は `captures_text` のタブ区切りデータを経由せず、各 step 関数が `http_step` 呼び出しの後に `capture_json "..."` / `capture_header "..."` / `capture_value "..."` を直接呼び出す形で展開する
+- **capture** は `response.body.*` / プレフィックス無し JSON path、`response.header.*`、`request.header.*`、`request.url`、`request.body`、`request.body.<json.path>` をサポートする。JSON path は `jq` で抽出し、capture 結果は `VAR_<NAME>`（英数字と `_` 以外は `_` に正規化、英字は大文字化）として `export` する。capture 定義は `captures_text` のタブ区切りデータを経由せず、各 step 関数が `http_step` 呼び出しの後に `capture_json "..."` / `capture_header "..."` / `capture_value "..."` / `capture_request_body_json "..."` を直接呼び出す形で展開する
 - **until** 指定ありの HTTP ステップは、各試行で通常のリクエスト・レスポンス出力・capture を実行した後に条件を評価する。条件が満たされると `* until satisfied on attempt N` を出力し、満たされない場合は `* until not satisfied (attempt N/M), retrying in Xs` を出力して `interval` 秒待つ。`max_attempts` で満たされなければ標準エラーに失敗理由を出力し非ゼロ終了する。`curl --fail` は使わないため HTTP 4xx/5xx は通常レスポンスとして扱い、capture や条件評価の対象になる
 - `main()` は step 呼び出しを1行ずつ並べるだけ（スキップ・並べ替えがコメントアウトで容易）
 - テンプレートファイルは使わず、`bashgen/` パッケージ（`bashgen/steps.py` 等）のコード内で完結して出力する

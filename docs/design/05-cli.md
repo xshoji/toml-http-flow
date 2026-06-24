@@ -171,7 +171,7 @@ python -m httpflow run -f workflow.toml -s getToken -s getUser
 | `--blank-line N`   | ステップ間の空行数（未指定時は0）                |
 | `-h`, `--help`     | ヘルプ表示                                        |
 
-bash 形式の生成スクリプトは `-v` / `--quiet` / `--no-mask` をサポートしない。
+bash 形式の生成スクリプトは `-v` / `--quiet` をサポートしない。
 
 ### 5.2.2 埋め込みの挙動
 

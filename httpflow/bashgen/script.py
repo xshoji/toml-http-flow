@@ -81,8 +81,11 @@ main() {{
             --pretty-json)
                 HTTPFLOW_PRETTY_JSON=1
                 ;;
+            --no-mask)
+                HTTPFLOW_NO_MASK=1
+                ;;
             -h|--help)
-                echo "usage: $0 [--pretty-json]"
+                echo "usage: $0 [--pretty-json] [--no-mask]"
                 exit 0
                 ;;
             *)
@@ -92,6 +95,7 @@ main() {{
         esac
     done
     export HTTPFLOW_PRETTY_JSON=${{HTTPFLOW_PRETTY_JSON:-}}
+    export HTTPFLOW_NO_MASK=${{HTTPFLOW_NO_MASK:-}}
 
     HF_TMPDIR=$(mktemp -d) || {{
         echo "error: failed to create temporary directory" >&2
