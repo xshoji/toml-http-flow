@@ -1159,6 +1159,28 @@ class TestBashGenerator(unittest.TestCase):
         self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
         self.assertIn('{\n  "ok": true\n}', res.stdout)
 
+    def test_no_mask_argument_disables_masking_in_bash_script(self):
+        """Generated bash accepts --no-mask at runtime."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            method = "GET"
+            url = "{base}/echo"
+            headers = ["Authorization: Bearer secret_token"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("--no-mask", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path), "--no-mask"], capture_output=True, text=True, timeout=10)
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("Bearer secret_token", res.stdout)
+        self.assertNotIn("***", res.stdout)
+
     def test_default_vars_embedded_in_bash_script(self):
         """-v K=V in generate --format bash embeds default VAR_* values."""
         toml = textwrap.dedent("""
@@ -1908,6 +1930,53 @@ class TestBashGenerator(unittest.TestCase):
                 "name = alice",
             ]
             capture = ["sent = request.body"]
+        """)
+        with self.assertRaises(ValueError) as ctx:
+            self._generate_and_check(toml)
+        self.assertIn("cannot capture request.body", str(ctx.exception))
+
+    def test_capture_request_body_json_generates_helper(self):
+        """capture request.body.<path> emits capture_request_body_json call."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "create"
+            method = "POST"
+            url = "{base}/auth"
+            headers = ["Content-Type: application/json"]
+            body = '{{"date":{{"time_DATE_ISO":"2026-06-24"}}}}'
+            capture = ["iso = request.body.date.time_DATE_ISO"]
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("capture_request_body_json", script)
+        self.assertIn("capture_request_body_json 'VAR_ISO' 'iso' 'request.body.date.time_DATE_ISO'", script)
+        self.assertIn("'.[\"date\"]?[\"time_DATE_ISO\"]?'", script)
+
+    def test_body_file_capture_request_body_json_is_error(self):
+        """capture request.body.<path> with body_file raises ValueError."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "upload"
+            method = "PUT"
+            url = "http://example.com/upload"
+            body_file = "/tmp/data.bin"
+            capture = ["sent = request.body.foo"]
+        """)
+        with self.assertRaises(ValueError) as ctx:
+            self._generate_and_check(toml)
+        self.assertIn("cannot capture request.body with body_file", str(ctx.exception))
+
+    def test_body_multipart_capture_request_body_json_is_error(self):
+        """capture request.body.<path> with body_multipart raises ValueError."""
+        toml = textwrap.dedent("""
+            [[requests]]
+            name = "mform"
+            method = "POST"
+            url = "http://example.com/upload"
+            body_multipart = [
+                "name = alice",
+            ]
+            capture = ["sent = request.body.foo"]
         """)
         with self.assertRaises(ValueError) as ctx:
             self._generate_and_check(toml)

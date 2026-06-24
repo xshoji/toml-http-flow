@@ -14,6 +14,7 @@ def is_json_capture_source(source: str) -> bool:
         source.startswith("response.header.")
         or source.startswith("request.header.")
         or source in {"request.url", "request.body"}
+        or source.startswith("request.body.")
     )
 
 
@@ -45,6 +46,9 @@ def jq_filter(path: str) -> str:
 
 
 
+_CAP_REQ_BODY = "request.body."
+
+
 def capture_kind_and_arg(source: str) -> tuple[str, str]:
     """Return generated bash capture metadata kind and helper argument."""
     if source.startswith("response.header."):
@@ -55,6 +59,8 @@ def capture_kind_and_arg(source: str) -> tuple[str, str]:
         return "request_url", "-"
     if source == "request.body":
         return "request_body", "-"
+    if source.startswith(_CAP_REQ_BODY):
+        return "request_body_json", jq_filter(source.removeprefix(_CAP_REQ_BODY))
     return "json", jq_filter(capture_path(source))
 
 
@@ -82,7 +88,9 @@ def capture_calls(
         if any(ch in var or ch in source for ch in "\t\n"):
             raise ValueError("capture names and sources must not contain tabs or newlines")
 
-        if isinstance(step.body, (FileBody, MultipartBody)) and source == "request.body":
+        if isinstance(step.body, (FileBody, MultipartBody)) and (
+            source == "request.body" or source.startswith("request.body.")
+        ):
             raise ValueError(
                 f"step {step.name!r}: cannot capture request.body with "
                 f"body_file or body_multipart in bash generation"
@@ -112,6 +120,10 @@ def capture_calls(
         elif kind == "request_body":
             lines.append(
                 f"{indent}capture_value {sq(env)} {sq(var)} {sq(source)} {body_log_expr} || return $?"
+            )
+        elif kind == "request_body_json":
+            lines.append(
+                f"{indent}capture_request_body_json {sq(env)} {sq(var)} {sq(source)} {body_log_expr} {sq(arg)} || return $?"
             )
         else:  # pragma: no cover - capture_kind_and_arg is exhaustive
             raise ValueError(f"unknown capture kind: {kind!r}")

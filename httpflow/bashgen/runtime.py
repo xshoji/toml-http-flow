@@ -112,6 +112,24 @@ capture_json() {
     capture_value "$env_name" "$display_name" "$source" "$value"
 }
 
+capture_request_body_json() {
+    local env_name=$1
+    local display_name=$2
+    local source=$3
+    local body_log=$4
+    local filter=$5
+    local value
+    ! value=$(printf '%s' "$body_log" | jq -r "$filter") && {
+        echo "capture failed: $display_name <- $source" >&2
+        return 1
+    }
+    [[ -z "$value" || "$value" == "null" ]] && {
+        echo "capture failed: $display_name <- $source" >&2
+        return 1
+    }
+    capture_value "$env_name" "$display_name" "$source" "$value"
+}
+
 capture_header() {
     local env_name=$1
     local display_name=$2
