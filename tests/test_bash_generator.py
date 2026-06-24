@@ -498,7 +498,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("jq is required for JSON capture", script)
-        self.assertIn("capture_json 'VAR_TOKEN' 'token' 'access_token'", script)
+        self.assertIn("capture_response_body_json 'VAR_TOKEN' 'token' 'access_token'", script)
 
         with tempfile.TemporaryDirectory() as tmp:
             script_path = Path(tmp) / "workflow.sh"

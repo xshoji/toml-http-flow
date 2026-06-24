@@ -94,7 +94,7 @@ capture_value() {
     capture_log "$display_name" "$value"
 }
 
-capture_json() {
+capture_response_body_json() {
     local env_name=$1
     local display_name=$2
     local source=$3
@@ -130,7 +130,7 @@ capture_request_body_json() {
     capture_value "$env_name" "$display_name" "$source" "$value"
 }
 
-capture_header() {
+capture_request_response_header() {
     local env_name=$1
     local display_name=$2
     local source=$3

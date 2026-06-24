@@ -77,7 +77,7 @@ def capture_calls(
     """Emit per-capture ``capture_*`` call lines for an HTTP step.
 
     Each line is a complete bash statement (e.g.
-    ``capture_json 'VAR_FOO' 'foo' 'foo' "$HF_TRACE_FILE" '.["foo"]?' || return $?``)
+    ``capture_response_body_json 'VAR_FOO' 'foo' 'foo' "$HF_TRACE_FILE" '.["foo"]?' || return $?``)
     intended to be placed in the step function body right after the
     ``http_step`` call. The ``*_expr`` parameters are the bash expressions
     referencing variables exposed by ``http_step`` (``HF_TRACE_FILE``,
@@ -103,15 +103,15 @@ def capture_calls(
         env = env_name("VAR", var)
         if kind == "json":
             lines.append(
-                f"{indent}capture_json {sq(env)} {sq(var)} {sq(source)} {trace_file_expr} {sq(arg)} || return $?"
+                f"{indent}capture_response_body_json {sq(env)} {sq(var)} {sq(source)} {trace_file_expr} {sq(arg)} || return $?"
             )
         elif kind == "response_header":
             lines.append(
-                f"{indent}capture_header {sq(env)} {sq(var)} {sq(source)} {trace_file_expr} {sq(arg)} || return $?"
+                f"{indent}capture_request_response_header {sq(env)} {sq(var)} {sq(source)} {trace_file_expr} {sq(arg)} || return $?"
             )
         elif kind == "request_header":
             lines.append(
-                f"{indent}capture_header {sq(env)} {sq(var)} {sq(source)} {curl_command_expr} {sq(arg)} || return $?"
+                f"{indent}capture_request_response_header {sq(env)} {sq(var)} {sq(source)} {curl_command_expr} {sq(arg)} || return $?"
             )
         elif kind == "request_url":
             lines.append(
