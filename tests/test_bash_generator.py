@@ -1951,6 +1951,18 @@ class TestBashGenerator(unittest.TestCase):
         self.assertIn("capture_request_body_json", script)
         self.assertIn("capture_request_body_json 'VAR_ISO' 'iso' 'request.body.date.time_DATE_ISO'", script)
         self.assertIn("'.[\"date\"]?[\"time_DATE_ISO\"]?'", script)
+        # http_step must expose HF_BODY_LOG so the capture call (which runs
+        # after http_step returns, under `set -u`) does not hit an unbound
+        # variable. Regression: previously needs_body_log_var only matched the
+        # exact `request.body` source, missing `request.body.<path>`.
+        self.assertIn('HF_BODY_LOG="$body_log"', script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(["bash", str(script_path)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("* capture iso = '2026-06-24'", res.stdout)
 
     def test_body_file_capture_request_body_json_is_error(self):
         """capture request.body.<path> with body_file raises ValueError."""

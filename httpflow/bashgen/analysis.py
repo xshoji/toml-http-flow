@@ -145,11 +145,18 @@ def analyze_workflow(
         and any(is_json_capture_source(source) for source in s.capture.values())
         for s in spec.steps
     )
-    # HF_BODY_LOG is only consumed by `capture ... = request.body` calls, which
-    # are only valid for text/form bodies (FileBody/MultipartBody raise). Emit
-    # the variable assignment in http_step only when such a capture exists.
+    # HF_BODY_LOG is consumed by both `capture ... = request.body` and
+    # `capture ... = request.body.<json.path>` calls (the latter via
+    # capture_request_body_json), which are only valid for text/form bodies
+    # (FileBody/MultipartBody raise). Emit the variable assignment in
+    # http_step only when such a capture exists, otherwise the capture call
+    # would reference an unbound variable under `set -u`.
     needs_body_log_var = any(
-        isinstance(s, HttpStep) and "request.body" in s.capture.values()
+        isinstance(s, HttpStep)
+        and any(
+            v == "request.body" or v.startswith("request.body.")
+            for v in s.capture.values()
+        )
         for s in spec.steps
     )
 
