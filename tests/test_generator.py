@@ -102,6 +102,19 @@ url = "http://127.0.0.1:1/ping?id=${var.id}"
         self.assertNotRegex(script, r"(?m)^\s*import\s+httpflow\b")
         self.assertNotRegex(script, r"(?m)^\s*from\s+httpflow\b")
 
+    def test_request_body_json_capture_compiles(self):
+        script = _generate_script(textwrap.dedent("""
+            [[requests]]
+            name = "create"
+            method = "POST"
+            url = "http://127.0.0.1:1/items"
+            headers = ["Content-Type: application/json"]
+            body = '{"date":{"time_DATE_ISO":"2026-06-24"}}'
+            capture = ["iso = request.body.date.time_DATE_ISO"]
+        """))
+        _compile(script)
+        self.assertIn("'iso': 'request.body.date.time_DATE_ISO'", script)
+
     def test_embedded_runtime_helpers_compile_cleanly(self):
         from httpflow.generator import _flatten_modules
 
