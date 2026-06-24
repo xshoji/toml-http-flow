@@ -44,6 +44,7 @@ def extract(body: Any, path: str) -> Any:
 _CAP_RESP_HEADER = "response.header."
 _CAP_REQ_HEADER = "request.header."
 _CAP_RESP_BODY = "response.body."
+_CAP_REQ_BODY = "request.body."
 
 
 def _header_value(headers: dict[str, str], name: str, step_name: str, side: str) -> str:
@@ -79,6 +80,19 @@ def resolve_capture(
         return req_url
     if source == "request.body":
         return req_body
+    if source.startswith(_CAP_REQ_BODY):
+        path = source[len(_CAP_REQ_BODY):]
+        try:
+            parsed = json.loads(req_body) if req_body else None
+        except json.JSONDecodeError:
+            raise RuntimeError(
+                f"step {step_name!r}: capture {source!r} requires a JSON request body"
+            )
+        if not isinstance(parsed, (dict, list)):
+            raise RuntimeError(
+                f"step {step_name!r}: capture {source!r} requires a JSON request body"
+            )
+        return extract(parsed, path)
     path = source[len(_CAP_RESP_BODY):] if source.startswith(_CAP_RESP_BODY) else source
     if body_json is None:
         raise RuntimeError(

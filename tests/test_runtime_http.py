@@ -6,7 +6,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from httpflow.runtime.http import do_request, extract
+from httpflow.runtime.http import do_request, extract, resolve_capture
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -167,6 +167,70 @@ class TestExtract(unittest.TestCase):
     def test_index_out_of_range(self):
         with self.assertRaises(IndexError):
             extract({"x": [1]}, "x[5]")
+
+
+class TestResolveCapture(unittest.TestCase):
+    def test_request_body_json_nested(self):
+        captured = resolve_capture(
+            "request.body.date.time_DATE_ISO",
+            step_name="test",
+            body_json=None,
+            resp_headers={},
+            req_url="http://example.com/",
+            req_headers={},
+            req_body='{"date":{"time_DATE_ISO":"2026-06-24T12:34:56.123456+09:00"}}',
+        )
+        self.assertEqual(captured, "2026-06-24T12:34:56.123456+09:00")
+
+    def test_request_body_json_array_index(self):
+        captured = resolve_capture(
+            "request.body.items[0].id",
+            step_name="test",
+            body_json=None,
+            resp_headers={},
+            req_url="http://example.com/",
+            req_headers={},
+            req_body='{"items":[{"id":"a1"},{"id":"a2"}]}',
+        )
+        self.assertEqual(captured, "a1")
+
+    def test_request_body_json_invalid_body_raises(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            resolve_capture(
+                "request.body.foo",
+                step_name="test",
+                body_json=None,
+                resp_headers={},
+                req_url="http://example.com/",
+                req_headers={},
+                req_body="not-json",
+            )
+        self.assertIn("requires a JSON request body", str(ctx.exception))
+
+    def test_request_body_json_empty_body_raises(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            resolve_capture(
+                "request.body.foo",
+                step_name="test",
+                body_json=None,
+                resp_headers={},
+                req_url="http://example.com/",
+                req_headers={},
+                req_body="",
+            )
+        self.assertIn("requires a JSON request body", str(ctx.exception))
+
+    def test_request_body_whole_string_unchanged(self):
+        captured = resolve_capture(
+            "request.body",
+            step_name="test",
+            body_json=None,
+            resp_headers={},
+            req_url="http://example.com/",
+            req_headers={},
+            req_body='{"hello":"world"}',
+        )
+        self.assertEqual(captured, '{"hello":"world"}')
 
 
 if __name__ == "__main__":
