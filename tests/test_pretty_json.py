@@ -72,8 +72,7 @@ class TestPrettyJsonWorkflow(unittest.TestCase):
             f.write(f"""\
 [[requests]]
 name = "echo"
-method = "POST"
-url = "{base}/"
+request = "POST {base}/"
 headers = ["Content-Type: application/json"]
 body = '{{"user":"test"}}'
 """)
@@ -110,8 +109,7 @@ body = '{{"user":"test"}}'
                 f.write(f"""\
 [[requests]]
 name = "plain"
-method = "POST"
-url = "{base}/"
+request = "POST {base}/"
 body = "hello=world"
 """)
             try:

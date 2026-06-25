@@ -3,7 +3,8 @@
 1. CLI 引数のパース (`argparse` で `-f`, `-v`, `-s`, `-q`, `--pretty-json`, `--no-mask`, `--blank-line`)
 2. TOML ファイルの読み込み (`tomllib.load()` はバイナリモードで開く必要あり)
 3. dict を検証しつつ `WorkflowSpec` に変換 (`config.py`)
-   - `method = "SLEEP"` を `SleepStep` へ変換
+   - `request = "METHOD URL"` を `method` / `url` に分割
+   - `request = "SLEEP <seconds>"` を `SleepStep` へ変換
    - `body` と form body の相互排他をモデル型で表現
    - `description` フィールドを保持
 4. `--step` 指定があれば `WorkflowSpec` をフィルタ

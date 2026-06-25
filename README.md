@@ -22,8 +22,7 @@ $ cat demo.toml
 [[requests]]
 description = "GET request to httpbingo.org/get"
 name    = "httpbinorg-get"
-method  = "GET"
-url     = "https://httpbingo.org/get?uuid=${random.UUID}&cliParameter=${var.query1}"
+request = "GET https://httpbingo.org/get?uuid=${random.UUID}&cliParameter=${var.query1}"
 capture = [
   "responseBodyUuid      = args.uuid[0]",
   "responseHeaderServer  = response.header.server",
@@ -32,8 +31,7 @@ capture = [
 [[requests]]
 description = "POST request to httpbingo.org/post"
 name    = "httpbinorg-post"
-method  = "POST"
-url     = "https://httpbingo.org/post"
+request = "POST https://httpbingo.org/post"
 headers = ["Content-Type: application/json"]
 body    = '''
 {
@@ -127,16 +125,14 @@ python3 -m httpflow --help
 
 [[requests]]
 name    = "getToken"
-method  = "POST"
-url     = "https://api.example.com/auth"
+request = "POST https://api.example.com/auth"
 headers = ["Content-Type: application/json"]
 body    = '{"user":"test","pass":"secret"}'
 capture = ["token = access_token"]
 
 [[requests]]
 name    = "getUser"
-method  = "GET"
-url     = "https://api.example.com/me"
+request = "GET https://api.example.com/me"
 headers = ["Authorization: Bearer ${token}"]
 capture = ["user_id = data.user.id"]
 ```

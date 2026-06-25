@@ -9,16 +9,14 @@ from httpflow.model import FileBody, FormBody, HttpStep, MultipartBody, Multipar
 SAMPLE = b"""
 [[requests]]
 name    = "getToken"
-method  = "POST"
-url     = "https://api.example.com/auth"
+request = "POST https://api.example.com/auth"
 headers = ["Content-Type: application/json"]
 body    = '''{"user":"test","pass":"secret"}'''
 capture = ["token = access_token"]
 
 [[requests]]
 name    = "updateProfile"
-method  = "PUT"
-url     = "https://api.example.com/profile"
+request = "PUT https://api.example.com/profile"
 headers = [
     "Authorization: Bearer ${token}",
     "Content-Type: application/x-www-form-urlencoded",
@@ -82,8 +80,7 @@ class TestLoad(unittest.TestCase):
         bad = b"""
 [[requests]]
 name = "x"
-method = "POST"
-url = "http://example.com"
+request = "POST http://example.com"
 body = "abc"
 body_form = ["a = b"]
 """
@@ -95,14 +92,12 @@ body_form = ["a = b"]
         path = self._write(b"""
 [[requests]]
 name = "raw"
-method = "PUT"
-url = "http://example.com/raw"
+request = "PUT http://example.com/raw"
 body_file = "./data.bin"
 
 [[requests]]
 name = "multi"
-method = "POST"
-url = "http://example.com/upload"
+request = "POST http://example.com/upload"
 body_multipart = [
     "title = hello",
     "literal = @@starts",
@@ -136,8 +131,7 @@ body_multipart = [
         bad = b"""
 [[requests]]
 name = "bad"
-method = "SLEEP"
-url = "5"
+request = "SLEEP 5"
 headers = ["X: Y"]
 """
         path = self._write(bad)
@@ -149,8 +143,7 @@ headers = ["X: Y"]
         bad = b"""
 [[requests]]
 name = "bad"
-method = "SLEEP"
-url = "5"
+request = "SLEEP 5"
 body = "hi"
 """
         path = self._write(bad)
@@ -161,12 +154,80 @@ body = "hi"
         bad = b"""
 [[requests]]
 name = "bad"
-method = "SLEEP"
-url = "abc"
+request = "SLEEP abc"
 """
         path = self._write(bad)
         with self.assertRaises(ValueError):
             cfg_mod.load(path)
+
+    def test_request_field_split(self):
+        """'request' is split on the first whitespace into method + url."""
+        path = self._write(b"""
+[[requests]]
+name = "g"
+request = "GET   http://example.com/x"
+""")
+        wf = cfg_mod.load(path)
+        step = wf.steps[0]
+        self.assertIsInstance(step, HttpStep)
+        assert isinstance(step, HttpStep)
+        self.assertEqual(step.method, "GET")
+        self.assertEqual(step.url, "http://example.com/x")
+
+    def test_request_field_is_case_insensitive(self):
+        path = self._write(b"""
+[[requests]]
+name = "g"
+request = "post http://example.com/x"
+""")
+        wf = cfg_mod.load(path)
+        step = wf.steps[0]
+        assert isinstance(step, HttpStep)
+        self.assertEqual(step.method, "POST")
+
+    def test_request_missing_raises(self):
+        path = self._write(b"""
+[[requests]]
+name = "g"
+""")
+        with self.assertRaises(ValueError) as ctx:
+            cfg_mod.load(path)
+        self.assertIn("request", str(ctx.exception))
+
+    def test_request_one_token_raises(self):
+        path = self._write(b"""
+[[requests]]
+name = "g"
+request = "GET"
+""")
+        with self.assertRaises(ValueError):
+            cfg_mod.load(path)
+
+    def test_legacy_method_url_fields_rejected_with_hint(self):
+        bad = b"""
+[[requests]]
+name = "g"
+method = "GET"
+url = "http://example.com/x"
+"""
+        path = self._write(bad)
+        with self.assertRaises(ValueError) as ctx:
+            cfg_mod.load(path)
+        msg = str(ctx.exception)
+        self.assertIn("method", msg)
+        self.assertIn("request", msg)
+
+    def test_sleep_request_form_parses(self):
+        path = self._write(b"""
+[[requests]]
+name = "wait"
+request = "SLEEP 5"
+""")
+        wf = cfg_mod.load(path)
+        step = wf.steps[0]
+        self.assertIsInstance(step, SleepStep)
+        assert isinstance(step, SleepStep)
+        self.assertEqual(step.seconds, "5")
 
 
 if __name__ == "__main__":

@@ -57,8 +57,7 @@ class TestConfigDescription(unittest.TestCase):
 [[requests]]
 name        = "ping"
 description = "Verify that the API is reachable"
-method      = "GET"
-url         = "http://example.com"
+request = "GET http://example.com"
 """)
         self.assertEqual(
             wf.steps[0].description,
@@ -69,8 +68,7 @@ url         = "http://example.com"
         wf = self._load(b"""
 [[requests]]
 name   = "ping"
-method = "GET"
-url    = "http://example.com"
+request = "GET http://example.com"
 """)
         self.assertIsNone(wf.steps[0].description)
 
@@ -82,8 +80,7 @@ description = '''
 Step 1: ensure the upstream is alive.
 Step 2: warm any caches.
 '''
-method      = "GET"
-url         = "http://example.com"
+request = "GET http://example.com"
 """)
         self.assertIn("Step 1", wf.steps[0].description)
         self.assertIn("Step 2", wf.steps[0].description)
@@ -94,8 +91,7 @@ url         = "http://example.com"
 [[requests]]
 name        = "ping"
 description = 123
-method      = "GET"
-url         = "http://example.com"
+request = "GET http://example.com"
 """)
 
     def test_description_on_sleep_step(self):
@@ -103,8 +99,7 @@ url         = "http://example.com"
 [[requests]]
 name        = "wait"
 description = "Wait for downstream to settle"
-method      = "SLEEP"
-url         = "0.01"
+request = "SLEEP 0.01"
 """)
         self.assertEqual(
             wf.steps[0].description,
@@ -119,8 +114,7 @@ class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
             f.write(textwrap.dedent(f"""\
                 [[requests]]
                 name = "ping"
-                method = "GET"
-                url = "http://127.0.0.1:{self.port}/"
+                request = "GET http://127.0.0.1:{self.port}/"
                 description = "Verify upstream reachability"
             """))
         try:
@@ -144,8 +138,7 @@ class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
             f.write(textwrap.dedent(f"""\
                 [[requests]]
                 name = "ping"
-                method = "GET"
-                url = "http://127.0.0.1:{self.port}/"
+                request = "GET http://127.0.0.1:{self.port}/"
                 description = "Should still show in quiet mode"
             """))
         try:
@@ -165,8 +158,7 @@ class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
             f.write(textwrap.dedent(f"""\
                 [[requests]]
                 name = "ping"
-                method = "GET"
-                url = "http://127.0.0.1:{self.port}/"
+                request = "GET http://127.0.0.1:{self.port}/"
                 description = '''
                 line A
                 line B
@@ -188,8 +180,7 @@ class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
             f.write(textwrap.dedent("""\
                 [[requests]]
                 name = "wait"
-                method = "SLEEP"
-                url = "0.01"
+                request = "SLEEP 0.01"
                 description = "Wait for downstream"
             """))
         try:
@@ -208,8 +199,7 @@ class TestWorkflowDescription(_ServerMixin, unittest.TestCase):
             f.write(textwrap.dedent(f"""\
                 [[requests]]
                 name = "ping"
-                method = "GET"
-                url = "http://127.0.0.1:{self.port}/"
+                request = "GET http://127.0.0.1:{self.port}/"
             """))
         try:
             cfg = cfg_mod.load(path)
@@ -229,14 +219,11 @@ class TestGeneratorDescription(_ServerMixin, unittest.TestCase):
             [[requests]]
             name        = "ping"
             description = "Smoke check: API is up"
-            method      = "GET"
-            url         = "{base}/"
-
+            request = "GET {base}/"
             [[requests]]
             name        = "wait"
             description = "Pause briefly"
-            method      = "SLEEP"
-            url         = "0.01"
+            request = "SLEEP 0.01"
         """).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as tmp:

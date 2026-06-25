@@ -98,17 +98,52 @@ class _IntermediateRequest:
     until: list[str] | None = None
 
 
+def _parse_request_field(d: dict[str, Any], request_name: str | None) -> tuple[str, str]:
+    """Parse the ``request = "METHOD URL"`` field into ``(method, url)``.
+
+    The value is split on the first run of whitespace into the HTTP method
+    (case-insensitive, upper-cased here) and the remainder (URL or, for
+    special methods such as ``SLEEP``, the method's argument). Whitespace
+    around both halves is trimmed.
+    """
+    if "request" not in d:
+        name_hint = request_name or d.get("name", "<unknown>")
+        if "method" in d or "url" in d:
+            raise ValueError(
+                f"request {name_hint!r}: the 'method'/'url' fields were removed; "
+                f"use a single 'request = \"METHOD URL\"' field instead"
+            )
+        raise ValueError(
+            f"request {name_hint!r}: missing required field 'request' "
+            f"(expected \"request = \\\"METHOD URL\\\"\")"
+        )
+    raw = d["request"]
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"request {request_name!r}: 'request' must be a string, "
+            f"got {type(raw).__name__}"
+        )
+    parts = raw.split(None, 1)
+    if len(parts) != 2 or not parts[1].strip():
+        raise ValueError(
+            f"request {request_name!r}: 'request' must be in "
+            f"'METHOD URL' format, got: {raw!r}"
+        )
+    method = parts[0].upper()
+    url_val = parts[1].strip()
+    return method, url_val
+
+
 def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
     """Parse a raw TOML request dict into an intermediate representation."""
-    for required in ("name", "method", "url"):
-        if required not in d:
-            raise ValueError(f"missing required field {required!r} in request: {d!r}")
-
-    method = str(d["method"]).upper()
+    if "name" not in d:
+        raise ValueError(f"missing required field 'name' in request: {d!r}")
+    name = str(d["name"])
+    method, url_val = _parse_request_field(d, name)
 
     description = d.get("description")
     if description is not None and not isinstance(description, str):
-        raise ValueError(f"request {d['name']!r}: 'description' must be a string")
+        raise ValueError(f"request {name!r}: 'description' must be a string")
 
     if method == "SLEEP":
         if (
@@ -121,21 +156,20 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
             or d.get("until")
         ):
             raise ValueError(
-                f"request {d['name']!r}: 'SLEEP' step must not specify "
+                f"request {name!r}: 'SLEEP' step must not specify "
                 f"headers, body, body_form, body_file, body_multipart, capture, or until"
             )
-        url_val = str(d["url"])
         # Defer numeric validation to runtime when the value contains a template.
         if "${" not in url_val:
             try:
                 float(url_val)
             except ValueError as exc:
                 raise ValueError(
-                    f"request {d['name']!r}: 'SLEEP' step requires a numeric 'url' "
-                    f"(seconds), got: {url_val!r}"
+                    f"request {name!r}: 'SLEEP' step requires a numeric seconds "
+                    f"value in 'request', got: {url_val!r}"
                 ) from exc
         return _IntermediateRequest(
-            name=str(d["name"]),
+            name=name,
             method=method,
             url=url_val,
             description=description,
@@ -151,17 +185,17 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
         ("body_file", body_file is not None),
         ("body_multipart", bool(body_multipart)),
     ]
-    present = [name for name, enabled in body_modes if enabled]
+    present = [mode for mode, enabled in body_modes if enabled]
     if len(present) > 1:
         raise ValueError(
-            f"request {d.get('name')!r}: body fields are mutually exclusive: "
+            f"request {name!r}: body fields are mutually exclusive: "
             f"{', '.join(present)}"
         )
 
     if body is not None and not isinstance(body, str):
-        raise ValueError(f"request {d['name']!r}: 'body' must be a string")
+        raise ValueError(f"request {name!r}: 'body' must be a string")
     if body_file is not None and not isinstance(body_file, str):
-        raise ValueError(f"request {d['name']!r}: 'body_file' must be a string")
+        raise ValueError(f"request {name!r}: 'body_file' must be a string")
 
     if not isinstance(body_form, list):
         body_form = [body_form]
@@ -169,9 +203,9 @@ def _build_intermediate(d: dict[str, Any]) -> _IntermediateRequest:
         body_multipart = [body_multipart]
 
     return _IntermediateRequest(
-        name=str(d["name"]),
+        name=name,
         method=method,
-        url=str(d["url"]),
+        url=url_val,
         description=description,
         headers=d.get("headers", []),
         body=body,

@@ -94,8 +94,7 @@ class TestGeneratorCore(unittest.TestCase):
         script = _generate_script("""
 [[requests]]
 name = "ping"
-method = "GET"
-url = "http://127.0.0.1:1/ping?id=${var.id}"
+request = "GET http://127.0.0.1:1/ping?id=${var.id}"
 """)
         _compile(script)
         self.assertNotRegex(script, r"(?m)^\s*from\s+\.")
@@ -106,8 +105,7 @@ url = "http://127.0.0.1:1/ping?id=${var.id}"
         script = _generate_script(textwrap.dedent("""
             [[requests]]
             name = "create"
-            method = "POST"
-            url = "http://127.0.0.1:1/items"
+            request = "POST http://127.0.0.1:1/items"
             headers = ["Content-Type: application/json"]
             body = '{"date":{"time_DATE_ISO":"2026-06-24"}}'
             capture = ["iso = request.body.date.time_DATE_ISO"]
@@ -128,13 +126,10 @@ url = "http://127.0.0.1:1/ping?id=${var.id}"
         script = _generate_script("""
 [[requests]]
 name = "wait"
-method = "SLEEP"
-url = "0.05"
-
+request = "SLEEP 0.05"
 [[requests]]
 name = "ping"
-method = "GET"
-url = "http://127.0.0.1:1/ping"
+request = "GET http://127.0.0.1:1/ping"
 """)
         _compile(script)
         self.assertIn("time.sleep(seconds)", script)
@@ -149,8 +144,7 @@ url = "http://127.0.0.1:1/ping"
         script = _generate_script("""
 [[requests]]
 name = "ping"
-method = "GET"
-url = "http://127.0.0.1:1/ping"
+request = "GET http://127.0.0.1:1/ping"
 """)
         _compile(script)
         self.assertIn("(no until blocks", script)
@@ -159,8 +153,7 @@ url = "http://127.0.0.1:1/ping"
         script = _generate_script("""
 [[requests]]
 name = "poll"
-method = "GET"
-url = "http://127.0.0.1:1/poll"
+request = "GET http://127.0.0.1:1/poll"
 until = ["condition = ${status} == Active", "interval = 0", "max_attempts = 1"]
 """)
         _compile(script)
@@ -179,8 +172,7 @@ class TestGeneratorParity(unittest.TestCase):
         script = _generate_script("""
 [[requests]]
 name = "echo"
-method = "GET"
-url = "http://127.0.0.1/${var.env}"
+request = "GET http://127.0.0.1/${var.env}"
 """)
         store = {
             "vars": {"env": "prod", "token": "abc", "my-key": "ok"},
@@ -210,8 +202,7 @@ url = "http://127.0.0.1/${var.env}"
         script = _generate_script("""
 [[requests]]
 name = "echo"
-method = "GET"
-url = "http://127.0.0.1/"
+request = "GET http://127.0.0.1/"
 """)
         body = {"data": {"user": {"id": 42}}, "items": [{"id": "a1"}, {"id": "a2"}]}
         cases = ["data.user.id", "items[1].id"]
@@ -231,8 +222,7 @@ url = "http://127.0.0.1/"
         script = _generate_script('''
 [[requests]]
 name = "echo"
-method = "GET"
-url = "http://127.0.0.1/${random.UUID}"
+request = "GET http://127.0.0.1/${random.UUID}"
 ''')
         ns: dict = {}
         exec(script, ns)
@@ -243,8 +233,7 @@ url = "http://127.0.0.1/${random.UUID}"
         script = _generate_script('''
 [[requests]]
 name = "echo"
-method = "GET"
-url = "http://127.0.0.1/${random.UUID_HEX}"
+request = "GET http://127.0.0.1/${random.UUID_HEX}"
 ''')
         ns: dict = {}
         exec(script, ns)
@@ -256,8 +245,7 @@ url = "http://127.0.0.1/${random.UUID_HEX}"
         script = _generate_script('''
 [[requests]]
 name = "echo"
-method = "GET"
-url = "http://127.0.0.1/${env.HTTPFLOW_TEST_USER}"
+request = "GET http://127.0.0.1/${env.HTTPFLOW_TEST_USER}"
 ''')
         ns: dict = {}
         exec(script, ns)
@@ -305,16 +293,14 @@ class TestGeneratorE2E(unittest.TestCase):
         script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "getToken"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"user":"u","pass":"p"}}'
             capture = ["token = access_token"]
 
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
             headers = ["Authorization: Bearer ${{token}}"]
         """), default_vars={"env": "test"})
 
@@ -377,16 +363,14 @@ class TestGeneratorE2E(unittest.TestCase):
         script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "getToken"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"user":"u","pass":"p"}}'
             capture = ["token = access_token"]
 
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
             headers = ["Authorization: Bearer ${{token}}"]
             capture = [
                 "ct        = response.header.Content-Type",
@@ -414,8 +398,7 @@ class TestGeneratorE2E(unittest.TestCase):
             script = _generate_script(textwrap.dedent(f"""
                 [[requests]]
                 name = "poll"
-                method = "GET"
-                url = "http://127.0.0.1:{port}/status"
+                request = "GET http://127.0.0.1:{port}/status"
                 capture = ["status = data.status"]
                 until = [
                     "condition = ${{status}} == Active",
@@ -451,14 +434,12 @@ class TestGeneratorE2E(unittest.TestCase):
                 toml_path.write_text(textwrap.dedent(f"""
                     [[requests]]
                     name = "raw"
-                    method = "PUT"
-                    url = "http://127.0.0.1:{port}/raw"
+                    request = "PUT http://127.0.0.1:{port}/raw"
                     body_file = "{raw_path}"
 
                     [[requests]]
                     name = "multi"
-                    method = "POST"
-                    url = "http://127.0.0.1:{port}/multi"
+                    request = "POST http://127.0.0.1:{port}/multi"
                     body_multipart = [
                         "title = hello",
                         "file = @{part_path}; filename=part.txt; type=text/plain",
@@ -513,8 +494,7 @@ class TestGeneratorDefaultVars(unittest.TestCase):
         script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/echo?env=${{var.env}}&user=${{var.user}}"
+            request = "GET {base}/echo?env=${{var.env}}&user=${{var.user}}"
         """), default_vars={"env": "prod"})
         _compile(script)
 
@@ -563,8 +543,7 @@ class TestGeneratorDefaultVars(unittest.TestCase):
         script = _generate_script(textwrap.dedent(f"""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/echo?env=${{var.env}}"
+            request = "GET {base}/echo?env=${{var.env}}"
         """), default_vars={"env": "prod"})
         _compile(script)
 

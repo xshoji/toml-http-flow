@@ -45,8 +45,7 @@ class TestCLISmoke(unittest.TestCase):
             f.write(
                 '[[requests]]\n'
                 'name = "ping"\n'
-                'method = "GET"\n'
-                'url = "http://example.com/ping"\n'
+                'request = "GET http://example.com/ping"\n'
             )
             toml_path = f.name
         out_path = tempfile.mktemp(suffix=".sh")
@@ -71,8 +70,7 @@ class TestCLISmoke(unittest.TestCase):
             f.write(
                 '[[requests]]\n'
                 'name = "ping"\n'
-                'method = "GET"\n'
-                'url = "http://example.com/ping"\n'
+                'request = "GET http://example.com/ping"\n'
             )
             toml_path = f.name
         out_path = tempfile.mktemp(suffix=".py")
@@ -99,7 +97,7 @@ class TestCLISmoke(unittest.TestCase):
         # should fail with a connection error (not an argparse error or missing subcommand).
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=".toml", delete=False, mode="w") as f:
-            f.write('[[requests]]\nname = "ping"\nmethod = "GET"\nurl = "http://127.0.0.1:1/"\n')
+            f.write('[[requests]]\nname = "ping"\nrequest = "GET http://127.0.0.1:1/"\n')
             path = f.name
         import os
         try:

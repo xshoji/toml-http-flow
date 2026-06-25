@@ -72,8 +72,7 @@ in the form `"Key: Value"` / `"key = value"` rather than as sub-tables.
 
 [[requests]]
 name    = "getToken"
-method  = "POST"
-url     = "https://api.example.com/auth"
+request = "POST https://api.example.com/auth"
 headers = ["Content-Type: application/json"]
 body    = '''
 {"user":"test","pass":"secret"}
@@ -83,14 +82,12 @@ capture = ["token = access_token"]
 
 [[requests]]
 name    = "wait"
-method  = "SLEEP"
-url     = "2"
+request = "SLEEP 2"
 
 
 [[requests]]
 name    = "getUser"
-method  = "GET"
-url     = "https://api.example.com/me"
+request = "GET https://api.example.com/me"
 headers = [
     "Authorization: Bearer ${token}",
     "Accept: application/json",
@@ -100,8 +97,7 @@ capture = ["user_id = data.user.id"]
 
 [[requests]]
 name    = "updateProfile"
-method  = "PUT"
-url     = "https://api.example.com/profile"
+request = "PUT https://api.example.com/profile"
 headers = [
     "Authorization: Bearer ${token}",
     "Content-Type: application/x-www-form-urlencoded",
@@ -114,15 +110,13 @@ body_form = [
 
 [[requests]]
 name    = "uploadAvatar"
-method  = "POST"
-url     = "https://api.example.com/avatar"
+request = "POST https://api.example.com/avatar"
 body_file = "./avatar.png"
 
 
 [[requests]]
 name    = "submitForm"
-method  = "POST"
-url     = "https://api.example.com/form"
+request = "POST https://api.example.com/form"
 body_multipart = [
     "name    = Taro",
     "title   = Hello",
@@ -135,8 +129,7 @@ body_multipart = [
 | Field       | Required | Type           | Description |
 |-------------|----------|----------------|-------------|
 | `name`      | ✓        | string         | Step name (used for variable references) |
-| `method`    | ✓        | string         | HTTP method (GET/POST/PUT/DELETE) or special step (`SLEEP`) |
-| `url`       | ✓        | string         | Request URL, or the parameter for a special step (e.g. seconds for SLEEP) |
+| `request`   | ✓        | string         | `"METHOD URL"` on one line. Split on the first whitespace into the HTTP method (GET/POST/PUT/DELETE, …) or special step (`SLEEP`) and the URL (or the parameter for a special step, e.g. seconds for `SLEEP`). The legacy `method` / `url` fields were removed; use `request` instead |
 | `headers`   | -        | array[string]  | `"Key: Value"` form |
 | `body`         | -        | string          | Raw text body (mutually exclusive with other `body_*` fields) |
 | `body_form`    | -        | array[string]   | `"key = value"` form; `application/x-www-form-urlencoded` is auto-added |
@@ -233,16 +226,15 @@ capture = [
 
 ### SLEEP special step
 
-Setting `method = "SLEEP"` inserts a step that waits for a specified number of seconds.
+Setting `request = "SLEEP <seconds>"` inserts a step that waits for a specified number of seconds.
 
 ```toml
 [[requests]]
-name   = "wait2s"
-method = "SLEEP"
-url    = "2"
+name    = "wait2s"
+request = "SLEEP 2"
 ```
 
-- Specify the wait in seconds via `url` (template variables such as `${var.delay}` are also allowed).
+- Specify the wait in seconds as the URL part of `request` (template variables such as `${var.delay}` are also allowed).
 - `headers` / `body` / `body_form` / `capture` cannot be set (validation error).
 - Runtime output:
   ```
@@ -258,8 +250,7 @@ Use the optional `until` field to repeatedly send the same request until a condi
 ```toml
 [[requests]]
 name    = "pollStatus"
-method  = "GET"
-url     = "https://api.example.com/jobs/${id}"
+request = "GET https://api.example.com/jobs/${id}"
 capture = ["status = data.status"]
 until   = [
     "condition    = ${status} == active",
@@ -301,7 +292,7 @@ Supported operators in `condition`:
 Variable references use the `${...}` form. Escape `$` with `$$`.
 
 ```toml
-url     = "https://api.${var.env}.example.com/me"
+request = "GET https://api.${var.env}.example.com/me"
 headers = ["Authorization: Bearer ${token}"]
 body    = '{"price":"$$100"}'   # → {"price":"$100"}
 ```

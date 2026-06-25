@@ -32,7 +32,7 @@ ${var.<variable_name>}
 
 例:
 ```toml
-url = "https://api.${var.env}.example.com/user"
+request = "GET https://api.${var.env}.example.com/user"
 ```
 
 ## 4.3 環境変数の参照
@@ -48,7 +48,7 @@ ${env.<environment_variable_name>}
 
 ```toml
 headers = ["Authorization: Bearer ${env.API_TOKEN}"]
-url = "https://api.example.com/users/${env.USER}"
+request = "GET https://api.example.com/users/${env.USER}"
 ```
 
 ## 4.5 現在時刻の参照
@@ -108,7 +108,7 @@ body = '{"price":"$$100"}'   # → {"price":"$100"}
 
 ```toml
 # ステップ名にハイフンを含むケース
-url = "https://api.example.com/x?args=${token}"
+request = "GET https://api.example.com/x?args=${token}"
 ```
 
 ## 4.9 実装方針

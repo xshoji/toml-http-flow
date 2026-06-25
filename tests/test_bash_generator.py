@@ -206,8 +206,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_ping()", script)
@@ -224,8 +223,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "echo"
-            method = "GET"
-            url = "{base}/echo?iso=${{time.DATE_ISO}}&ymd=${{time.DATE_YMD}}&hms=${{time.DATE_YMDHMS}}"
+            request = "GET {base}/echo?iso=${{time.DATE_ISO}}&ymd=${{time.DATE_YMD}}&hms=${{time.DATE_YMDHMS}}"
         """)
         script = self._generate_and_check(toml)
 
@@ -244,8 +242,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
         """)
         script = self._generate_and_check(toml)
 
@@ -263,8 +260,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "create"
-            method = "POST"
-            url = "http://example.com/items"
+            request = "POST http://example.com/items"
             headers = ["Content-Type: application/json"]
             body = '{"name":"test"}'
         """)
@@ -280,8 +276,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "create"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"name":"test"}}'
         """)
@@ -304,8 +299,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "login"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             body_form = ["user = alice", "pass = secret"]
         """)
         script = self._generate_and_check(toml)
@@ -335,14 +329,12 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "first"
-            method = "POST"
-            url = "http://example.com/first"
+            request = "POST http://example.com/first"
             capture = ["authorization = response.body.token"]
 
             [[requests]]
             name = "login"
-            method = "POST"
-            url = "http://example.com/auth"
+            request = "POST http://example.com/auth"
             body_form = [
                 "nickname = new_name",
                 "email    = test@email.com",
@@ -366,8 +358,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "login"
-            method = "POST"
-            url = "http://example.com/auth"
+            request = "POST http://example.com/auth"
             headers = ["Content-Type: application/x-www-form-urlencoded"]
             body_form = ["user = alice", "pass = secret"]
         """)
@@ -381,8 +372,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "login"
-            method = "POST"
-            url = "http://example.com/auth"
+            request = "POST http://example.com/auth"
             headers = ["content-type: application/x-www-form-urlencoded"]
             body_form = ["user = alice", "pass = secret"]
         """)
@@ -395,8 +385,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "env"
-            method = "POST"
-            url = "http://example.com/${env.USER}"
+            request = "POST http://example.com/${env.USER}"
             headers = ["X-User: ${env.USER}"]
             body = '{"user":"${env.USER}"}'
         """)
@@ -410,8 +399,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "wait"
-            method = "SLEEP"
-            url = "0.05"
+            request = "SLEEP 0.05"
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_wait()", script)
@@ -425,8 +413,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "wait"
-            method = "SLEEP"
-            url = "${WAIT_SECONDS}"
+            request = "SLEEP ${WAIT_SECONDS}"
         """)
         script = self._generate_and_check(toml)
         self.assertIn('seconds="${WAIT_SECONDS}"', script)
@@ -437,8 +424,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml, shebang=True)
         self.assertTrue(script.startswith("#!/usr/bin/env bash\n"))
@@ -448,8 +434,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping?id=$ITEM_ID"
+            request = "GET http://example.com/ping?id=$ITEM_ID"
         """)
         script = self._generate_and_check(toml)
         self.assertIn('"$url"', script)
@@ -458,8 +443,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "echo"
-            method = "POST"
-            url = "http://example.com/${var.env}?id=${var.id}"
+            request = "POST http://example.com/${var.env}?id=${var.id}"
             body = '{"name":"${var.user}","id":"${var.id}"}'
         """)
         script = self._generate_and_check(toml)
@@ -471,8 +455,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
         forbidden = ["declare -A", "mapfile", "readarray", "local -n"]
@@ -486,14 +469,12 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "auth"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             capture = ["token = access_token", "uid = response.body.data.id"]
 
             [[requests]]
             name = "me"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
             headers = ["Authorization: Bearer ${{var.token}}", "X-User: ${{var.uid}}"]
         """)
         script = self._generate_and_check(toml)
@@ -516,8 +497,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "edge"
-            method = "POST"
-            url = "{base}/edge"
+            request = "POST {base}/edge"
             capture = [
                 "ok = ok",
                 "empty = empty",
@@ -543,8 +523,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "echo"
-            method = "POST"
-            url = "{base}/echo?x=1"
+            request = "POST {base}/echo?x=1"
             headers = ["Authorization: Bearer abc"]
             body = '{{"hello":"world"}}'
             capture = [
@@ -572,8 +551,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "echo"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
             capture = ["ct = response.header.Content-Type"]
         """)
         script = self._generate_and_check(toml)
@@ -586,8 +564,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "poll"
-            method = "GET"
-            url = "{base}/poll"
+            request = "GET {base}/poll"
             capture = ["status = status"]
             until = ["condition = ${{status}} == Active", "interval = 0", "max_attempts = 5"]
         """)
@@ -610,8 +587,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "poll"
-            method = "GET"
-            url = "{base}/poll"
+            request = "GET {base}/poll"
             capture = ["status = status"]
             until = ["condition = ${{status}} == Never", "interval = 0", "max_attempts = 2"]
         """)
@@ -633,8 +609,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "poll"
-            method = "GET"
-            url = "{base}/poll404"
+            request = "GET {base}/poll404"
             capture = ["status = status"]
             until = ["condition = ${{status}} == Active", "interval = 0", "max_attempts = 3"]
         """)
@@ -652,8 +627,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
         self.assertNotIn("until_eval", script)
@@ -665,8 +639,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "poll"
-            method = "GET"
-            url = "{base}/poll"
+            request = "GET {base}/poll"
             capture = ["status = status"]
             until = ["condition = ${{status}} ~ /active/i", "interval = 0", "max_attempts = 3"]
         """)
@@ -688,8 +661,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "redir"
-            method = "GET"
-            url = "{base}/redir"
+            request = "GET {base}/redir"
             capture = ["trace = response.header.X-Trace-Id"]
         """)
         script = self._generate_and_check(toml)
@@ -708,14 +680,12 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "auth"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             capture = ["missing = nope"]
 
             [[requests]]
             name = "me"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
         """)
         script = self._generate_and_check(toml)
 
@@ -733,13 +703,10 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "a-b"
-            method = "GET"
-            url = "http://example.com/1"
-
+            request = "GET http://example.com/1"
             [[requests]]
             name = "a_b"
-            method = "GET"
-            url = "http://example.com/2"
+            request = "GET http://example.com/2"
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_a_b()", script)
@@ -749,8 +716,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
             description = "health check"
         """)
         script = self._generate_and_check(toml)
@@ -762,8 +728,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
             description = "health check"
         """)
         script = self._generate_and_check(toml)
@@ -784,8 +749,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "create"
-            method = "POST"
-            url = "http://example.com/items/${random.UUID_HEX}"
+            request = "POST http://example.com/items/${random.UUID_HEX}"
             headers = ["X-Request-Id: ${random.UUID}"]
             body = '{"request_id":"${random.UUID}"}'
         """)
@@ -800,8 +764,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -822,8 +785,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "login"
-            method = "POST"
-            url = "http://example.com/auth?token=url-secret&keep=ok"
+            request = "POST http://example.com/auth?token=url-secret&keep=ok"
             headers = ["Authorization: Bearer header-secret"]
             body_form = ["user = alice", "password = body-secret"]
         """)
@@ -846,8 +808,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -887,8 +848,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
         cases = [
@@ -927,8 +887,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -971,8 +930,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -1013,8 +971,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -1047,8 +1004,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -1081,8 +1037,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -1115,8 +1070,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
 
@@ -1144,8 +1098,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
         """)
         script = self._generate_and_check(toml)
         self.assertIn("jq_or_cat()", script)
@@ -1165,8 +1118,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
             headers = ["Authorization: Bearer secret_token"]
         """)
         script = self._generate_and_check(toml)
@@ -1186,8 +1138,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "echo"
-            method = "POST"
-            url = "http://example.com/${var.env}?id=${var.id}"
+            request = "POST http://example.com/${var.env}?id=${var.id}"
             body = '{"name":"${var.user}","id":"${var.id}"}'
         """)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1226,8 +1177,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/${var.user}"
+            request = "GET http://example.com/${var.user}"
         """)
         script = self._generate_and_check(toml)
         self.assertIn('[[ -z "${VAR_USER:-}" ]] && {', script)
@@ -1250,8 +1200,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "api/v1/me"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
         """)
         script = self._generate_and_check(toml)
         self.assertIn("step_api_v1_me()", script)
@@ -1272,13 +1221,10 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "one"
-            method = "GET"
-            url = "{base}/echo"
-
+            request = "GET {base}/echo"
             [[requests]]
             name = "two"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
         """)
         script = self._generate_and_check(toml)
         self.assertEqual(script.count('print_blank_lines "${HTTPFLOW_BLANK_LINE:-0}"'), 1)
@@ -1301,13 +1247,10 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "one"
-            method = "GET"
-            url = "{base}/echo"
-
+            request = "GET {base}/echo"
             [[requests]]
             name = "two"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
         """)
         script = self._generate_and_check(toml)
         self.assertIn("--blank-line", script)
@@ -1330,13 +1273,10 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "one"
-            method = "GET"
-            url = "{base}/echo"
-
+            request = "GET {base}/echo"
             [[requests]]
             name = "two"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
         """)
         script = self._generate_and_check(toml)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1356,8 +1296,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "one"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
         """)
         script = self._generate_and_check(toml)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1377,13 +1316,10 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "one"
-            method = "GET"
-            url = "{base}/echo"
-
+            request = "GET {base}/echo"
             [[requests]]
             name = "two"
-            method = "GET"
-            url = "{base}/echo"
+            request = "GET {base}/echo"
         """)
         script = self._generate_and_check(toml)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1407,8 +1343,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/${var.env}"
+            request = "GET http://example.com/${var.env}"
         """)
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -1442,13 +1377,10 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "poll_attempt"
-            method = "GET"
-            url = "http://example.com/other"
-
+            request = "GET http://example.com/other"
             [[requests]]
             name = "poll"
-            method = "GET"
-            url = "http://example.com/poll"
+            request = "GET http://example.com/poll"
             capture = ["status = status"]
             until = ["condition = ${status} == Active", "interval = 0", "max_attempts = 3"]
         """)
@@ -1464,8 +1396,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "`id`$(echo injected)&"
-            method = "SLEEP"
-            url = "0.01"
+            request = "SLEEP 0.01"
             description = "); echo injected2"
         """)
         script = self._generate_and_check(toml)
@@ -1488,8 +1419,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -1526,8 +1456,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
+            request = "PUT http://example.com/upload"
             body_file = "/tmp/data.bin"
         """)
         script = self._generate_and_check(toml)
@@ -1554,8 +1483,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "upload"
-                method = "PUT"
-                url = "{base}/upload"
+                request = "PUT {base}/upload"
                 body_file = "{data_path}"
             """)
             toml_path = tmp_path / "workflow.toml"
@@ -1592,8 +1520,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "upload"
-                method = "PUT"
-                url = "{base}/upload"
+                request = "PUT {base}/upload"
                 body_file = "${{var.data_path}}"
             """)
             toml_path = tmp_path / "workflow.toml"
@@ -1623,8 +1550,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
+            request = "PUT http://example.com/upload"
             body_file = "/tmp/data.bin"
         """)
         script = self._generate_and_check(toml)
@@ -1635,8 +1561,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
+            request = "PUT http://example.com/upload"
             headers = ["Content-Type: image/png"]
             body_file = "/tmp/data.bin"
         """)
@@ -1654,8 +1579,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent("""
                 [[requests]]
                 name = "upload"
-                method = "PUT"
-                url = "http://example.com/upload"
+                request = "PUT http://example.com/upload"
                 body_file = "/nonexistent/file.bin"
             """)
             toml_path = tmp_path / "workflow.toml"
@@ -1685,8 +1609,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "mform"
-            method = "POST"
-            url = "{base}/upload"
+            request = "POST {base}/upload"
             body_multipart = [
                 "name = alice",
                 "email = alice@example.com",
@@ -1727,8 +1650,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "mform"
-            method = "POST"
-            url = "http://example.com/upload"
+            request = "POST http://example.com/upload"
             body_multipart = [
                 "greeting = @@hello",
             ]
@@ -1749,8 +1671,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "mform"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body_multipart = [
                     "file = @{data_path}; filename=upload.dat; type=image/png",
                 ]
@@ -1789,8 +1710,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "mform"
-            method = "POST"
-            url = "http://example.com/upload"
+            request = "POST http://example.com/upload"
             headers = ["Content-Type: multipart/form-data"]
             body_multipart = [
                 "name = alice",
@@ -1807,8 +1727,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent("""
                 [[requests]]
                 name = "mform"
-                method = "POST"
-                url = "http://example.com/upload"
+                request = "POST http://example.com/upload"
                 body_multipart = [
                     "file = @/nonexistent/file.bin",
                 ]
@@ -1843,8 +1762,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "mform"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body_multipart = [
                     "name = ${{var.username}}",
                     "email = test@email.com",
@@ -1891,8 +1809,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "mform"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body_multipart = [
                     "username = ${{var.username}}",
                     "avatar = @{file_path}; filename=avatar.png; type=image/png",
@@ -1931,8 +1848,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "mform"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body_multipart = [
                     "doc = @{file_path}",
                 ]
@@ -1970,14 +1886,12 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "first"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body = "hello"
 
                 [[requests]]
                 name = "second"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body_multipart = [
                     "title = test upload",
                     "file = @{file_path}; filename=upload.dat; type=image/png",
@@ -2017,8 +1931,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
+            request = "PUT http://example.com/upload"
             body_file = "/tmp/data.bin"
             capture = ["sent = request.body"]
         """)
@@ -2031,8 +1944,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "mform"
-            method = "POST"
-            url = "http://example.com/upload"
+            request = "POST http://example.com/upload"
             body_multipart = [
                 "name = alice",
             ]
@@ -2048,8 +1960,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent(f"""
             [[requests]]
             name = "create"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"date":{{"time_DATE_ISO":"2026-06-24"}}}}'
             capture = ["iso = request.body.date.time_DATE_ISO"]
@@ -2076,8 +1987,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
+            request = "PUT http://example.com/upload"
             body_file = "/tmp/data.bin"
             capture = ["sent = request.body.foo"]
         """)
@@ -2090,8 +2000,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "mform"
-            method = "POST"
-            url = "http://example.com/upload"
+            request = "POST http://example.com/upload"
             body_multipart = [
                 "name = alice",
             ]
@@ -2105,7 +2014,7 @@ class TestBashGenerator(unittest.TestCase):
         """multipart field name with tab raises ValueError."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["na\\tme = value"]\n'
+            toml_content = '[[requests]]\nname = "mform"\nrequest = "POST http://example.com/upload"\nbody_multipart = ["na\\tme = value"]\n'
             toml_path = tmp_path / "workflow.toml"
             toml_path.write_text(toml_content, encoding="utf-8")
             wf = cfg_mod.load(str(toml_path))
@@ -2117,7 +2026,7 @@ class TestBashGenerator(unittest.TestCase):
         """multipart field value with tab raises ValueError."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["name = val\\tue"]\n'
+            toml_content = '[[requests]]\nname = "mform"\nrequest = "POST http://example.com/upload"\nbody_multipart = ["name = val\\tue"]\n'
             toml_path = tmp_path / "workflow.toml"
             toml_path.write_text(toml_content, encoding="utf-8")
             wf = cfg_mod.load(str(toml_path))
@@ -2129,7 +2038,7 @@ class TestBashGenerator(unittest.TestCase):
         """multipart file path with tab raises ValueError."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["file = @/tmp/da\\tta.bin"]\n'
+            toml_content = '[[requests]]\nname = "mform"\nrequest = "POST http://example.com/upload"\nbody_multipart = ["file = @/tmp/da\\tta.bin"]\n'
             toml_path = tmp_path / "workflow.toml"
             toml_path.write_text(toml_content, encoding="utf-8")
             wf = cfg_mod.load(str(toml_path))
@@ -2141,7 +2050,7 @@ class TestBashGenerator(unittest.TestCase):
         """multipart file part name with double quote raises ValueError."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            toml_content = '[[requests]]\nname = "mform"\nmethod = "POST"\nurl = "http://example.com/upload"\nbody_multipart = ["na\\"me = @/tmp/test.bin; type=application/octet-stream"]\n'
+            toml_content = '[[requests]]\nname = "mform"\nrequest = "POST http://example.com/upload"\nbody_multipart = ["na\\"me = @/tmp/test.bin; type=application/octet-stream"]\n'
             toml_path = tmp_path / "workflow.toml"
             toml_path.write_text(toml_content, encoding="utf-8")
             wf = cfg_mod.load(str(toml_path))
@@ -2159,8 +2068,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "upload"
-                method = "PUT"
-                url = "{base}/upload"
+                request = "PUT {base}/upload"
                 body_file = "{data_path}"
             """)
             toml_path = Path(tmp) / "workflow.toml"
@@ -2195,8 +2103,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "upload"
-                method = "PUT"
-                url = "{base}/upload"
+                request = "PUT {base}/upload"
                 body_file = "{data_path}"
             """)
             toml_path = Path(tmp) / "workflow.toml"
@@ -2224,8 +2131,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "mform"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body_multipart = [
                     "name = alice",
                     "file = @{avatar_path}; filename=avatar.png; type=image/png",
@@ -2263,8 +2169,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "mform"
-                method = "POST"
-                url = "{base}/upload"
+                request = "POST {base}/upload"
                 body_multipart = [
                     "first = @{first_path}; filename=first.bin; type=application/octet-stream",
                     "second = @{second_path}; filename=second.bin; type=application/octet-stream",
@@ -2297,8 +2202,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
+            request = "PUT http://example.com/upload"
             body_file = "${var.data_path}"
         """)
         with tempfile.TemporaryDirectory() as tmp:
@@ -2318,8 +2222,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "http://example.com/ping"
+            request = "GET http://example.com/ping"
         """)
         script = self._generate_and_check(toml)
         self.assertNotIn("_hf_b64decode", script)
@@ -2329,8 +2232,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "upload"
-            method = "PUT"
-            url = "http://example.com/upload"
+            request = "PUT http://example.com/upload"
             body_file = "/nonexistent/embed-test-file.bin"
         """)
         with tempfile.TemporaryDirectory() as tmp:
@@ -2345,8 +2247,7 @@ class TestBashGenerator(unittest.TestCase):
         toml = textwrap.dedent("""
             [[requests]]
             name = "mform"
-            method = "POST"
-            url = "http://example.com/upload"
+            request = "POST http://example.com/upload"
             body_multipart = [
                 "file = @/nonexistent/missing-file.bin",
             ]
@@ -2369,8 +2270,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "poll"
-                method = "PUT"
-                url = "{base}/poll"
+                request = "PUT {base}/poll"
                 body_file = "{data_path}"
                 capture = ["status = status"]
                 until = ["condition = ${{status}} == Active", "interval = 0", "max_attempts = 3"]
@@ -2403,8 +2303,7 @@ class TestBashGenerator(unittest.TestCase):
             toml = textwrap.dedent(f"""
                 [[requests]]
                 name = "upload"
-                method = "PUT"
-                url = "{base}/upload"
+                request = "PUT {base}/upload"
                 body_file = "relative_data.bin"
             """)
             toml_path = tmp_path / "workflow.toml"

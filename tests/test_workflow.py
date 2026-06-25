@@ -28,16 +28,14 @@ class TestWorkflowCore(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "getToken"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"user":"u","pass":"p"}}'
             capture = ["token = access_token"]
 
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
             headers = ["Authorization: Bearer ${{token}}"]
             capture = ["uid = user.id", "echoed_auth = user.auth_seen"]
         """))
@@ -63,8 +61,7 @@ class TestWorkflowCore(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/me?user=${{var.user}}"
+            request = "GET {base}/me?user=${{var.user}}"
         """))
         self.addCleanup(os.unlink, path)
         cfg = cfg_mod.load(path)
@@ -77,14 +74,12 @@ class TestWorkflowCore(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "missing"
-            method = "GET"
-            url = "{base}/missing"
+            request = "GET {base}/missing"
             capture = ["message = error"]
 
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
         """))
         self.addCleanup(os.unlink, path)
         cfg = cfg_mod.load(path)
@@ -111,16 +106,14 @@ class TestWorkflowStepSelection(ServerMixin, unittest.TestCase):
         toml = textwrap.dedent(f"""\
             [[requests]]
             name = "getToken"
-            method = "POST"
-            url = "{self.base}/auth"
+            request = "POST {self.base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"user":"u","pass":"p"}}'
             capture = ["token = access_token"]
 
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{self.base}/me"
+            request = "GET {self.base}/me"
         """)
         path = write_toml(toml)
         self.addCleanup(os.unlink, path)
@@ -136,13 +129,10 @@ class TestWorkflowStepSelection(ServerMixin, unittest.TestCase):
         toml = textwrap.dedent(f"""\
             [[requests]]
             name = "first"
-            method = "GET"
-            url = "{self.base}/me"
-
+            request = "GET {self.base}/me"
             [[requests]]
             name = "second"
-            method = "GET"
-            url = "{self.base}/me"
+            request = "GET {self.base}/me"
         """)
         path = write_toml(toml)
         self.addCleanup(os.unlink, path)
@@ -157,8 +147,7 @@ class TestWorkflowStepSelection(ServerMixin, unittest.TestCase):
         toml = textwrap.dedent(f"""\
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
         """)
         path = write_toml(toml)
         self.addCleanup(os.unlink, path)
@@ -170,13 +159,10 @@ class TestWorkflowStepSelection(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "needsVar"
-            method = "GET"
-            url = "{self.base}/me?user=${{var.user}}"
-
+            request = "GET {self.base}/me?user=${{var.user}}"
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{self.base}/me"
+            request = "GET {self.base}/me"
         """))
         self.addCleanup(os.unlink, path)
         cfg = cfg_mod.load(path)
@@ -196,8 +182,7 @@ class TestWorkflowCapture(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
             capture = ["ct = response.header.content-type"]
         """))
         self.addCleanup(os.unlink, path)
@@ -211,16 +196,14 @@ class TestWorkflowCapture(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "getToken"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"user":"u","pass":"p"}}'
             capture = ["token = access_token"]
 
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
             headers = ["Authorization: Bearer ${{token}}"]
             capture = [
                 "sent_auth = request.header.Authorization",
@@ -239,8 +222,7 @@ class TestWorkflowCapture(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "getToken"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             headers = ["Content-Type: application/json"]
             body = '{{"user":"u","pass":"p"}}'
             capture = ["sent_body = request.body"]
@@ -256,8 +238,7 @@ class TestWorkflowCapture(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "getUser"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
             capture = ["x = response.header.X-Does-Not-Exist"]
         """))
         self.addCleanup(os.unlink, path)
@@ -290,8 +271,7 @@ class TestWorkflowCapture(ServerMixin, unittest.TestCase):
             path = write_toml(textwrap.dedent(f"""\
                 [[requests]]
                 name = "ping"
-                method = "GET"
-                url = "http://127.0.0.1:{port}/x"
+                request = "GET http://127.0.0.1:{port}/x"
                 capture = ["trace = response.header.X-Trace-Id"]
             """))
             self.addCleanup(os.unlink, path)
@@ -315,8 +295,7 @@ class TestWorkflowLogOutput(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
         """))
         self.addCleanup(os.unlink, path)
         cfg = cfg_mod.load(path)
@@ -333,8 +312,7 @@ class TestWorkflowLogOutput(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "ping"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
         """))
         self.addCleanup(os.unlink, path)
         cfg = cfg_mod.load(path)
@@ -348,13 +326,10 @@ class TestWorkflowLogOutput(ServerMixin, unittest.TestCase):
         path = write_toml(textwrap.dedent(f"""\
             [[requests]]
             name = "one"
-            method = "GET"
-            url = "{base}/me"
-
+            request = "GET {base}/me"
             [[requests]]
             name = "two"
-            method = "GET"
-            url = "{base}/me"
+            request = "GET {base}/me"
         """))
         self.addCleanup(os.unlink, path)
         cfg = cfg_mod.load(path)

@@ -76,8 +76,7 @@ class TestConfigUntil(unittest.TestCase):
         wf = self._load(b"""
 [[requests]]
 name = "poll"
-method = "GET"
-url = "http://example.com"
+request = "GET http://example.com"
 until = [
     "condition    = ${status} == Active",
     "interval     = 2.5",
@@ -94,8 +93,7 @@ until = [
         wf = self._load(b"""
 [[requests]]
 name = "poll"
-method = "GET"
-url = "http://example.com"
+request = "GET http://example.com"
 until = ["condition = ${s} == OK"]
 """)
         u = wf.steps[0].until
@@ -107,8 +105,7 @@ until = ["condition = ${s} == OK"]
             self._load(b"""
 [[requests]]
 name = "poll"
-method = "GET"
-url = "http://example.com"
+request = "GET http://example.com"
 until = ["interval = 2.0"]
 """)
         self.assertIn("condition", str(ctx.exception))
@@ -118,8 +115,7 @@ until = ["interval = 2.0"]
             self._load(b"""
 [[requests]]
 name = "poll"
-method = "GET"
-url = "http://example.com"
+request = "GET http://example.com"
 until = [
     "condition = ${s} == OK",
     "bogus     = 1",
@@ -132,8 +128,7 @@ until = [
             self._load(b"""
 [[requests]]
 name = "poll"
-method = "GET"
-url = "http://example.com"
+request = "GET http://example.com"
 until = [
     "condition = a == b",
     "interval  = -1",
@@ -145,8 +140,7 @@ until = [
             self._load(b"""
 [[requests]]
 name = "poll"
-method = "GET"
-url = "http://example.com"
+request = "GET http://example.com"
 until = [
     "condition    = a == b",
     "max_attempts = 0",
@@ -158,8 +152,7 @@ until = [
             self._load(b"""
 [[requests]]
 name = "bad"
-method = "SLEEP"
-url = "1"
+request = "SLEEP 1"
 until = ["condition = a == b"]
 """)
 
@@ -178,16 +171,14 @@ class TestWorkflowPolling(ServerMixin, unittest.TestCase):
         return textwrap.dedent(f"""\
             [[requests]]
             name = "createJob"
-            method = "POST"
-            url = "{base}/jobs"
+            request = "POST {base}/jobs"
             headers = ["Content-Type: application/json"]
             body = '{{"name":"x"}}'
             capture = ["id = data.id"]
 
             [[requests]]
             name = "pollStatus"
-            method = "GET"
-            url = "{base}/jobs/${{id}}"
+            request = "GET {base}/jobs/${{id}}"
             capture = ["status = data.status"]
             until = [
                 "condition = ${{status}} == Active",
@@ -245,16 +236,14 @@ class TestGeneratorPolling(ServerMixin, unittest.TestCase):
         toml_text = textwrap.dedent(f"""
             [[requests]]
             name = "createJob"
-            method = "POST"
-            url = "{base}/jobs"
+            request = "POST {base}/jobs"
             headers = ["Content-Type: application/json"]
             body = '''{{"name":"x"}}'''
             capture = ["id = data.id"]
 
             [[requests]]
             name = "pollStatus"
-            method = "GET"
-            url = "{base}/jobs/${{id}}"
+            request = "GET {base}/jobs/${{id}}"
             capture = ["status = data.status"]
             until = [
                 "condition    = ${{status}} == Active",
@@ -285,16 +274,14 @@ class TestGeneratorPolling(ServerMixin, unittest.TestCase):
         toml_text = textwrap.dedent(f"""
             [[requests]]
             name = "createJob"
-            method = "POST"
-            url = "{base}/jobs"
+            request = "POST {base}/jobs"
             headers = ["Content-Type: application/json"]
             body = '''{{"name":"x"}}'''
             capture = ["id = data.id"]
 
             [[requests]]
             name = "pollStatus"
-            method = "GET"
-            url = "{base}/jobs/${{id}}"
+            request = "GET {base}/jobs/${{id}}"
             capture = ["status = data.status"]
             until = [
                 "condition    = ${{status}} == Active",
@@ -334,8 +321,7 @@ class TestUntilEquivalence(unittest.TestCase):
         path = write_toml(textwrap.dedent("""\
             [[requests]]
             name = "dummy"
-            method = "GET"
-            url = "http://example.com"
+            request = "GET http://example.com"
             until = [
                 "condition = ${x} == 1",
                 "interval = 1.0",

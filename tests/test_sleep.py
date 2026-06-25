@@ -19,8 +19,7 @@ class TestSleepStep(unittest.TestCase):
             f.write("""\
 [[requests]]
 name = "wait1"
-method = "SLEEP"
-url = "0.1"
+request = "SLEEP 0.1"
 """)
         try:
             cfg = cfg_mod.load(path)
@@ -45,8 +44,7 @@ url = "0.1"
             f.write("""\
 [[requests]]
 name = "wait"
-method = "SLEEP"
-url = "${var.delay}"
+request = "SLEEP ${var.delay}"
 """)
         try:
             cfg = cfg_mod.load(path)
@@ -66,8 +64,7 @@ url = "${var.delay}"
             f.write("""\
 [[requests]]
 name = "qwait"
-method = "SLEEP"
-url = "0.01"
+request = "SLEEP 0.01"
 """)
         try:
             cfg = cfg_mod.load(path)
@@ -99,8 +96,7 @@ class TestSleepTOMLLoad(unittest.TestCase):
         toml = b"""
 [[requests]]
 name = "wait"
-method = "SLEEP"
-url = "${var.delay}"
+request = "SLEEP ${var.delay}"
 """
         path = self._write(toml)
         wf = cfg_mod.load(path)

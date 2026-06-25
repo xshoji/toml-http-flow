@@ -192,8 +192,7 @@ class TestWorkflowMasking(unittest.TestCase):
         toml = textwrap.dedent(f"""\
             [[requests]]
             name = "auth"
-            method = "POST"
-            url = "{base}/auth?token=qparam-secret&keep=ok"
+            request = "POST {base}/auth?token=qparam-secret&keep=ok"
             headers = [
                 "Content-Type: application/json",
                 "Authorization: Bearer real-secret",
@@ -276,8 +275,7 @@ class TestWorkflowMasking(unittest.TestCase):
         toml = textwrap.dedent(f"""\
             [[requests]]
             name = "login"
-            method = "POST"
-            url = "{base}/auth"
+            request = "POST {base}/auth"
             body_form = [
                 "password = hunter2",
                 "note = a=b",
