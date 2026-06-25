@@ -1295,6 +1295,113 @@ class TestBashGenerator(unittest.TestCase):
         self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
         self.assertIn("\n\n\n==>", res.stdout)
 
+    def test_blank_line_arg_inserts_lines_between_steps(self):
+        """--blank-line N behaves like HTTPFLOW_BLANK_LINE for generated bash."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "one"
+            method = "GET"
+            url = "{base}/echo"
+
+            [[requests]]
+            name = "two"
+            method = "GET"
+            url = "{base}/echo"
+        """)
+        script = self._generate_and_check(toml)
+        self.assertIn("--blank-line", script)
+        self.assertIn("usage: $0 [--pretty-json] [--no-mask] [--blank-line N]", script)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path), "--blank-line", "2"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("\n\n\n==>", res.stdout)
+
+    def test_blank_line_arg_equals_form(self):
+        """--blank-line=N is accepted in addition to the space-separated form."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "one"
+            method = "GET"
+            url = "{base}/echo"
+
+            [[requests]]
+            name = "two"
+            method = "GET"
+            url = "{base}/echo"
+        """)
+        script = self._generate_and_check(toml)
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path), "--blank-line=3"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("\n\n\n\n==>", res.stdout)
+
+    def test_blank_line_arg_invalid_value_fails(self):
+        """Non-numeric --blank-line is rejected with a non-zero exit."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "one"
+            method = "GET"
+            url = "{base}/echo"
+        """)
+        script = self._generate_and_check(toml)
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path), "--blank-line", "abc"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("non-negative integer", res.stderr)
+
+    def test_blank_line_arg_overrides_env(self):
+        """--blank-line takes precedence over HTTPFLOW_BLANK_LINE env var."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "one"
+            method = "GET"
+            url = "{base}/echo"
+
+            [[requests]]
+            name = "two"
+            method = "GET"
+            url = "{base}/echo"
+        """)
+        script = self._generate_and_check(toml)
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = Path(tmp) / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", "-c", f"HTTPFLOW_BLANK_LINE=1 bash {script_path} --blank-line 3"],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        # Arg (3) wins over env (1): the first step is preceded by 3 blank
+        # lines, so the output must start with "\n\n\n==>" (3 newlines + banner).
+        self.assertTrue(res.stdout.startswith("\n\n\n==>"),
+                        msg="expected 3 leading blank lines from --blank-line 3")
+        # Sanity: env value 1 alone would produce only 1 leading blank line.
+        self.assertFalse(res.stdout.startswith("\n==>"))
+
     def test_default_vars_overridable_at_runtime(self):
         """Embedded default vars can be overridden by exporting before running."""
         toml = textwrap.dedent("""

@@ -382,6 +382,17 @@ Dependencies:
 - `curl` — required (version-checked at the top of the script)
 - `jq` — required only when any step uses JSON capture (checked at the top)
 
+The generated bash script accepts the following command-line arguments:
+
+| Argument | Purpose |
+|----------|---------|
+| `--pretty-json` | Pretty-print JSON response bodies |
+| `--no-mask` | Disable secret masking in log output |
+| `--blank-line N` | Separate step log output with N blank lines (also accepted as `--blank-line=N`) |
+| `-h`, `--help` | Show usage and exit |
+
+A command-line argument overrides the corresponding environment variable when both are set.
+
 Environment variables for invocation:
 
 | Variable | Purpose |

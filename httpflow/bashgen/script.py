@@ -76,7 +76,9 @@ curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 
 # ─── main ───────────────────────────────────────────────────────────
 main() {{
-    for arg in "$@"; do
+    local arg
+    while (( $# > 0 )); do
+        arg=$1
         case "$arg" in
             --pretty-json)
                 HTTPFLOW_PRETTY_JSON=1
@@ -84,8 +86,19 @@ main() {{
             --no-mask)
                 HTTPFLOW_NO_MASK=1
                 ;;
+            --blank-line)
+                if (( $# < 2 )); then
+                    echo "error: --blank-line requires a non-negative integer argument" >&2
+                    exit 1
+                fi
+                HTTPFLOW_BLANK_LINE=$2
+                shift
+                ;;
+            --blank-line=*)
+                HTTPFLOW_BLANK_LINE=${{arg#--blank-line=}}
+                ;;
             -h|--help)
-                echo "usage: $0 [--pretty-json] [--no-mask]"
+                echo "usage: $0 [--pretty-json] [--no-mask] [--blank-line N]"
                 exit 0
                 ;;
             *)
@@ -93,9 +106,17 @@ main() {{
                 exit 1
                 ;;
         esac
+        shift
     done
     export HTTPFLOW_PRETTY_JSON=${{HTTPFLOW_PRETTY_JSON:-}}
     export HTTPFLOW_NO_MASK=${{HTTPFLOW_NO_MASK:-}}
+    export HTTPFLOW_BLANK_LINE=${{HTTPFLOW_BLANK_LINE:-0}}
+    case "$HTTPFLOW_BLANK_LINE" in
+        ''|*[!0-9]*)
+            echo "error: --blank-line / HTTPFLOW_BLANK_LINE must be a non-negative integer, got: $HTTPFLOW_BLANK_LINE" >&2
+            exit 1
+            ;;
+    esac
 
     HF_TMPDIR=$(mktemp -d) || {{
         echo "error: failed to create temporary directory" >&2
