@@ -23,7 +23,6 @@ python -m httpflow generate -f workflow.toml --format python -o workflow.py
 | `--pretty-json`    | -    | リクエスト/レスポンスの body が JSON のとき、インデント2スペースで整形して出力する |
 | `--no-mask`        | -    | センシティブフィールドのマスキングを無効化する（**デフォルトはマスキングON**）       |
 | `--blank-line N`   | -    | ステップ間の標準出力ログを `N` 行の空行で区切る（未指定時は0）                    |
-| `--version`        | -    | バージョン情報を表示                                                                 |
 | `-h`, `--help`     | -    | ヘルプ表示                                                                         |
 
 `${var.K}` 形式で明示参照され、`-v K=...` で与えられていない変数は必須パラメタとして扱う。
@@ -39,11 +38,11 @@ python -m httpflow generate -f workflow.toml --format python -o workflow.py
     # <description 1行ずつ>            ← description 指定時のみ
     > <METHOD> <path> HTTP/1.1
     > Host: api.example.com
+    > Header-Key: value
+    > ...
     > Content-Length: 31
     > User-Agent: Python-urllib/3.12
     > Accept-Encoding: identity
-    > Header-Key: value
-    > ...
     >
     > <body 1行ずつ>
 <== 2026-05-19 23:35:49.456 [<step_name>]
@@ -155,8 +154,10 @@ python -m httpflow run -f workflow.toml -s getToken -s getUser
 | `--format`         | -    | 出力形式 `bash` または `python`（既定: `bash`） |
 | `-v`, `--var`      | -    | 生成スクリプトの `DEFAULT_VARS` に埋め込む変数（実行時に `-v` で上書き可能） |
 | `--shebang`        | -    | 先頭に shebang を付与し、実行権を付与             |
-| `--version`        | -    | バージョン情報を表示                              |
+| `--embed-files`    | -    | `body_file` / `body_multipart` のリテラルパスを Base64 で生成スクリプトに埋め込む（bash 形式のみ） |
 | `-h`, `--help`     | -    | ヘルプ表示                                        |
+
+`--version` はサブコマンドではなくトップレベルのオプション（`python -m httpflow --version`）として提供される。
 
 ### 5.2.1 生成スクリプトのサポート引数
 

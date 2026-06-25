@@ -179,6 +179,10 @@ python3 -m httpflow generate -f workflow.toml -o workflow.sh --shebang
 # Generate a self-contained Python script
 python3 -m httpflow generate -f workflow.toml --format python -o workflow.py
 python3 -m httpflow generate -f workflow.toml --format python -o workflow.py --shebang
+
+# Embed body_file / body_multipart file contents into the bash script as base64
+# (paths with ${...} placeholders fall back to runtime file lookup)
+python3 -m httpflow generate -f workflow.toml -o workflow.sh --embed-files
 ```
 
 For full specification (TOML fields, template notation, capture sources,

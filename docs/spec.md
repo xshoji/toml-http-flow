@@ -30,13 +30,13 @@ headers and body.
 ==> 2026-05-19 23:35:49.123 [getToken] POST https://api.example.com/auth
     > POST /auth HTTP/1.1
     > Host: api.example.com
+    > Content-Type: application/json
     > Content-Length: 31
     > User-Agent: Python-urllib/3.12
     > Accept-Encoding: identity
-    > Content-Type: application/json
     >
     > {"user":"test","pass":"secret"}
-<== 2026-05-19 23:35:49.456 [getToken] status=200
+<== 2026-05-19 23:35:49.456 [getToken]
     < HTTP/1.1 200 OK
     < Content-Type: application/json
     < Content-Length: 27

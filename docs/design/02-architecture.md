@@ -180,9 +180,9 @@ class WorkflowSpec:
 | `bashgen/conditions.py` | until 条件式 → bash `if ... then` コード |
 | `bashgen/names.py` | 変数名の正規化（`VAR_<NAME>` 形式） |
 | `bashgen/placeholders.py` | `${time.*}` / `${random.*}` 等 → bash コード |
-| `bashgen/runtime.py` | mask／uuid／capture_* 等のランタイム helper 関数群の生成。`http_step` は curl 実行 + ログ + trace_file 作成のみを行う薄い executor |
+| `bashgen/runtime.py` | mask／uuid／capture_* 等のランタイム helper 関数群の生成。`http_step` は curl 実行 + ログ出力 + trace_file 作成 + body_log 導出を行う薄い executor（curl_command 文字列を1回 eval して curl 引数配列を組み立て、そこから body_log を抽出する） |
 | `bashgen/shell.py` | シェルエスケープ・引用符ユーティリティ |
-| `bashgen/steps.py` | 各 step 関数のコード生成。step 関数内で直接 `cmd+=(...)` により curl 引数を組み立て、`http_step` 呼び出し後に `capture_*` を直接呼び出す |
+| `bashgen/steps.py` | 各 step 関数のコード生成。step 関数内で `curl_command` 文字列（quoted heredoc により `${VAR_*}` / `$(uuid)` 等をリテラル保持したまま curl 引数を組み立てる）を構築し、`http_step` 呼び出し後に `capture_*` を直接呼び出す |
 | `bashgen/script.py` | スクリプト全体の組み立て |
 
 ## 2.7 httpflow/cli.py
