@@ -109,8 +109,8 @@ options:
 variable injection:
   --<name> <value>           set VAR_<NAME> (uppercased, '-' -> '_')
   --<name>=<value>           same, with inline value
-  Example: --hogehoge hogeValue  ->  VAR_HOGEHOGE=hogeValue
-           (referenced in the flow as ${{VAR_HOGEHOGE}})
+  Example: --option-a value  ->  VAR_OPTION_A=value
+           (referenced in the flow as ${{VAR_OPTION_A}})
 __HF_HELP__
                 exit 0
                 ;;
