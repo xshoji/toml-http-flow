@@ -35,7 +35,7 @@ class ScriptRenderer:
         if defaults_block:
             defaults_block = f"\n# ─── defaults (can be overridden by exporting beforehand) ───────────\n{defaults_block}\n"
 
-        required_vars_block = self._required_var_check(analysis.required_vars)
+        required_vars_block = self._required_var_check(analysis.required_vars, indent="    ")
 
         mask_keys_default = "|".join(sorted(_MASK_DEFAULTS))
         bash_mask_keys_default = mask_key_pattern(mask_keys_default)
@@ -59,8 +59,7 @@ curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 {http_helpers(expose_body_log=analysis.needs_body_log_var)}
 {until_helpers() if analysis.has_until else ''}
 {defaults_block}
-{embedded_block}
-{required_vars_block}"""
+{embedded_block}"""
 
         if step_blocks:
             funcs = "\n\n".join(step_blocks)
@@ -76,7 +75,7 @@ curl --version >/dev/null || {{ echo "curl is required" >&2; exit 1; }}
 
 # ─── main ───────────────────────────────────────────────────────────
 main() {{
-    local arg
+    local arg var_name var_value
     while (( $# > 0 )); do
         arg=$1
         case "$arg" in
@@ -98,8 +97,50 @@ main() {{
                 HTTPFLOW_BLANK_LINE=${{arg#--blank-line=}}
                 ;;
             -h|--help)
-                echo "usage: $0 [--pretty-json] [--no-mask] [--blank-line N]"
+                cat <<'__HF_HELP__'
+usage: <script> [options] [--<name> <value>]...
+
+options:
+  --pretty-json      pretty-print JSON request/response bodies
+  --no-mask          disable masking of sensitive fields
+  --blank-line N     separate step log output with N blank lines
+  -h, --help         show this help
+
+variable injection:
+  --<name> <value>           set VAR_<NAME> (uppercased, '-' -> '_')
+  --<name>=<value>           same, with inline value
+  Example: --hogehoge hogeValue  ->  VAR_HOGEHOGE=hogeValue
+           (referenced in the flow as ${{VAR_HOGEHOGE}})
+__HF_HELP__
                 exit 0
+                ;;
+            --?*)
+                # Generic variable injection:
+                #   --<name> <value>   sets VAR_<NAME> (name uppercased, '-' -> '_')
+                #   --<name>=<value>   same, with inline value
+                # Reserved flags above (--pretty-json / --no-mask / --blank-line /
+                # --help) are matched first; a flow variable that collides with one
+                # of those names can still be set via the '--<name>=<value>' form.
+                if [[ "$arg" == *=* ]]; then
+                    var_name=${{arg#--}}
+                    var_name=${{var_name%%=*}}
+                    var_value=${{arg#*=}}
+                else
+                    if (( $# < 2 )); then
+                        echo "error: $arg requires a value argument" >&2
+                        exit 1
+                    fi
+                    var_name=${{arg#--}}
+                    var_value=$2
+                    shift
+                fi
+                if [[ ! "$var_name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+                    echo "error: invalid variable name '$var_name' from arg '$arg'" >&2
+                    exit 1
+                fi
+                var_name=${{var_name//-/_}}
+                var_name=$(printf '%s' "$var_name" | awk '{{print toupper($0)}}')
+                printf -v "VAR_$var_name" '%s' "$var_value"
                 ;;
             *)
                 echo "error: unknown argument: $arg" >&2
@@ -117,7 +158,7 @@ main() {{
             exit 1
             ;;
     esac
-
+{required_vars_block}
     HF_TMPDIR=$(mktemp -d) || {{
         echo "error: failed to create temporary directory" >&2
         exit 1
@@ -132,8 +173,13 @@ main "$@"
         return script
 
     @staticmethod
-    def _required_var_check(names: tuple[str, ...]) -> str:
-        """Emit bash statements that fail when required VAR_* values are empty."""
+    def _required_var_check(names: tuple[str, ...], *, indent: str = "") -> str:
+        """Emit bash statements that fail when required VAR_* values are empty.
+
+        *indent* is prepended to every line so the block can be placed inside
+        ``main()`` (after argument parsing) instead of running at top level —
+        this lets ``--<name> <value>`` CLI args satisfy required variables.
+        """
         if not names:
             return ""
         lines = ["", "# ─── required variables ──────────────────────────────────────────────"]
@@ -147,6 +193,8 @@ main "$@"
                 "}",
             ])
         lines.append("")
+        if indent:
+            lines = [f"{indent}{ln}" if ln else ln for ln in lines]
         return "\n".join(lines)
 
     @staticmethod

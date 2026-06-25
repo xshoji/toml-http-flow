@@ -172,7 +172,54 @@ python -m httpflow run -f workflow.toml -s getToken -s getUser
 | `--blank-line N`   | ステップ間の空行数（未指定時は0）                |
 | `-h`, `--help`     | ヘルプ表示                                        |
 
-bash 形式の生成スクリプトは `-v` / `--quiet` をサポートしない。
+bash 形式の生成スクリプトは `-v` / `--quiet` をサポートしない。代わりに
+`${var.<NAME>}` で参照される変数を **`--<name> <value>` 形式の CLI 引数で
+直接注入** できる（詳細は §5.2.3）。
+
+bash 形式の生成スクリプトがサポートする引数:
+
+| 引数               | 説明                                              |
+|--------------------|---------------------------------------------------|
+| `--pretty-json`    | JSON body を整形出力                              |
+| `--no-mask`        | マスキングを無効化                                |
+| `--blank-line N`   | ステップ間の空行数（未指定時は0）。`--blank-line=N` 形式も可 |
+| `--<name> <value>` | 変数注入。`VAR_<NAME>`（大文字化、`-`→`_`）に設定。`--<name>=<value>` 形式も可 |
+| `-h`, `--help`     | ヘルプ表示                                        |
+
+### 5.2.3 変数の CLI 注入（bash 形式のみ）
+
+bash 形式の生成スクリプトでは、`${var.<NAME>}` で参照される変数を実行時引数で
+注入できる。TOML 中の `${var.hogehoge}` は bash では `${VAR_HOGEHOGE}` に変換
+されるが、CLI からは以下のいずれかの形式で値を渡せる。
+
+```bash
+# スペース区切り
+./workflow.sh --hogehoge hogeValue
+
+# = 区切り
+./workflow.sh --hogehoge=hogeValue
+```
+
+マッピング規則:
+
+- オプション名（`--` の後ろ）の `-` は `_` に置換される
+- その後大文字化され、先頭に `VAR_` が付く
+- 例: `--hogehoge` → `VAR_HOGEHOGE`、`--foo-bar` → `VAR_FOO_BAR`
+- オプション名には `[A-Za-z0-9_-]` のみ使用可能。それ以外はエラー
+
+優先順位（高位から）:
+
+1. CLI 引数 `--<name> <value>`
+2. 実行前に export された環境変数 `VAR_<NAME>`
+3. `generate -v` で埋め込んだ `DEFAULT_VARS`
+
+必須変数（`DEFAULT_VARS` に含まれず `${var.*}` で参照されるもの）の不足検証は、
+引数解析の**後**に実行される。そのため `--<name> <value>` で必須変数を供給できる
+ほか、必須変数があるワークフローでも `--help` が機能する。
+
+予約フラグ（`--pretty-json` / `--no-mask` / `--blank-line` / `--help`）は変数注入
+より優先されて解釈される。同名の変数（例: `${var.pretty-json}`）と衝突する場合は
+`--<name>=<value>` 形式を使うことで注入できる。
 
 ### 5.2.2 埋め込みの挙動
 

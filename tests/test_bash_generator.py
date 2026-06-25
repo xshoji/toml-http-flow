@@ -1254,7 +1254,7 @@ class TestBashGenerator(unittest.TestCase):
         """)
         script = self._generate_and_check(toml)
         self.assertIn("--blank-line", script)
-        self.assertIn("usage: $0 [--pretty-json] [--no-mask] [--blank-line N]", script)
+        self.assertIn("usage: <script> [options] [--<name> <value>]...", script)
 
         with tempfile.TemporaryDirectory() as tmp:
             script_path = Path(tmp) / "workflow.sh"
@@ -2318,3 +2318,190 @@ class TestBashGenerator(unittest.TestCase):
             )
             self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
             self.assertEqual(_CaptureHandler.seen_body_bytes, b"relative-file-content")
+
+    # ── CLI variable injection (--<name> <value> -> VAR_<NAME>) ──────────
+
+    def _generate_var_script(self, toml_text: str):
+        """Generate, syntax-check and write to a temp file; return (script, path).
+
+        The temp dir persists for the lifetime of the test (cleaned up via
+        addCleanup) so the returned path remains valid when the test later
+        runs the script via subprocess.
+        """
+        import shutil
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        tmp_path = Path(tmp)
+        toml_path = tmp_path / "workflow.toml"
+        toml_path.write_text(toml_text, encoding="utf-8")
+        wf = cfg_mod.load(str(toml_path))
+        script = bash_generator.generate(wf)
+        script_path = tmp_path / "workflow.sh"
+        script_path.write_text(script, encoding="utf-8")
+        syntax = subprocess.run(
+            ["bash", "-n", str(script_path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(
+            syntax.returncode, 0,
+            msg=f"syntax error:\n{syntax.stderr}\n--- script ---\n{script}",
+        )
+        return script, script_path
+
+    def test_cli_var_injection_space_form_satisfies_required(self):
+        """--<name> <value> sets VAR_<NAME> and satisfies the required check."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?h=${{var.hogehoge}}"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        res = subprocess.run(
+            ["bash", str(script_path), "--hogehoge", "hogeValue"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("hogeValue", res.stdout)
+
+    def test_cli_var_injection_equals_form(self):
+        """--<name>=<value> is accepted in addition to the space form."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?h=${{var.hogehoge}}"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        res = subprocess.run(
+            ["bash", str(script_path), "--hogehoge=hogeValue"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("hogeValue", res.stdout)
+
+    def test_cli_var_injection_hyphenated_name_maps_to_underscore(self):
+        """--foo-bar <value> maps to VAR_FOO_BAR (matching ${var.foo-bar})."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?f=${{var.foo-bar}}"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        res = subprocess.run(
+            ["bash", str(script_path), "--foo-bar", "bazvalue"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("bazvalue", res.stdout)
+
+    def test_cli_var_injection_mixed_case_arg_uppercased(self):
+        """Mixed-case option name is uppercased: --HoGe -> VAR_HOGE."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?h=${{var.hoge}}"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        res = subprocess.run(
+            ["bash", str(script_path), "--HoGe", "val"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("val", res.stdout)
+
+    def test_cli_var_injection_overrides_default_vars(self):
+        """CLI args take precedence over embedded DEFAULT_VARS."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?env=${{var.env}}"
+        """)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            toml_path = tmp_path / "workflow.toml"
+            toml_path.write_text(toml, encoding="utf-8")
+            wf = cfg_mod.load(str(toml_path))
+            script = bash_generator.generate(wf, default_vars={"env": "default_env"})
+            script_path = tmp_path / "workflow.sh"
+            script_path.write_text(script, encoding="utf-8")
+            res = subprocess.run(
+                ["bash", str(script_path), "--env", "cli_env"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+            self.assertIn("cli_env", res.stdout)
+            self.assertNotIn("default_env", res.stdout)
+
+    def test_cli_var_injection_overrides_env_var(self):
+        """CLI args take precedence over a variable exported before running."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?env=${{var.env}}"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        res = subprocess.run(
+            ["bash", "-c", f"VAR_ENV=fromenv bash {script_path} --env cli_env"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("cli_env", res.stdout)
+        self.assertNotIn("fromenv", res.stdout)
+
+    def test_cli_var_injection_missing_value_fails(self):
+        """--<name> with no following value fails with a clear error."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?h=${{var.hogehoge}}"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        res = subprocess.run(
+            ["bash", str(script_path), "--hogehoge"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("requires a value argument", res.stderr)
+
+    def test_cli_var_injection_invalid_name_fails(self):
+        """An option name with non-[A-Za-z0-9_-] chars is rejected."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        # '=' form lets us inject an arbitrary "name" containing a bad char
+        # (e.g. '.') that the shell would otherwise split off as a value.
+        res = subprocess.run(
+            ["bash", str(script_path), "--bad.name=v"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("invalid variable name", res.stderr)
+
+    def test_cli_var_injection_help_works_with_required_vars(self):
+        """--help is honoured even when the workflow has required variables
+        (the required-check now runs after argument parsing inside main)."""
+        base = f"http://127.0.0.1:{self.port}"
+        toml = textwrap.dedent(f"""
+            [[requests]]
+            name = "ping"
+            request = "GET {base}/echo?h=${{var.hogehoge}}"
+        """)
+        script, script_path = self._generate_var_script(toml)
+        res = subprocess.run(
+            ["bash", str(script_path), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res.returncode, 0, msg=res.stderr + res.stdout)
+        self.assertIn("variable injection", res.stdout)
+        self.assertIn("--hogehoge hogeValue", res.stdout)
+

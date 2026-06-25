@@ -187,6 +187,7 @@ workflow.sh
 - `${time.DATE_ISO}` / `${time.DATE_YMD}` / `${time.DATE_YMDHMS}` は `date` コマンドと shell 関数として展開する
 - until ステップの inner attempt 関数名は `{fn}_attempt` として生成する。この名前は通常ステップの関数名と衝突しないよう、`bashgen/analysis.py` で予約する
 - SLEEP ステップの name / description は shell injection を防ぐため `printf` + シングルクォートでデータとして出力する
+- **変数の CLI 注入**: bash 形式の生成スクリプトは `--<name> <value>`（または `--<name>=<value>`）形式の引数で `${var.<NAME>}` 変数を注入できる。`main()` の引数解析で `--` 以降を取り出し、`-` → `_` 置換 → `awk` で大文字化 → `VAR_` 接頭辞付与、の変換を行い `printf -v` で代入する。予約フラグ（`--pretty-json` / `--no-mask` / `--blank-line` / `--help`）は先に match するためそちらが優先され、同名変数は `--<name>=<value>` 形式で回避できる。優先順位は CLI 引数 > 事前 export > `DEFAULT_VARS`。必須変数の不足検証は引数解析の**後**に実行する（§5.2.3）
 - **`--embed-files` オプション（bash のみ）**:
   - `-f` で指定された TOML ファイルと同じディレクトリ基準でファイルパスを解決する
   - `body_file` または `body_multipart` のファイルフィールドのうち、リテラルパス（`${...}` プレースホルダを含まないもの）を生成時に読み込み Base64 エンコードする
